@@ -110,7 +110,7 @@ export class FeatureManager extends ResourceTracker {
   async evaluateAndRegisterFeatures() {
     // Order matters: contentMessageHandler should be activated first
     // selectElement is managed directly by FeatureManager with its own Critical Protection
-    const features = ['contentMessageHandler', 'selectElement', 'windowsManager', 'textSelection', 'textFieldIcon', 'shortcut'];
+    const features = ['contentMessageHandler', 'selectElement', 'windowsManager', 'textSelection', 'textFieldIcon', 'shortcut', 'pageTranslation'];
 
     logger.debug('Evaluating features for registration:', features);
 
@@ -351,6 +351,12 @@ export class FeatureManager extends ResourceTracker {
           HandlerClass = WindowsManagerHandler;
           break;
         }
+
+        case 'pageTranslation': {
+          const { PageTranslationManager } = await import('@/features/page-translation/PageTranslationManager.js');
+          HandlerClass = PageTranslationManager;
+          break;
+        }
         default:
           logger.error(`Unknown feature: ${featureName}`);
           return null;
@@ -373,6 +379,8 @@ export class FeatureManager extends ResourceTracker {
         'TRANSLATE_ON_TEXT_FIELDS',
         'ENABLE_SHORTCUT_FOR_TEXT_FIELDS',
         'ACTIVE_SELECTION_ICON_ON_TEXTFIELDS',
+        'SHOW_DESKTOP_FAB',
+        'MOBILE_UI_MODE',
         'EXCLUDED_SITES'
       ];
       
@@ -446,7 +454,7 @@ export class FeatureManager extends ResourceTracker {
     try {
       // Order matters: contentMessageHandler should be evaluated first
       // selectElement is managed directly by FeatureManager with its own Critical Protection
-      const features = ['contentMessageHandler', 'selectElement', 'windowsManager', 'textSelection', 'textFieldIcon', 'shortcut'];
+      const features = ['contentMessageHandler', 'selectElement', 'windowsManager', 'textSelection', 'textFieldIcon', 'shortcut', 'pageTranslation'];
 
       logger.debug('Re-evaluating all features');
 

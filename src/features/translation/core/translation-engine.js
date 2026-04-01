@@ -10,10 +10,12 @@ import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { getSourceLanguageAsync, getTargetLanguageAsync, TranslationMode } from "@/shared/config/config.js";
 import { MessageFormat } from '@/shared/messaging/core/MessagingCore.js';
-import { matchErrorToType } from '@/shared/error-management/ErrorMatcher.js';
+import { matchErrorToType, isFatalError } from '@/shared/error-management/ErrorMatcher.js';
 import { ErrorTypes } from '@/shared/error-management/ErrorTypes.js';
 import { ErrorHandler } from '@/shared/error-management/ErrorHandler.js';
+import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
 import browser from 'webextension-polyfill';
+import ExtensionContextManager from '@/core/extensionContext.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.TRANSLATION, 'translation-engine');
 
@@ -264,11 +266,27 @@ export class TranslationEngine {
 
     const providerClass = providerInstance?.constructor;
 
-    // Downgrade dictionary mode if provider does not support it
-    if (mode === TranslationMode.Dictionary_Translation && !providerClass?.supportsDictionary) {
+    // Strict Dictionary Override: If enableDictionary is explicitly false, 
+    // prevent any auto-switching to dictionary mode regardless of text length.
+    // This is vital for Select Element, Field and Page modes.
+    const isDictionaryForbidden = data.enableDictionary === false || 
+                                 (data.options && data.options.enableDictionary === false) ||
+                                 mode === TranslationMode.Select_Element ||
+                                 mode === TranslationMode.Field ||
+                                 mode === TranslationMode.Page;
+    
+    if (isDictionaryForbidden && (mode === TranslationMode.Dictionary_Translation || mode === TranslationMode.Selection)) {
+      if (mode === TranslationMode.Dictionary_Translation) {
+        logger.debug(`[TranslationEngine] Dictionary mode forbidden by request flags. Forcing selection mode.`);
+      }
+      // Force selection mode
+      mode = TranslationMode.Selection;
+      data.mode = TranslationMode.Selection;
+    } else if (mode === TranslationMode.Dictionary_Translation && !providerClass?.supportsDictionary) {
+      // Standard downgrade if provider simply doesn't support dictionary
       logger.debug(`Provider ${provider} does not support dictionary mode. Downgrading to selection mode.`);
       mode = TranslationMode.Selection;
-      data.mode = TranslationMode.Selection; // Ensure data object is also updated
+      data.mode = TranslationMode.Selection;
     }
 
     // Check for text length limits in non-SelectElement modes
@@ -350,14 +368,13 @@ export class TranslationEngine {
           originalSourceLang: originalSourceLang,
           originalTargetLang: originalTargetLang,
           messageId: data.messageId,
+          sessionId: data.sessionId, // Pass sessionId to provider
           engine: this
         }
       );
     } catch (initialError) {
-      //TODO: این منطق در جای دیگری هم مثل WindowsManager وجود دارد که بهتر است به Error Management منتقل شود
-      // اگر خطا مربوط به عدم پشتیبانی از جفت زبان ها باشد، باید به کاربر نشان داده شود
-      // For language pair not supported errors, don't use fallback - show error to user
-      if (initialError.message && initialError.message.includes('Translation not available')) {
+      // For fatal errors like unsupported language pair, stop immediately
+      if (isFatalError(initialError)) {
         throw initialError;
       }
       
@@ -406,8 +423,21 @@ export class TranslationEngine {
     const OPTIMAL_BATCH_SIZE = 25; // Increased from 10 for better efficiency
     const batches = this.createIntelligentBatches(segments, OPTIMAL_BATCH_SIZE);
 
+    // Use LanguageSwappingService to handle potential language flipping (e.g. translating Farsi to English if target is Farsi)
+    const { LanguageSwappingService } = await import("@/features/translation/providers/LanguageSwappingService.js");
+    const [actualSource, actualTarget] = await LanguageSwappingService.applyLanguageSwapping(
+      segments[0] || '', sourceLanguage, targetLanguage, data.originalSourceLang || sourceLanguage, data.originalTargetLang || targetLanguage,
+      { providerName: provider }
+    );
+
+    // Update data with potentially swapped languages
+    const effectiveSource = actualSource;
+    const effectiveTarget = actualTarget;
+
     const abortController = messageId ? this.activeTranslations.get(messageId) : null;
-    let hasErrors = false; // Move hasErrors to function scope
+    const sessionId = data.sessionId || messageId; // Use provided sessionId or fallback to messageId (for whole page)
+    let hasErrors = false;
+    let lastError = null;
 
     (async () => {
         try {
@@ -453,10 +483,19 @@ export class TranslationEngine {
 
                             if (isAIProvider) {
                                 // AI providers use _translateBatch method directly
-                                return providerInstance._translateBatch(batch, sourceLanguage, targetLanguage, mode, abortController);
+                                return providerInstance._translateBatch(
+                                  batch, 
+                                  effectiveSource, 
+                                  effectiveTarget, 
+                                  mode, 
+                                  abortController,
+                                  this,
+                                  messageId,
+                                  sessionId // Pass sessionId for context maintenance
+                                );
                             } else if (typeof providerInstance?._translateChunk === 'function') {
                                 // Traditional providers use _translateChunk method for SelectElement mode
-                                return providerInstance._translateChunk(batch, sourceLanguage, targetLanguage, mode, abortController);
+                                return providerInstance._translateChunk(batch, effectiveSource, effectiveTarget, mode, abortController);
                             } else {
                                 // Fallback: gather detailed information about the provider issue
                                 const providerInfo = {
@@ -509,13 +548,13 @@ export class TranslationEngine {
                           originalData: batch,
                           batchIndex: i,
                           provider: provider,
-                          sourceLanguage: sourceLanguage,
-                          targetLanguage: targetLanguage,
+                          sourceLanguage: effectiveSource,
+                          targetLanguage: effectiveTarget,
                           timestamp: Date.now(),
                           translationMode: mode,
                         },
                         'background-stream',
-                        { messageId: messageId }
+                        messageId
                       );
                       if (tabId) {
                         browser.tabs.sendMessage(tabId, streamUpdateMessage).then(response => {
@@ -530,6 +569,7 @@ export class TranslationEngine {
                 } catch (error) {
                     consecutiveFailures++;
                     hasErrors = true;
+                    lastError = error;
                     // Log cancellation as debug instead of warn using proper error management
                     const errorType = matchErrorToType(error);
                     if (errorType === ErrorTypes.USER_CANCELLED) {
@@ -551,12 +591,15 @@ export class TranslationEngine {
                         MessageActions.TRANSLATION_STREAM_UPDATE,
                         {
                           success: false,
-                          error: { message: error.message, type: error.type },
+                          error: { 
+                            message: error.message, 
+                            type: error.type || matchErrorToType(error) 
+                          },
                           batchIndex: i,
                           originalData: batch,
                         },
                         'background-stream',
-                        { messageId: messageId }
+                        messageId
                     );
                     if (tabId) {
                         browser.tabs.sendMessage(tabId, streamUpdateMessage).catch(err => {
@@ -565,8 +608,8 @@ export class TranslationEngine {
                     }
                     
                     // Stop on quota exceeded or too many consecutive failures
-                    if (error.type === 'QUOTA_EXCEEDED' || error.type === 'CIRCUIT_BREAKER_OPEN') {
-                        logger.error(`[TranslationEngine] Critical error (${error.type}), stopping translation.`);
+                    if (errorType === 'QUOTA_EXCEEDED' || errorType === 'CIRCUIT_BREAKER_OPEN') {
+                        logger.error(`[TranslationEngine] Critical error (${errorType}), stopping translation.`);
                         break;
                     }
                     
@@ -581,9 +624,16 @@ export class TranslationEngine {
         } finally {
             const streamEndMessage = MessageFormat.create(
                 MessageActions.TRANSLATION_STREAM_END,
-                { success: !hasErrors },
+                { 
+                  success: !hasErrors,
+                  error: hasErrors ? { 
+                    message: lastError?.message || 'Translation failed', 
+                    type: lastError?.type || matchErrorToType(lastError) || 'TRANSLATION_ERROR'
+                  } : null,
+                  targetLanguage: effectiveTarget
+                },
                 'background-stream',
-                { messageId: messageId }
+                messageId
               );
               if (tabId) {
                 browser.tabs.sendMessage(tabId, streamEndMessage).catch(error => {
@@ -611,51 +661,98 @@ export class TranslationEngine {
   }
 
   /**
+   * Split a very long text into smaller chunks at sentence boundaries if possible
+   */
+  _splitOversizedSegment(text, maxChars) {
+    if (!text || text.length <= maxChars) return [text];
+    
+    const chunks = [];
+    let remaining = text;
+    
+    while (remaining.length > maxChars) {
+      // Try to find a good breaking point (sentence end, then space)
+      let breakPoint = -1;
+      const lookback = Math.floor(maxChars * 0.2); // Look back 20% for a break point
+      const searchRegion = remaining.substring(maxChars - lookback, maxChars);
+      
+      // Try sentence endings: . ! ?
+      const sentenceEnd = searchRegion.search(/[.!?]\s/);
+      if (sentenceEnd !== -1) {
+        breakPoint = maxChars - lookback + sentenceEnd + 1;
+      } else {
+        // Try space
+        const space = searchRegion.lastIndexOf(' ');
+        if (space !== -1) {
+          breakPoint = maxChars - lookback + space;
+        } else {
+          // Hard break
+          breakPoint = maxChars;
+        }
+      }
+      
+      chunks.push(remaining.substring(0, breakPoint).trim());
+      remaining = remaining.substring(breakPoint).trim();
+    }
+    
+    if (remaining.length > 0) {
+      chunks.push(remaining);
+    }
+    
+    return chunks;
+  }
+
+  /**
    * Create intelligent batches based on text complexity and characteristics
    */
-  createIntelligentBatches(segments, baseBatchSize) {
+  createIntelligentBatches(segments, baseBatchSize, maxCharsPerBatch = 5000) {
+    // First, flatten segments by splitting any single segment that's too long
+    const flattenedSegments = [];
+    for (const seg of segments) {
+      const text = seg || '';
+      if (text.length > maxCharsPerBatch) {
+        flattenedSegments.push(...this._splitOversizedSegment(text, maxCharsPerBatch));
+      } else {
+        flattenedSegments.push(text);
+      }
+    }
+
     const batches = [];
     let currentBatch = [];
     let currentBatchComplexity = 0;
+    let currentBatchChars = 0;
     
-    // Smart batching for small texts: use single batch if total segments <= 20
-    const totalSegments = segments.length;
-    const totalComplexity = segments.reduce((sum, seg) => sum + this.calculateTextComplexity(seg), 0);
-    
-    if (totalSegments <= 20 || totalComplexity < 300) {
-      logger.debug(`[TranslationEngine] Using single batch for ${totalSegments} segments (complexity: ${totalComplexity})`);
-      return [segments];
-    }
-    
-    for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i];
+    for (let i = 0; i < flattenedSegments.length; i++) {
+      const segment = flattenedSegments[i];
       const segmentComplexity = this.calculateTextComplexity(segment);
+      const segmentChars = segment.length;
       
       // Calculate optimal batch size based on segment complexity
       const adjustedBatchSize = this.getAdjustedBatchSize(segmentComplexity, baseBatchSize);
       
       // Check if adding this segment would exceed batch limits
       const wouldExceedSize = currentBatch.length >= adjustedBatchSize;
-      const wouldExceedComplexity = currentBatchComplexity + segmentComplexity > 400; // Increased from 200 for better efficiency
+      const wouldExceedComplexity = currentBatchComplexity + segmentComplexity > 1000; // Increased from 400
+      const wouldExceedChars = currentBatchChars + segmentChars > maxCharsPerBatch;
       
-      if (wouldExceedSize || wouldExceedComplexity) {
+      if (wouldExceedSize || wouldExceedComplexity || wouldExceedChars) {
         if (currentBatch.length > 0) {
           batches.push([...currentBatch]);
           currentBatch = [];
           currentBatchComplexity = 0;
+          currentBatchChars = 0;
         }
       }
       
       currentBatch.push(segment);
       currentBatchComplexity += segmentComplexity;
+      currentBatchChars += segmentChars;
     }
     
-    // Add the last batch if not empty
     if (currentBatch.length > 0) {
       batches.push(currentBatch);
     }
     
-    logger.debug(`[TranslationEngine] Created ${batches.length} intelligent batches from ${segments.length} segments`);
+    logger.debug(`[TranslationEngine] Created ${batches.length} intelligent batches (Max chars: ${maxCharsPerBatch})`);
     return batches;
   }
 
@@ -668,8 +765,8 @@ export class TranslationEngine {
     // Length factor
     complexity += Math.min(text.length / 20, 50);
     
-    // Special characters
-    const specialChars = (text.match(/[^\w\s]/g) || []).length;
+    // Special characters (punctuation, symbols) - excluding non-Latin word characters
+    const specialChars = (text.match(/[^\w\s\u0080-\uFFFF]/g) || []).length;
     complexity += specialChars;
     
     // Technical content
@@ -709,8 +806,8 @@ export class TranslationEngine {
       // Length factor (longer texts are more complex)
       textComplexity += Math.min(text.length / 10, 30);
       
-      // Special characters and formatting
-      const specialChars = (text.match(/[^\w\s]/g) || []).length;
+      // Special characters and formatting - excluding non-Latin word characters
+      const specialChars = (text.match(/[^\w\s\u0080-\uFFFF]/g) || []).length;
       textComplexity += specialChars * 0.5;
       
       // Technical terms (URLs, code, etc.)
@@ -756,7 +853,7 @@ export class TranslationEngine {
     }
     
     // Add request throttling for Bing provider
-    if (provider === 'BingTranslate') {
+    if (provider === ProviderNames.BING_TRANSLATE) {
       await new Promise(resolve => setTimeout(resolve, 200)); // 200ms delay between requests
     }
     
@@ -805,21 +902,24 @@ export class TranslationEngine {
         errorMessages.push(errorMessage);
       }
 
-      // If translation was cancelled by user, stop all processing
-      if (errorMessage && errorMessage.includes('Translation cancelled by user')) {
-        logger.debug('[TranslationEngine] User cancellation detected - stopping all batches');
-        if (sharedState) sharedState.isCancelled = true;
-        throw batchError; // Re-throw to stop translation completely
-      }
-
-      // If the error indicates an unsupported language pair, mark shared state and exit early
-      if (errorMessage && errorMessage.includes('Translation not available')) {
-        if (sharedState) {
-          sharedState.shouldStopDueToLanguagePairError = true;
-          sharedState.languagePairError = batchError;
-          logger.debug('[TranslationEngine] Language pair error detected - stopping all batches');
+      // If fatal error (cancellation, language pair, API key, etc.), stop all processing
+      if (isFatalError(batchError)) {
+        const errorType = batchError.type || matchErrorToType(batchError);
+        
+        // Handle specific fatal errors that require shared state updates
+        if (errorType === ErrorTypes.USER_CANCELLED) {
+          logger.debug('[TranslationEngine] User cancellation detected - stopping all batches');
+          if (sharedState) sharedState.isCancelled = true;
+        } else if (errorType === ErrorTypes.LANGUAGE_PAIR_NOT_SUPPORTED) {
+          if (sharedState) {
+            sharedState.shouldStopDueToLanguagePairError = true;
+            sharedState.languagePairError = batchError;
+            logger.debug('[TranslationEngine] Language pair error detected - stopping all batches');
+          }
+        } else {
+          logger.debug(`[TranslationEngine] Fatal error detected (${errorType}) - stopping all batches`);
         }
-        throw batchError; // Re-throw to show error to user instead of silent fallback
+        throw batchError; // Re-throw to stop translation completely
       }
     }
     
@@ -854,7 +954,7 @@ export class TranslationEngine {
         
         try {
           // Add throttling for Bing individual requests as well
-          if (config.provider === 'BingTranslate' && attempt > 0) {
+          if (config.provider === ProviderNames.BING_TRANSLATE && attempt > 0) {
             await new Promise(resolve => setTimeout(resolve, 300 * attempt)); // Increasing delay for retries
           }
           
@@ -881,20 +981,26 @@ export class TranslationEngine {
             errorMessages.push(errorMessage);
           }
           
-          // If translation was cancelled by user, stop all processing
-          if (errorMessage && errorMessage.includes('Translation cancelled by user')) {
-            logger.debug('[TranslationEngine] User cancellation detected in individual translation');
-            return { idx, result: segments[idx], success: false };
-          }
-          
-          // If it's a language pair error, mark shared state and throw
-          if (errorMessage && errorMessage.includes('Translation not available')) {
-            if (sharedState) {
-              sharedState.shouldStopDueToLanguagePairError = true;
-              sharedState.languagePairError = individualError;
-              logger.debug('[TranslationEngine] Language pair error detected in individual translation - stopping all batches');
+          // If fatal error (cancellation, language pair, API key, etc.), stop processing
+          if (isFatalError(individualError)) {
+            const errorType = individualError.type || matchErrorToType(individualError);
+            
+            // Handle specific fatal errors that require shared state updates
+            if (errorType === ErrorTypes.USER_CANCELLED) {
+              logger.debug('[TranslationEngine] User cancellation detected in individual translation');
+              return { idx, result: segments[idx], success: false };
+            } else if (errorType === ErrorTypes.LANGUAGE_PAIR_NOT_SUPPORTED) {
+              if (sharedState) {
+                sharedState.shouldStopDueToLanguagePairError = true;
+                sharedState.languagePairError = individualError;
+                logger.debug('[TranslationEngine] Language pair error detected in individual translation - stopping all batches');
+              }
+              throw individualError;
+            } else {
+              // Other fatal errors (e.g. Quota Exceeded) - stop retries
+              logger.debug(`[TranslationEngine] Fatal error detected in individual translation (${errorType}) - skipping retries`);
+              return { idx, result: segments[idx], success: false };
             }
-            throw individualError;
           }
           
           attempt++;
@@ -1023,7 +1129,14 @@ export class TranslationEngine {
         this.history = []; // Ensure it's always an array
       }
     } catch (error) {
-      logger.error("[TranslationEngine] Failed to load history:", error);
+      // Use centralized context error detection
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'translation-engine-history', {
+          fallbackAction: () => { this.history = []; }
+        });
+      } else {
+        logger.error("[TranslationEngine] Failed to load history:", error);
+      }
     }
   }
 
@@ -1031,10 +1144,13 @@ export class TranslationEngine {
    * Format error response
    */
   formatError(error, context) {
+    // Extract error type using matcher if not explicitly provided
+    const errorType = error.type || matchErrorToType(error);
+    
     return {
       success: false,
       error: {
-        type: error.type || "TRANSLATION_ERROR",
+        type: errorType,
         message: error.message || "Translation failed",
         context: context || "unknown",
         timestamp: Date.now(),
@@ -1098,7 +1214,7 @@ export class TranslationEngine {
       // Cancel streaming session if active
       try {
         const { streamingManager } = await import("./StreamingManager.js");
-        await streamingManager.cancelStream(messageId, 'Translation cancelled by user');
+        await streamingManager.cancelStream(messageId, ErrorTypes.USER_CANCELLED);
       } catch (error) {
         logger.debug(`[TranslationEngine] StreamingManager cancel failed (might not be streaming): ${error.message}`);
       }

@@ -9,6 +9,8 @@ import { CONFIG } from '@/shared/config/config.js'
 import { systemFontDetector } from '@/shared/fonts/SystemFontDetector.js'
 import { getScopedLogger } from '@/shared/logging/logger.js'
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js'
+import { UI_LOCALE_TO_CODE_MAP } from '@/shared/config/languageConstants.js'
+import { isRTLLanguage } from '@/features/element-selection/utils/textDirection.js'
 
 // Lazy logger initialization to avoid TDZ issues
 let logger = null;
@@ -55,18 +57,19 @@ const FONT_CSS_MAP = {
 }
 
 // RTL language detection
-const RTL_LANGUAGES = ['farsi', 'persian', 'fa', 'arabic', 'ar', 'hebrew', 'he', 'urdu', 'ur']
+const RTL_LANGUAGES = ['farsi', 'persian', 'fa', 'arabic', 'ar', 'hebrew', 'he', 'urdu', 'ur', 'ku', 'kurdish', 'ps', 'pashto']
 
 /**
  * Font management composable
  * @param {string} targetLanguage - Target language for smart font detection
  * @param {Object} options - Configuration options
  */
-export function useFont(targetLanguage = 'English', options = {}) {
+export function useFont(targetLanguage = CONFIG.TARGET_LANGUAGE || 'fa', options = {}) {
   const {
     enableSmartDetection = true,
     fallbackFont = 'system',
-    enableCSSVariables = true
+    enableCSSVariables = true,
+    forcedDirection = null // New option to force direction regardless of language
   } = options
 
   // Handle both string and computed ref for targetLanguage
@@ -76,7 +79,17 @@ export function useFont(targetLanguage = 'English', options = {}) {
     } else if (targetLanguage && typeof targetLanguage.value !== 'undefined') {
       return targetLanguage.value
     }
-    return 'English'
+    return CONFIG.TARGET_LANGUAGE || 'fa'
+  })
+  
+  // Handle both string and computed ref for forcedDirection
+  const computedForcedDirection = computed(() => {
+    if (typeof forcedDirection === 'string') {
+      return forcedDirection
+    } else if (forcedDirection && typeof forcedDirection.value !== 'undefined') {
+      return forcedDirection.value
+    }
+    return null
   })
   
   // Get settings store
@@ -90,25 +103,21 @@ export function useFont(targetLanguage = 'English', options = {}) {
   const getSmartFontFamily = (lang) => {
     if (!enableSmartDetection) return FONT_CSS_MAP[fallbackFont]
     
-    const language = lang?.toLowerCase()
+    // Normalize language to code for consistent checking
+    const langCode = UI_LOCALE_TO_CODE_MAP[lang] || lang?.toLowerCase();
     
     // Persian/Farsi languages
-    if (language === 'farsi' || language === 'persian' || language === 'fa') {
+    if (langCode === 'fa' || langCode === 'farsi' || langCode === 'persian') {
       return FONT_CSS_MAP['vazirmatn']
     }
     
     // Arabic languages
-    if (language === 'arabic' || language === 'ar') {
+    if (langCode === 'ar' || langCode === 'arabic') {
       return FONT_CSS_MAP['noto-sans']
     }
     
-    // Hebrew
-    if (language === 'hebrew' || language === 'he') {
-      return FONT_CSS_MAP['noto-sans']
-    }
-    
-    // Urdu
-    if (language === 'urdu' || language === 'ur') {
+    // Check if it's any other RTL language
+    if (isRTLLanguage(langCode)) {
       return FONT_CSS_MAP['noto-sans']
     }
     
@@ -141,6 +150,10 @@ export function useFont(targetLanguage = 'English', options = {}) {
   
   // Check if language is RTL
   const isRTL = computed(() => {
+    // If direction is forced, use that
+    if (computedForcedDirection.value) {
+      return computedForcedDirection.value === 'rtl'
+    }
     return RTL_LANGUAGES.includes(computedTargetLanguage.value?.toLowerCase())
   })
   
@@ -305,7 +318,7 @@ export function useFont(targetLanguage = 'English', options = {}) {
  * Global font composable for app-wide font management
  */
 export function useGlobalFont() {
-  return useFont('English', {
+  return useFont(CONFIG.APPLICATION_LOCALIZE || 'en', {
     enableCSSVariables: true,
     enableSmartDetection: true
   })

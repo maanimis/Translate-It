@@ -42,6 +42,7 @@ export const createBaseConfig = (browser, options = {}) => {
     // browser-specific definitions  
     define: {
       __BROWSER__: JSON.stringify(browser),
+      __BUILD_YEAR__: new Date().getFullYear(),
       __IS_PRODUCTION__: isProduction,
       __IS_DEVELOPMENT__: isDevelopment,
       __VUE_OPTIONS_API__: false,
@@ -240,11 +241,6 @@ export const createBaseConfig = (browser, options = {}) => {
               // Messaging utilities
               if (id.includes('src/utils/messaging')) {
                 return 'utils/messaging';
-              }
-
-              // Provider utilities
-              if (id.includes('src/utils/providerHtmlGenerator')) {
-                return 'utils/provider';
               }
 
               // Utils factory itself (keep separate as it's the entry point)

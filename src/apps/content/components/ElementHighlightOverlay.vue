@@ -1,5 +1,8 @@
 <template>
-  <div class="element-highlight-overlay">
+  <div
+    v-if="!isFullscreen && activeHighlights.length > 0"
+    class="element-highlight-overlay"
+  >
     <div 
       v-for="highlight in activeHighlights" 
       :key="highlight.id"
@@ -18,22 +21,33 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { pageEventBus } from '@/core/PageEventBus.js';
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
+import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js';
+import { useResourceTracker } from '@/composables/core/useResourceTracker.js';
+import { useMobileStore } from '@/store/modules/mobile.js';
 
 const activeHighlights = ref([]);
 const showTooltip = ref(false);
-const tooltipText = ref('Click to translate');
+const mobileStore = useMobileStore();
+const tracker = useResourceTracker('element-highlight-overlay');
+
+// i18n
+const { t } = useUnifiedI18n();
+
+const isFullscreen = computed(() => mobileStore.isFullscreen);
+const tooltipText = computed(() => t('click_to_translate'));
 const logger = getScopedLogger(LOG_COMPONENTS.CONTENT_APP, 'ElementHighlightOverlay');
 
 // Generate unique IDs for highlights
 let highlightCounter = 0;
 const generateId = () => `highlight-${Date.now()}-${highlightCounter++}`;
 
-  // Listen for highlight events
-  pageEventBus.on('element-highlight', (detail) => {
+onMounted(() => {
+  // Listen for highlight events via tracker for automatic cleanup
+  tracker.addEventListener(pageEventBus, 'element-highlight', (detail) => {
     const { element, rect } = detail;
     
     // Create highlight style based on element position
@@ -62,31 +76,32 @@ const generateId = () => `highlight-${Date.now()}-${highlightCounter++}`;
     element.classList.add('translate-it-element-highlighted');
   });
 
-pageEventBus.on('element-unhighlight', (detail) => {
-  if (detail.id) {
-    const highlight = activeHighlights.value.find(h => h.id === detail.id);
-    if (highlight) {
-      highlight.element.classList.remove('translate-it-element-highlighted');
+  tracker.addEventListener(pageEventBus, 'element-unhighlight', (detail) => {
+    if (detail.id) {
+      const highlight = activeHighlights.value.find(h => h.id === detail.id);
+      if (highlight) {
+        highlight.element.classList.remove('translate-it-element-highlighted');
+      }
+      activeHighlights.value = activeHighlights.value.filter(h => h.id !== detail.id);
+    } else if (detail.element) {
+      detail.element.classList.remove('translate-it-element-highlighted');
+      activeHighlights.value = activeHighlights.value.filter(h => h.element !== detail.element);
+    } else {
+      // Remove from all elements
+      activeHighlights.value.forEach(highlight => {
+        highlight.element.classList.remove('translate-it-element-highlighted');
+      });
+      activeHighlights.value = [];
     }
-    activeHighlights.value = activeHighlights.value.filter(h => h.id !== detail.id);
-  } else if (detail.element) {
-    detail.element.classList.remove('translate-it-element-highlighted');
-    activeHighlights.value = activeHighlights.value.filter(h => h.element !== detail.element);
-  } else {
-    // Remove from all elements
+  });
+
+  tracker.addEventListener(pageEventBus, 'clear-all-highlights', () => {
+    // Remove highlight class from all elements
     activeHighlights.value.forEach(highlight => {
       highlight.element.classList.remove('translate-it-element-highlighted');
     });
     activeHighlights.value = [];
-  }
-});
-
-pageEventBus.on('clear-all-highlights', () => {
-  // Remove highlight class from all elements
-  activeHighlights.value.forEach(highlight => {
-    highlight.element.classList.remove('translate-it-element-highlighted');
   });
-  activeHighlights.value = [];
 });
 
 const onElementClick = (element, highlightId) => {
@@ -104,7 +119,7 @@ const onElementClick = (element, highlightId) => {
 };
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
 .element-highlight-overlay {
   position: fixed;
   top: 0;

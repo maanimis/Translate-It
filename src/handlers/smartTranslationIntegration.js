@@ -4,7 +4,7 @@ import { pageEventBus } from "../core/PageEventBus.js";
 import { MessageFormat, MessagingContexts } from "@/shared/messaging/core/MessagingCore.js";
 import ExtensionContextManager from "../core/extensionContext.js";
 import { TranslationMode, getREPLACE_SPECIAL_SITESAsync, getCOPY_REPLACEAsync, getTranslationApiAsync, getSourceLanguageAsync, getTargetLanguageAsync } from "@/shared/config/config.js";
-import { detectPlatform, Platform } from "../utils/browser/platform.js";
+import { detectOS as detectPlatform, OS_PLATFORMS as Platform } from "../utils/browser/compatibility.js";
 import { getTranslationString } from "../utils/i18n/i18n.js";
 import { getScopedLogger } from "../shared/logging/logger.js";
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
@@ -327,13 +327,13 @@ function getPendingTranslationData(fallbackTarget, toastId) {
 }
 
 export async function translateFieldViaSmartHandler({ text, target, selectionRange = null, tabId, toastId }) {
-  logger.info('Translation field request', { textLength: text?.length, targetTag: target?.tagName, mode: selectionRange ? 'SelectElement' : 'Field' });
-  
+  logger.info('Translation field request', { textLength: text?.length, targetTag: target?.tagName, mode: selectionRange ? TranslationMode.Select_Element : TranslationMode.Field });
+
   if (!text) {
     logger.warn('No text provided for translation');
     return;
   }
-  
+
   // Check extension context before proceeding
   if (!ExtensionContextManager.isValidSync()) {
     const contextError = new Error('Extension context invalidated');
@@ -341,8 +341,9 @@ export async function translateFieldViaSmartHandler({ text, target, selectionRan
     return;
   }
 
-  const mode = 'field';
+  const mode = TranslationMode.Field;
   const platform = detectPlatform(target);
+
   const timestamp = Date.now();
 
   try {
@@ -405,7 +406,7 @@ export async function translateFieldViaSmartHandler({ text, target, selectionRan
         }
       },
       MessagingContexts.CONTENT,
-      { messageId } // Pass our custom messageId
+      messageId
     );
     
     // Use ExtensionContextManager for safe message sending
@@ -446,7 +447,7 @@ export async function translateFieldViaSmartHandler({ text, target, selectionRan
         return;
       } else if (messageResult && messageResult.success === false) {
         // Handle error response
-        logger.debug('Translation failed', { error: messageResult.error });
+        logger.error('Translation failed', { error: messageResult.error });
 
         // Dismiss notification on error
         pageEventBus.emit('dismiss_notification', { id: newToastId });
@@ -472,6 +473,7 @@ export async function translateFieldViaSmartHandler({ text, target, selectionRan
     }
     
   } catch (err) {
+    logger.error('Text field translation request failed:', err);
     const handler = ErrorHandler.getInstance();
     await handler.handle(err, {
       type: ErrorTypes.TRANSLATION_FAILED,
@@ -536,7 +538,7 @@ async function processTranslationToTextField(translatedText, originalText, trans
   }
 
   // Small delay to ensure pending data is stored (for field mode)
-  if (!toastId && translationMode === 'field') {
+  if (!toastId && (translationMode === TranslationMode.Field || translationMode === TranslationMode.LEGACY_FIELD)) {
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 
@@ -664,8 +666,8 @@ async function processTranslationToTextField(translatedText, originalText, trans
     clearPendingNotificationData('applyTranslationToTextField-success');
     
     // For dictionary mode (text selection), we don't need an editable target
-    const isDictionaryMode = mode === TranslationMode.Dictionary_Translation || mode === 'dictionary';
-    const isSelectElementMode = mode === TranslationMode.Select_Element || mode === 'select_element';
+    const isDictionaryMode = mode === TranslationMode.Dictionary_Translation || mode === TranslationMode.LEGACY_DICTIONARY;
+    const isSelectElementMode = mode === TranslationMode.Select_Element || mode === TranslationMode.LEGACY_SELECT_ELEMENT_UNDERSCORE;
 
     if (!isDictionaryMode && (!target || !isEditableElement(target))) {
       logger.warn('Invalid target for non-dictionary mode', {
@@ -738,7 +740,7 @@ async function processTranslationToTextField(translatedText, originalText, trans
     if (isDictionaryMode) {
       logger.debug('Dictionary mode translation completed');
       clearPendingTranslationData(toastId);
-      return { applied: true, mode: 'dictionary' };
+      return { applied: true, mode: TranslationMode.Dictionary_Translation };
     }
     
     const isReplaceMode = await determineReplaceMode(mode, platform);
@@ -989,7 +991,7 @@ async function determineReplaceMode(mode, platform) {
   logger.debug('Determining replace mode', { mode, platform });
 
   // For Select Element mode, always replace
-  if (mode === TranslationMode.Select_Element || mode === 'select_element') {
+  if (mode === TranslationMode.Select_Element || mode === TranslationMode.LEGACY_SELECT_ELEMENT_UNDERSCORE) {
     logger.debug('SelectElement mode detected, using replace mode');
     return true;
   }
@@ -1006,7 +1008,7 @@ async function determineReplaceMode(mode, platform) {
   }
 
   // For Field mode, check the COPY_REPLACE setting
-  if (mode === TranslationMode.Field || mode === 'field') {
+  if (mode === TranslationMode.Field || mode === TranslationMode.LEGACY_FIELD) {
     logger.debug('Field mode detected, checking COPY_REPLACE setting');
     const isCopy = await getCOPY_REPLACEAsync();
     logger.debug('COPY_REPLACE setting for Field mode', { setting: isCopy });
@@ -1107,8 +1109,9 @@ async function applyTranslation(translatedText, selectionRange, platform, tabId,
       default:
         strategyName = 'DefaultStrategy';
     }
-    
+
     logger.debug('Translation strategy selected', { strategy: strategyName, platform });
+    // eslint-disable-next-line noUnsanitized/method -- Safe: strategyName is validated from switch statement
     strategyModule = await import(`@/features/text-field-interaction/strategies/${strategyName}.js`);
     const strategy = new strategyModule.default();
     

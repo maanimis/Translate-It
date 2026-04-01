@@ -40,36 +40,43 @@ function getLogger() {
 
 const MAX_HISTORY_ITEMS = 100;
 
+// Shared global state to keep all instances in sync
+const globalHistoryItems = ref([]);
+const globalIsLoading = ref(false);
+const globalIsInitialized = ref(false);
+
 export function useHistory() {
-  // State
-  const historyItems = ref([]);
-  const isLoading = ref(false);
+  // Local instance state (pointing to global)
+  const historyItems = globalHistoryItems;
+  const isLoading = globalIsLoading;
   const historyError = ref("");
   const isHistoryPanelOpen = ref(false);
 
   // Composables
-
   const settingsStore = useSettingsStore();
 
   // Computed
   const hasHistory = computed(() => historyItems.value.length > 0);
   const sortedHistoryItems = computed(() => {
-    // historyItems is already sorted with newest first, so just return a copy.
     return [...historyItems.value];
   });
 
   // Load history from storage using StorageCore
-  const loadHistory = async () => {
+  const loadHistory = async (force = false) => {
+    if (globalIsInitialized.value && !force) return;
+    
     isLoading.value = true;
     try {
-      // Use StorageCore for consistent storage access
       const result = await storageManager.get({ translationHistory: [] });
-      historyItems.value = result.translationHistory || [];
-      getLogger().info(`Loaded ${historyItems.value.length} history items`);
+      const loadedHistory = Array.isArray(result.translationHistory) ? result.translationHistory : [];
+      
+      historyItems.value = loadedHistory;
+      globalIsInitialized.value = true;
+      
+      getLogger().info(`Loaded ${historyItems.value.length} history items from storage`);
     } catch (error) {
       getLogger().error("Error loading history", error);
       historyError.value = "Failed to load history";
-      historyItems.value = [];
     } finally {
       isLoading.value = false;
     }
@@ -155,6 +162,82 @@ export function useHistory() {
     }
   };
 
+  // Export history based on format
+  const exportHistory = (format) => {
+    try {
+      const items = historyItems.value;
+      if (!items || items.length === 0) {
+        getLogger().warn("No history items to export");
+        return;
+      }
+
+      let content = "";
+      let mimeType = "text/plain";
+      let extension = "txt";
+
+      if (format === "json_clean") {
+        const cleanItems = items.map(item => ({
+          ...item,
+          sourceText: SimpleMarkdown.strip(item.sourceText),
+          translatedText: SimpleMarkdown.strip(item.translatedText)
+        }));
+        content = JSON.stringify(cleanItems, null, 2);
+        mimeType = "application/json";
+        extension = "json";
+      } else if (format === "json_raw") {
+        content = JSON.stringify(items, null, 2);
+        mimeType = "application/json";
+        extension = "json";
+      } else if (format === "csv") {
+        const headers = ["Source Text", "Translated Text", "Source Language", "Target Language", "Timestamp"];
+        const rows = items.map((item) => {
+          const date = new Date(item.timestamp).toISOString();
+          // Escape quotes and commas
+          const escapeCsv = (str) => `"${String(str || "").replace(/"/g, '""')}"`;
+          return [
+            escapeCsv(SimpleMarkdown.strip(item.sourceText)),
+            escapeCsv(SimpleMarkdown.strip(item.translatedText)),
+            escapeCsv(item.sourceLanguage),
+            escapeCsv(item.targetLanguage),
+            escapeCsv(date),
+          ].join(",");
+        });
+        content = [headers.join(","), ...rows].join("\n");
+        mimeType = "text/csv";
+        extension = "csv";
+      } else if (format === "anki") {
+        // Anki TSV format: Source \t Translated
+        const rows = items.map((item) => {
+          const cleanSource = SimpleMarkdown.strip(item.sourceText);
+          const cleanTranslated = SimpleMarkdown.strip(item.translatedText);
+          const escapeTsv = (str) => String(str || "").replace(/\n/g, "<br>").replace(/\t/g, " ");
+          return `${escapeTsv(cleanSource)}\t${escapeTsv(cleanTranslated)}`;
+        });
+        content = rows.join("\n");
+        mimeType = "text/tab-separated-values";
+        extension = "txt";
+      } else {
+        getLogger().warn("Unknown export format:", format);
+        return;
+      }
+
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `translation_history_${new Date().toISOString().split("T")[0]}.${extension}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      getLogger().info(`Exported history as ${format}`);
+    } catch (error) {
+      getLogger().error("Error exporting history", error);
+      historyError.value = "Failed to export history";
+    }
+  };
+
   // Format timestamp for display
   const formatTime = (timestamp) => {
     if (!timestamp) return "";
@@ -175,7 +258,8 @@ export function useHistory() {
     if (!text) return null;
 
     try {
-      return SimpleMarkdown.render(text);
+      const element = SimpleMarkdown.render(text);
+      return element ? element.innerHTML : null;
     } catch (error) {
       getLogger().error("Error parsing markdown", error);
       return null;
@@ -209,12 +293,10 @@ export function useHistory() {
   watch(
     () => settingsStore.settings.translationHistory,
     (newHistory) => {
-      if (newHistory) {
+      // Only update if we have a valid array and it's different from current
+      if (Array.isArray(newHistory) && newHistory.length > 0) {
         historyItems.value = newHistory;
-        // Only log in development mode to reduce console noise
-        if (import.meta.env.DEV) {
-          getLogger().debug("History updated from settings store");
-        }
+        globalIsInitialized.value = true;
       }
     },
     { deep: true },
@@ -223,9 +305,12 @@ export function useHistory() {
   // Storage change listener for real-time updates
   const storageListener = (data) => {
     if (data.key === 'translationHistory') {
-      const newHistory = data.newValue || [];
-      historyItems.value = newHistory;
-      getLogger().debug("History updated from storage change listener");
+      const newHistory = data.newValue;
+      if (Array.isArray(newHistory)) {
+        historyItems.value = newHistory;
+        globalIsInitialized.value = true;
+        getLogger().debug("Global history updated from storage change listener");
+      }
     }
   };
 
@@ -258,6 +343,7 @@ export function useHistory() {
     addToHistory,
     deleteHistoryItem,
     clearAllHistory,
+    exportHistory,
     selectHistoryItem,
 
     // Panel Management

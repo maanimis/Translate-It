@@ -12,6 +12,7 @@ import { MessageActions } from "@/shared/messaging/core/MessageActions.js";
 import { MessageFormat, MessagingContexts } from "@/shared/messaging/core/MessagingCore.js";
 import { sendMessage } from '@/shared/messaging/core/UnifiedMessaging.js';
 import { INPUT_TYPES } from '@/shared/config/constants.js';
+import { TranslationMode } from '@/shared/config/config.js';
 
 export class FieldShortcutManager {
   constructor() {
@@ -164,7 +165,7 @@ export class FieldShortcutManager {
           provider: settingsManager.get('TRANSLATION_API', 'google-translate'),
           sourceLanguage: settingsManager.get('SOURCE_LANGUAGE', 'auto'),
           targetLanguage: settingsManager.get('TARGET_LANGUAGE', 'fa'),
-          mode: 'field',
+          mode: TranslationMode.Field,
           options: {
             element: activeElement.tagName,
             fieldType: activeElement.type || 'text'

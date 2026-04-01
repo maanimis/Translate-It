@@ -1,13 +1,13 @@
 <template>
   <button
-    v-if="isVisible"
+    v-if="isVisible && !isFullscreen"
     ref="iconElement"
     class="translation-icon"
     :class="{ 'is-hovering': isHovering, 'is-active': isActive }"
     :style="dynamicStyle"
     data-translate-ui="true"
-    :title="$t ? $t('translateSelectedText') : 'Translate selected text'"
-    :aria-label="$t ? $t('translateSelectedText') : 'Translate selected text'"
+    :title="t('translateSelectedText')"
+    :aria-label="t('translateSelectedText')"
     role="button"
     tabindex="0"
     @click="handleClick"
@@ -68,10 +68,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { usePositioning } from '@/composables/ui/usePositioning.js';
+import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js';
+import { useMobileStore } from '@/store/modules/mobile.js';
+import { useResourceTracker } from '@/composables/core/useResourceTracker.js';
 
 const pageEventBus = window.pageEventBus;
+const mobileStore = useMobileStore();
+const tracker = useResourceTracker('translation-icon');
 
 const props = defineProps({
   id: { type: String, required: true },
@@ -82,11 +87,15 @@ const props = defineProps({
 
 const emit = defineEmits(['click', 'hover', 'focus', 'close']);
 
+// i18n
+const { t } = useUnifiedI18n();
+
 // Reactive state
 const isVisible = ref(false);
 const isHovering = ref(false);
 const isActive = ref(false);
 const isFocused = ref(false);
+const isFullscreen = computed(() => mobileStore.isFullscreen);
 
 // DOM reference
 const iconElement = ref(null);
@@ -99,18 +108,18 @@ const { positionStyle, cleanup: cleanupPositioning } = usePositioning(props.posi
 });
 
 const dynamicStyle = computed(() => {
-  let bgColor = 'var(--bg-color, #ffffff)';
-  let brdColor = 'var(--border-color, #e0e0e0)';
+  let bgColor = '#ffffff';
+  let brdColor = '#e0e0e0';
   let xform = 'scale(1)';
   let boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.08)';
 
   if (isActive.value) {
-    bgColor = 'var(--tab-button-active-bg, #e8f0fe)';
-    brdColor = 'var(--tab-button-active-border-color, #4285f4)';
+    bgColor = '#e8f0fe';
+    brdColor = '#4285f4';
     xform = 'scale(0.95)';
   } else if (isHovering.value) {
-    bgColor = 'var(--bg-result-color, #f8f9fa)';
-    brdColor = 'var(--input-border-color, #dadce0)';
+    bgColor = '#f8f9fa';
+    brdColor = '#dadce0';
     xform = 'scale(1.1) translateY(-1px)';
     boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15), 0 2px 6px rgba(0, 0, 0, 0.1)';
   }
@@ -124,8 +133,6 @@ const dynamicStyle = computed(() => {
     border: `1px solid ${brdColor}`,
     boxShadow: boxShadow,
     transform: xform,
-
-    // Static styles that might be overridden by user-agent
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -134,13 +141,9 @@ const dynamicStyle = computed(() => {
     padding: '0',
     margin: '0',
     outline: 'none',
-
-    // Force LTR direction
     direction: 'ltr',
     textAlign: 'left',
     unicodeBidi: 'plaintext',
-
-    // Z-index and transition
     zIndex: 2147483645,
     transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
   };
@@ -155,13 +158,11 @@ const handleClick = (event) => {
   event.stopPropagation();
 
   isActive.value = true;
-  setTimeout(() => {
+  tracker.trackTimeout(() => {
     isActive.value = false;
   }, 150);
 
   const clickData = { id: props.id, text: props.text, position: props.position };
-
-  // Only emit Vue event - remove duplicate PageEventBus emission
   emit('click', clickData);
 };
 
@@ -202,45 +203,11 @@ const animateIn = () => {
 
 const animateOut = () => {
   isVisible.value = false;
-  setTimeout(() => {
+  tracker.trackTimeout(() => {
     emit('close', props.id);
   }, 300);
 };
 
-// Initialize component
-onMounted(() => {
-  animateIn();
-  setupEventListeners();
-});
-
-onUnmounted(() => {
-  cleanupEventListeners();
-  cleanupPositioning();
-});
-
-// Event listeners
-const setupEventListeners = () => {
-  const eventName = `dismiss-icon-${props.id}`;
-  const wrappedHandler = (_data) => {
-    handleDismiss();
-  };
-  
-  pageEventBus.on(eventName, wrappedHandler);
-  pageEventBus.on('dismiss-all-icons', handleDismissAll);
-  
-  pageEventBus._wrappedHandler = wrappedHandler;
-};
-
-const cleanupEventListeners = () => {
-  if (pageEventBus && pageEventBus._wrappedHandler) {
-    pageEventBus.off(`dismiss-icon-${props.id}`, pageEventBus._wrappedHandler);
-  }
-  if (pageEventBus) {
-    pageEventBus.off('dismiss-all-icons', handleDismissAll);
-  }
-};
-
-// Event handlers
 const handleDismiss = () => {
   animateOut();
 };
@@ -249,19 +216,28 @@ const handleDismissAll = () => {
   animateOut();
 };
 
+// Initialize component
+onMounted(() => {
+  animateIn();
+  
+  // Register listeners via tracker
+  const eventName = `dismiss-icon-${props.id}`;
+  tracker.addEventListener(pageEventBus, eventName, handleDismiss);
+  tracker.addEventListener(pageEventBus, 'dismiss-all-icons', handleDismissAll);
+  
+  // Track positioning cleanup
+  tracker.trackResource('positioning', () => cleanupPositioning());
+});
+
 // Public methods
 defineExpose({
-  updatePosition: () => {
-    // Position updates are handled via props reactivity in usePositioning
-  },
+  updatePosition: () => {},
   animateOut
 });
 </script>
 
 <style scoped>
 .translation-icon {
-  /* All dynamic styles are now inline. */
-  /* This block can be used for non-dynamic overrides if needed. */
   animation: slideInUp 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
@@ -272,7 +248,6 @@ defineExpose({
 }
 
 .translation-icon__svg {
-  /* Size is now set on the element */
   display: block;
   pointer-events: none;
   transition: transform 0.2s ease;
@@ -286,46 +261,22 @@ defineExpose({
   transform: scale(0.95);
 }
 
-/* Animations */
 @keyframes slideInUp {
-  from {
-    opacity: 0;
-    transform: scale(0.9);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
 }
 
-/* High contrast mode */
 @media (prefers-contrast: high) {
-  .translation-icon {
-    border-width: 2px !important; /* Keep important for override */
-    border-color: #000 !important;
-  }
-  
-  .translation-icon.is-hovering {
-    background-color: #000 !important;
-  }
-  
-  .translation-icon__svg {
-    filter: invert(1);
-  }
+  .translation-icon { border-width: 2px !important; border-color: #000 !important; }
+  .translation-icon.is-hovering { background-color: #000 !important; }
+  .translation-icon__svg { filter: invert(1); }
 }
 
-/* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
-  .translation-icon {
-    animation: none;
-    transition: none !important; /* Keep important for override */
-  }
+  .translation-icon { animation: none; transition: none !important; }
 }
 
-/* Print styles */
 @media print {
-  .translation-icon {
-    display: none;
-  }
+  .translation-icon { display: none; }
 }
 </style>

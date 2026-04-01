@@ -5,6 +5,7 @@ import { utilsFactory } from '@/utils/UtilsFactory.js';
 import { pageEventBus } from '@/core/PageEventBus.js';
 import ResourceTracker from '@/core/memory/ResourceTracker.js';
 import { NOTIFICATION_TIME } from '../../shared/config/constants.js';
+import { useMobileStore } from '@/store/modules/mobile.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.MESSAGING, 'RevertHandler');
 /**
@@ -17,6 +18,14 @@ export class RevertHandler extends ResourceTracker {
     super('revert-handler')
     this.context = 'content-revert';
     this.isExecuting = false; // Prevent duplicate executions
+
+    // Listen for revert requests from the PageEventBus (used by mobile dashboard and notifications)
+    pageEventBus.on('revert-translations', () => {
+      logger.info('Revert requested via PageEventBus');
+      this.executeRevert().catch(err => {
+        logger.error('Failed to execute revert from PageEventBus:', err);
+      });
+    });
   }
 
   /**
@@ -83,16 +92,30 @@ export class RevertHandler extends ResourceTracker {
       }
 
       // Show a single, unified notification
-      if (totalRevertedCount > 0) {
-        const { getTranslationString } = await utilsFactory.getI18nUtils();
-        const message = `${totalRevertedCount} ${(await getTranslationString("STATUS_Revert_Number")) || "(item(s) reverted)"}`;
-        pageEventBus.emit('show-notification', { message, type: "revert", duration: NOTIFICATION_TIME.REVERT });
-        logger.info('Success notification sent');
+      // CRITICAL: Only the top frame or cross-origin iframes should emit notifications
+      // same-origin iframes share the event bus and UI with the top frame, so we avoid duplicate toasts
+      const isTopFrame = window === window.top;
+      const canAccessTop = (() => {
+        try { return !!(window.top && window.top.location && window.top.location.href); }
+        catch (e) { return false; }
+      })();
+      const shouldEmitNotification = isTopFrame || !canAccessTop;
+
+      if (shouldEmitNotification) {
+        if (totalRevertedCount > 0) {
+          const { getTranslationString } = await utilsFactory.getI18nUtils();
+          const message = `${totalRevertedCount} ${(await getTranslationString("STATUS_Revert_Number")) || "(item(s) reverted)"}`;
+          pageEventBus.emit('show-notification', { message, type: "revert", duration: NOTIFICATION_TIME.REVERT });
+          logger.info('Success notification sent');
+        } else {
+          // const { getTranslationString } = await utilsFactory.getI18nUtils();
+          // const message = (await getTranslationString("STATUS_REVERT_NOT_FOUND")) || "No translations to revert.";
+          // pageEventBus.emit('show-notification', { message, type: "warning", duration: NOTIFICATION_TIME.REVERT });
+          // logger.info('Warning notification sent - no translations found');
+          logger.info('No translations found to revert');
+        }
       } else {
-        const { getTranslationString } = await utilsFactory.getI18nUtils();
-        const message = (await getTranslationString("STATUS_REVERT_NOT_FOUND")) || "No translations to revert.";
-        pageEventBus.emit('show-notification', { message, type: "warning", duration: NOTIFICATION_TIME.REVERT });
-        logger.info('Warning notification sent - no translations found');
+        logger.debug('Skipping notification emission in same-origin iframe (top frame will handle it)');
       }
 
       const result = {
@@ -125,7 +148,22 @@ export class RevertHandler extends ResourceTracker {
    */
   async revertVueTranslations() {
     try {
-      // Get SelectElementManager instance through FeatureManager
+      // First, try to revert Select Element translation using global state
+      // This works even when SelectElementManager is deactivated
+      const { revertSelectElementTranslation } = await import('@/features/element-selection/core/DomTranslatorAdapter.js');
+      const selectElementReverted = await revertSelectElementTranslation();
+
+      if (selectElementReverted) {
+        logger.debug('Reverted Select Element translation via global state');
+        
+        // Update store to reset Revert badge
+        const mobileStore = useMobileStore();
+        mobileStore.setHasElementTranslations(false);
+        
+        return 1;
+      }
+
+      // Fallback: Try to get SelectElementManager instance through FeatureManager
       const selectElementManager = await this.getSelectElementManagerFromFeatureManager();
 
       if (selectElementManager && typeof selectElementManager.revertTranslations === 'function') {
@@ -160,19 +198,13 @@ export class RevertHandler extends ResourceTracker {
         // IconManager removed as it doesn't exist in the current architecture
       };
 
-      // Try to use Element Selection revert system first, fallback to legacy
-      try {
-        const { revertTranslations } = await import("../../features/element-selection/utils/textExtraction.js");
-        const elementSelectionResult = await revertTranslations(context);
-        logger.debug('Used Element Selection revert system');
-        return elementSelectionResult;
-      } catch {
-        logger.debug('Element Selection revert not available, using legacy system');
+      // Element Selection revert system is now handled by SelectElementManager
+      // Skip the old import since textExtraction.js was removed in simplification
+      logger.debug('Element Selection revert handled by SelectElementManager in vue revert');
 
-        // Fallback to legacy system
-        const { revertTranslations } = await import("@/shared/utils/text/extraction.js");
-        return await revertTranslations(context);
-      }
+      // Fallback to legacy system
+      const { revertTranslations } = await import("@/shared/utils/text/extraction.js");
+      return await revertTranslations(context);
     } catch (error) {
       logger.error('Error in legacy revert:', error);
       throw error;

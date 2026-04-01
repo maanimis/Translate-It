@@ -5,6 +5,7 @@
 
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
+import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
 
 const logger = getScopedLogger(LOG_COMPONENTS.TRANSLATION, 'ProviderConfigurations');
 
@@ -319,6 +320,55 @@ export const PROVIDER_CONFIGURATIONS = {
     }
   },
 
+  // Google Translate V2 - Robust translation service settings
+  GoogleTranslateV2: {
+    rateLimit: {
+      maxConcurrent: 2,
+      delayBetweenRequests: 0,
+      initialDelay: 0,
+      subsequentDelay: 200,
+      burstLimit: 5,
+      burstWindow: 1000,
+      adaptiveBackoff: {
+        enabled: true,
+        baseMultiplier: 1.5,
+        maxDelay: 20000,
+        resetAfterSuccess: 2
+      }
+    },
+    batching: {
+      strategy: 'character_limit',
+      characterLimit: 5000,
+      maxChunksPerBatch: 15,
+      delimiter: '\n\n---\n\n'
+    },
+    streaming: {
+      enabled: true,
+      chunkSize: 'character_based',
+      realTimeUpdates: true
+    },
+    errorHandling: {
+      quotaTypes: [
+        'requests_per_minute',
+        'rate_limit',
+        'tkk_error'
+      ],
+      retryStrategies: {
+        'requests_per_minute': { delay: 60000, temporary: true },
+        'rate_limit': { delay: 10000, temporary: true },
+        'tkk_error': { delay: 0, temporary: true }
+      },
+      enableCircuitBreaker: true
+    },
+    features: {
+      supportsImageTranslation: false,
+      supportsBatchRequests: true,
+      supportsThinking: false,
+      reliableJsonMode: false,
+      supportsDictionary: true
+    }
+  },
+
   // Yandex Translate - Free translation service settings
   YandexTranslate: {
     rateLimit: {
@@ -367,6 +417,58 @@ export const PROVIDER_CONFIGURATIONS = {
       supportsThinking: false,
       reliableJsonMode: true,
       supportsDictionary: false // Yandex doesn't support dictionary
+    }
+  },
+
+  // DeepL Translate - Premium translation service settings
+  DeepLTranslate: {
+    rateLimit: {
+      maxConcurrent: 5, // Higher for paid API
+      delayBetweenRequests: 0, // No delay for first request
+      initialDelay: 0,
+      subsequentDelay: 100, // Fast for paid service
+      burstLimit: 10,
+      burstWindow: 1000,
+      adaptiveBackoff: {
+        enabled: true,
+        baseMultiplier: 1.5,
+        maxDelay: 30000,
+        resetAfterSuccess: 2
+      }
+    },
+    batching: {
+      strategy: 'character_limit', // Use character-based chunking
+      characterLimit: 10000, // DeepL's character limit
+      maxChunksPerBatch: 8,
+      delimiter: null // DeepL uses array format
+    },
+    streaming: {
+      enabled: true, // Enable streaming for real-time chunk translation
+      chunkSize: 'character_based',
+      realTimeUpdates: true
+    },
+    errorHandling: {
+      quotaTypes: [
+        'requests_per_minute',
+        'character_limit',
+        'daily_quota',
+        'invalid_api_key'
+      ],
+      retryStrategies: {
+        'requests_per_minute': { delay: 60000, temporary: true },
+        'character_limit': { delay: 1000, temporary: true, retryWithSmallerChunk: true },
+        'daily_quota': { delay: 86400000, temporary: false },
+        'invalid_api_key': { delay: 0, temporary: false }
+      },
+      enableCircuitBreaker: true
+    },
+    features: {
+      supportsImageTranslation: false,
+      supportsBatchRequests: true, // DeepL supports batch requests
+      supportsThinking: false,
+      reliableJsonMode: false,
+      supportsDictionary: false, // DeepL doesn't support dictionary
+      supportsFormality: true // DeepL-specific feature
     }
   },
 
@@ -424,6 +526,102 @@ export const PROVIDER_CONFIGURATIONS = {
       supportsThinking: false,
       reliableJsonMode: true, // Bing usually provides reliable JSON
       supportsDictionary: false // Bing doesn't support dictionary
+    }
+  },
+
+  // Microsoft Edge - Official Edge Browser translation service
+  MicrosoftEdge: {
+    rateLimit: {
+      maxConcurrent: 2,
+      delayBetweenRequests: 0,
+      initialDelay: 0,
+      subsequentDelay: 200,
+      burstLimit: 10, // Increased burst limit
+      burstWindow: 1000,
+      adaptiveBackoff: {
+        enabled: true,
+        baseMultiplier: 1.5,
+        maxDelay: 20000,
+        resetAfterSuccess: 2
+      }
+    },
+    batching: {
+      strategy: 'character_limit',
+      characterLimit: 5000,
+      maxChunksPerBatch: 100, // Increased from 20 to 100 - Edge API supports large batches
+      delimiter: null // Uses JSON array
+    },
+    streaming: {
+      enabled: true,
+      chunkSize: 'character_based',
+      realTimeUpdates: true
+    },
+    errorHandling: {
+      quotaTypes: [
+        'requests_per_minute',
+        'rate_limit',
+        'auth_error'
+      ],
+      retryStrategies: {
+        'requests_per_minute': { delay: 60000, temporary: true },
+        'rate_limit': { delay: 10000, temporary: true },
+        'auth_error': { delay: 0, temporary: true } // Instant retry with new token
+      },
+      enableCircuitBreaker: true
+    },
+    features: {
+      supportsImageTranslation: false,
+      supportsBatchRequests: true,
+      supportsThinking: false,
+      reliableJsonMode: true,
+      supportsDictionary: false
+    }
+  },
+
+  // Lingva - Open-source Google Translate front-end settings
+  Lingva: {
+    rateLimit: {
+      maxConcurrent: 1, // Conservative for public instances
+      delayBetweenRequests: 0,
+      initialDelay: 0,
+      subsequentDelay: 500,
+      burstLimit: 2,
+      burstWindow: 2000,
+      adaptiveBackoff: {
+        enabled: true,
+        baseMultiplier: 2,
+        maxDelay: 30000,
+        resetAfterSuccess: 2
+      }
+    },
+    batching: {
+      strategy: 'character_limit',
+      characterLimit: 4000,
+      maxChunksPerBatch: 5,
+      delimiter: null // Uses JSON POST
+    },
+    streaming: {
+      enabled: true,
+      chunkSize: 'character_based',
+      realTimeUpdates: true
+    },
+    errorHandling: {
+      quotaTypes: [
+        'requests_per_minute',
+        'rate_limit'
+      ],
+      retryStrategies: {
+        'requests_per_minute': { delay: 60000, temporary: true },
+        'rate_limit': { delay: 30000, temporary: true }
+      },
+      enableCircuitBreaker: true
+    },
+    features: {
+      supportsImageTranslation: false,
+      supportsBatchRequests: true,
+      supportsThinking: false,
+      reliableJsonMode: true,
+      supportsDictionary: false
     }
   },
 
@@ -496,32 +694,49 @@ export function getProviderConfiguration(providerName) {
  */
 function normalizeProviderName(providerName) {
   if (!providerName || typeof providerName !== 'string') {
-    return 'Custom';
+    return ProviderNames.CUSTOM;
   }
-  
+
   const name = providerName.toLowerCase();
-  
-  // Map common variations to standard names
+
+  // Map common variations to standard names using ProviderNames constants
   const nameMapping = {
-    'gemini': 'Gemini',
-    'google-gemini': 'Gemini',
-    'googlegemini': 'Gemini',
-    'openai': 'OpenAI',
-    'gpt': 'OpenAI',
-    'chatgpt': 'OpenAI',
-    'deepseek': 'DeepSeek',
-    'openrouter': 'OpenRouter',
-    'webai': 'WebAI',
-    'googletranslate': 'GoogleTranslate',
-    'google-translate': 'GoogleTranslate',
-    'yandextranslate': 'YandexTranslate',
-    'yandex-translate': 'YandexTranslate',
-    'yandex': 'YandexTranslate',
-    'custom': 'Custom',
-    'custom-openai': 'Custom'
+    'gemini': ProviderNames.GEMINI,
+    'google-gemini': ProviderNames.GEMINI,
+    'googlegemini': ProviderNames.GEMINI,
+    'openai': ProviderNames.OPENAI,
+    'gpt': ProviderNames.OPENAI,
+    'chatgpt': ProviderNames.OPENAI,
+    'deepseek': ProviderNames.DEEPSEEK,
+    'openrouter': ProviderNames.OPENROUTER,
+    'webai': ProviderNames.WEBAI,
+    'googletranslate': ProviderNames.GOOGLE_TRANSLATE,
+    'google-translate': ProviderNames.GOOGLE_TRANSLATE,
+    'googlev2': ProviderNames.GOOGLE_TRANSLATE_V2,
+    'google-v2': ProviderNames.GOOGLE_TRANSLATE_V2,
+    'google-robust': ProviderNames.GOOGLE_TRANSLATE_V2,
+    'yandextranslate': ProviderNames.YANDEX_TRANSLATE,
+    'yandex-translate': ProviderNames.YANDEX_TRANSLATE,
+    'yandex': ProviderNames.YANDEX_TRANSLATE,
+    'deepl': ProviderNames.DEEPL_TRANSLATE,
+    'deepltranslate': ProviderNames.DEEPL_TRANSLATE,
+    'deep-l': ProviderNames.DEEPL_TRANSLATE,
+    'bingtranslate': ProviderNames.BING_TRANSLATE,
+    'bing-translate': ProviderNames.BING_TRANSLATE,
+    'bing': ProviderNames.BING_TRANSLATE,
+    'edge': ProviderNames.MICROSOFT_EDGE,
+    'microsoftedge': ProviderNames.MICROSOFT_EDGE,
+    'microsoft-edge': ProviderNames.MICROSOFT_EDGE,
+    'lingva': ProviderNames.LINGVA,
+    'lingvatranslate': ProviderNames.LINGVA,
+    'lingva-translate': ProviderNames.LINGVA,
+    'browser': ProviderNames.BROWSER_API,
+    'browserranslate': ProviderNames.BROWSER_API,
+    'custom': ProviderNames.CUSTOM,
+    'custom-openai': ProviderNames.CUSTOM
   };
-  
-  return nameMapping[name] || 'Custom';
+
+  return nameMapping[name] || ProviderNames.CUSTOM;
 }
 
 /**

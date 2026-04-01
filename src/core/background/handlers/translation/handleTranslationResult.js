@@ -4,6 +4,7 @@ import { TranslationMode } from '@/shared/config/config.js';
 import { MessageActions } from '@/shared/messaging/core/MessageActions.js';
 import browser from 'webextension-polyfill';
 import { unifiedTranslationService } from '@/core/services/translation/UnifiedTranslationService.js';
+import ExtensionContextManager from '@/core/extensionContext.js';
 
 // Track processed results to prevent duplicates
 const processedResults = new Map();
@@ -79,9 +80,9 @@ export async function handleTranslationResult(message) {
       // No request found, check if this is a broadcast-only result
       // Skip field mode results as they're handled via direct response
       const needsBroadcast = message.data?.needsBroadcast ||
-                            message.data?.context === 'select-element' ||
+                            message.data?.context === TranslationMode.Select_Element ||
                             (message.data?.translatedText && message.data?.translatedText.length > 2000) &&
-                            !(message.data?.translationMode === 'field' || message.data?.translationMode === TranslationMode.Field);
+                            !(message.data?.translationMode === TranslationMode.LEGACY_FIELD || message.data?.translationMode === TranslationMode.Field);
 
       if (needsBroadcast) {
         // Broadcast to all tabs
@@ -99,8 +100,13 @@ export async function handleTranslationResult(message) {
             if (response?.handled) {
               handled = true;
             }
-          } catch {
-            // Tab might not have content script, ignore
+          } catch (sendError) {
+            // Use centralized context error detection
+            if (ExtensionContextManager.isContextError(sendError)) {
+              ExtensionContextManager.handleContextError(sendError, 'translation-result-broadcast');
+            } else {
+              logger.debug(`Could not send translation result to tab ${tab.id}:`, sendError.message);
+            }
           }
         }
 

@@ -5,7 +5,7 @@ import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import ExtensionContextManager from '@/core/extensionContext.js';
 import { unifiedTranslationCoordinator } from './UnifiedTranslationCoordinator.js';
 import { streamingTimeoutManager } from './StreamingTimeoutManager.js';
-import { matchErrorToType } from '@/shared/error-management/ErrorMatcher.js';
+import { isFatalError } from '@/shared/error-management/ErrorMatcher.js';
 import { ErrorTypes } from '@/shared/error-management/ErrorTypes.js';
 import { ErrorHandler } from '@/shared/error-management/ErrorHandler.js';
 
@@ -47,6 +47,7 @@ const OPERATION_TIMEOUTS = {
   'TRANSLATE_PAGE': 20000,
   'TRANSLATE_TEXT': 15000,
   'TRANSLATE_IMAGE': 18000,
+  'page-translate-batch': 60000,
   'FETCH_TRANSLATION': 10000,
   'PROCESS_SELECTED_ELEMENT': 8000,
   'TEST_PROVIDER': 8000,
@@ -85,19 +86,38 @@ function getTimeoutForAction(action, context = null) {
 }
 
 /**
- * Creates a promise that rejects after a specified timeout.
+ * Creates a promise that rejects after a specified timeout and a function to clear it.
  * @param {number} ms - Timeout in milliseconds.
  * @param {string} action - The action name for the error message.
- * @returns {Promise<never>} A promise that always rejects.
+ * @returns {{promise: Promise<never>, clear: function}} An object with the timeout promise and a clear function.
  */
-function timeout(ms, action) {
-  return new Promise((_, reject) => {
-    setTimeout(() => {
+function createTimeout(ms, action) {
+  let timeoutId;
+  const promise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
       const timeoutError = new Error(`Operation '${action}' timed out after ${ms}ms`);
       timeoutError.type = 'OPERATION_TIMEOUT';
+
+      // Handle through ErrorHandler for proper error management (silent for messaging timeouts)
+      if (ExtensionContextManager.isValidSync()) {
+        ErrorHandler.getInstance().handle(timeoutError, {
+          context: 'unified-messaging-timeout',
+          action: action,
+          showToast: false, // Caller will handle UI feedback
+          metadata: { timeoutMs: ms }
+        }).catch(handlerError => {
+          getLogger().warn('ErrorHandler failed to handle timeout:', handlerError);
+        });
+      }
+
       reject(timeoutError);
     }, ms);
   });
+
+  return {
+    promise,
+    clear: () => clearTimeout(timeoutId)
+  };
 }
 
 /**
@@ -118,11 +138,10 @@ export async function sendMessage(message, options = {}) {
     try {
       return await unifiedTranslationCoordinator.coordinateTranslation(message, options);
     } catch (error) {
-      // Check if this is a user cancellation - if so, don't attempt fallback
-      const errorType = matchErrorToType(error);
-      if (errorType === ErrorTypes.USER_CANCELLED) {
-        getLogger().debug('Translation coordination cancelled, not attempting fallback:', error);
-        throw error; // Re-throw cancellation error without fallback
+      // Check if this is a user cancellation or non-retryable error - if so, don't attempt fallback
+      if (isFatalError(error)) {
+        getLogger().debug('Translation failed with non-retryable error, not attempting fallback:', error);
+        throw error; // Re-throw error without fallback
       }
 
       // If coordination fails, fall back to regular messaging
@@ -161,11 +180,37 @@ export async function sendMessage(message, options = {}) {
         // For streaming timeouts, we should not fallback as the user likely cancelled
         if (message.context === 'select-element' || (message.data && message.data.mode === 'select_element')) {
           getLogger().debug('Streaming timeout detected for select element, not attempting fallback');
-          throw new Error('Streaming translation timed out - user likely cancelled');
+          const timeoutError = new Error('Streaming translation timed out - user likely cancelled');
+
+          // Handle through ErrorHandler before throwing
+          if (ExtensionContextManager.isValidSync()) {
+            ErrorHandler.getInstance().handle(timeoutError, {
+              context: 'unified-messaging-streaming-timeout',
+              messageId: message.messageId,
+              showToast: false
+            }).catch(handlerError => {
+              getLogger().warn('ErrorHandler failed to handle streaming timeout:', handlerError);
+            });
+          }
+
+          throw timeoutError;
         }
 
         getLogger().debug('Timeout detected, not attempting fallback as operation is likely cancelled');
-        throw new Error('Translation timed out - operation cancelled');
+        const timeoutError = new Error('Translation timed out - operation cancelled');
+
+        // Handle through ErrorHandler before throwing
+        if (ExtensionContextManager.isValidSync()) {
+          ErrorHandler.getInstance().handle(timeoutError, {
+            context: 'unified-messaging-timeout-fallback',
+            messageId: message.messageId,
+            showToast: false
+          }).catch(handlerError => {
+            getLogger().warn('ErrorHandler failed to handle timeout:', handlerError);
+          });
+        }
+
+        throw timeoutError;
       }
 
       // Create a new message with a fresh messageId to avoid duplicate detection
@@ -191,10 +236,12 @@ export async function sendMessage(message, options = {}) {
  * Send regular (non-streaming) message
  */
 export async function sendRegularMessage(message, options = {}) {
-  const { timeout: customTimeout } = options;
+  const { timeout: customTimeout, silent = false } = options;
   const actionTimeout = customTimeout || getTimeoutForAction(message.action, message.context || message.data);
 
-  getLogger().debug(`📤 Sending ${message.action} to background (${actionTimeout}ms timeout)`);
+  if (!silent) {
+    getLogger().debug(`Sending ${message.action} to background (${actionTimeout}ms timeout)`);
+  }
 
   try {
     if (!ExtensionContextManager.isValidSync()) {
@@ -205,70 +252,83 @@ export async function sendRegularMessage(message, options = {}) {
 
     // Check if streaming operation was cancelled before sending the message
     if (message.messageId && streamingTimeoutManager.shouldContinue(message.messageId) === false) {
-      getLogger().debug('Streaming operation was cancelled, not sending message');
-      throw new Error('Translation cancelled by user');
+      if (!silent) {
+        getLogger().debug('Streaming operation was cancelled, not sending message');
+      }
+      const cancelError = new Error(ErrorTypes.USER_CANCELLED);
+      cancelError.type = ErrorTypes.USER_CANCELLED;
+      throw cancelError;
     }
 
     const sendPromise = browser.runtime.sendMessage(message);
 
+    // Create a timeout promise and clear function
+    const { promise: timeoutPromise, clear: clearTimeoutTimer } = createTimeout(actionTimeout, message.action);
+
     // Create a cancellation promise for this messageId
-    let isCancelled = false;
+    let cancellationInterval;
     const cancellationPromise = new Promise((_, reject) => {
       const checkCancellation = () => {
         // Check streaming timeout manager first
         if (message.messageId && streamingTimeoutManager.shouldContinue(message.messageId) === false) {
-          isCancelled = true;
-          reject(new Error('Translation cancelled by user'));
+          if (cancellationInterval) clearInterval(cancellationInterval);
+          const cancelError = new Error(ErrorTypes.USER_CANCELLED);
+          cancelError.type = ErrorTypes.USER_CANCELLED;
+          reject(cancelError);
           return;
         }
 
         // Also check for global ESC flag (faster response to user ESC)
         if (window.selectElementHandlingESC === true) {
-          isCancelled = true;
-          getLogger().debug('ESC flag detected, cancelling message immediately');
+          if (cancellationInterval) clearInterval(cancellationInterval);
+          if (!silent) {
+            getLogger().debug('ESC flag detected, cancelling message immediately');
+          }
           const cancelError = new Error('Translation cancelled by user ESC');
           cancelError.type = 'USER_CANCELLED';
           reject(cancelError);
           return;
         }
-
-        // Check again more frequently - every 50ms for faster response
-        if (!isCancelled) {
-          setTimeout(checkCancellation, 50);
-        }
       };
 
       // Start cancellation checking immediately for faster response to ESC
-      setTimeout(checkCancellation, 50);
+      cancellationInterval = setInterval(checkCancellation, 50);
     });
 
-    const response = await Promise.race([
-      sendPromise,
-      cancellationPromise,
-      timeout(actionTimeout, message.action),
-    ]);
+    let response;
+    try {
+      response = await Promise.race([
+        sendPromise,
+        cancellationPromise,
+        timeoutPromise,
+      ]);
+    } finally {
+      // CRITICAL: Clear timeout and cancellation interval once the race is settled
+      clearTimeoutTimer();
+      if (cancellationInterval) clearInterval(cancellationInterval);
+    }
 
     if (!response) {
       throw new Error(`No response received for ${message.action}`);
     }
 
     if (response.success === false) {
-      // Debug logging to understand response structure
-      getLogger().debug('Response with success=false received:', {
-        response,
-        responseKeys: Object.keys(response),
-        hasError: !!response.error,
-        hasMessage: !!response.message,
-        errorType: typeof response.error,
-        messageType: typeof response.message
-      });
+      // Simplified logging to avoid console noise from large partialResults
+      if (!silent) {
+        getLogger().debug(`Response with success=false received for ${message.action}:`, {
+          error: response.error?.message || response.error || 'Unknown error',
+          hasPartialResults: !!response.partialResults
+        });
+      }
 
       // Import tabPermissions utilities to check for restricted pages
       const { isRestrictedUrl } = await import('@/core/tabPermissions.js');
 
       // Check if this is a restricted page error - if so, return the response instead of throwing
       if (response.isRestrictedPage || (response.tabUrl && isRestrictedUrl(response.tabUrl))) {
-        getLogger().debug('Restricted page detected, returning response without throwing error');
+        if (!silent) {
+          getLogger().debug('Restricted page detected, returning response without throwing error');
+        }
         return response;
       }
 
@@ -276,14 +336,23 @@ export async function sendRegularMessage(message, options = {}) {
       const errorMessage = response.error?.message || response.message || response.error || 'An unknown error occurred';
       const error = new Error(errorMessage);
 
-      // Copy all response properties to error object for error matching
-      Object.assign(error, response.error || {});
-      Object.assign(error, response);
+      // Copy essential response properties to error object for error matching
+      // Avoid copying large objects like partialResults directly if possible
+      if (response.error && typeof response.error === 'object') {
+        Object.keys(response.error).forEach(key => {
+          if (key !== 'partialResults') error[key] = response.error[key];
+        });
+      }
+      Object.keys(response).forEach(key => {
+        if (key !== 'partialResults' && key !== 'error') error[key] = response[key];
+      });
 
       throw error;
     }
 
-    getLogger().debug(`✅ Regular message response received: ${message.action}`);
+    if (!silent) {
+      getLogger().debug(`Regular message response received: ${message.action}`);
+    }
 
     return response;
   } catch (error) {
@@ -293,10 +362,9 @@ export async function sendRegularMessage(message, options = {}) {
     
     const errorType = matchErrorToType(error);
 
-    // Debug log to see what error type is detected
+    // Simplified debug log
     getLogger().debug(`Error type detected: ${errorType} for message: ${message.action}`, {
-      errorMessage: error.message,
-      errorObject: error
+      errorMessage: error.message
     });
 
     // Handle different error types with appropriate logging levels

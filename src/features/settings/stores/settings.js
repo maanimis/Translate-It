@@ -1,9 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed, onUnmounted, getCurrentInstance } from 'vue'
 import browser from 'webextension-polyfill'
-import { CONFIG } from '@/shared/config/config.js'
+import { CONFIG, TranslationMode, SelectionTranslationMode } from '@/shared/config/config.js'
+import { MOBILE_CONSTANTS } from '@/shared/config/constants.js'
+import { ProviderRegistryIds } from '@/features/translation/providers/ProviderConstants.js'
 import secureStorage from '@/shared/storage/core/SecureStorage.js'
 import { storageManager } from '@/shared/storage/core/StorageCore.js'
+import { runSettingsMigrations } from '@/shared/config/settingsMigrations.js'
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 const logger = getScopedLogger(LOG_COMPONENTS.SETTINGS, 'settings');
@@ -12,21 +15,34 @@ const logger = getScopedLogger(LOG_COMPONENTS.SETTINGS, 'settings');
 function getDefaultSettings() {
   return {
     THEME: CONFIG.THEME || 'auto',
-    APPLICATION_LOCALIZE: CONFIG.APPLICATION_LOCALIZE || 'English',
+    APPLICATION_LOCALIZE: CONFIG.APPLICATION_LOCALIZE || 'en',
     EXTENSION_ENABLED: CONFIG.EXTENSION_ENABLED ?? true,
-    TRANSLATION_API: CONFIG.TRANSLATION_API || 'google',
-    SOURCE_LANGUAGE: CONFIG.SOURCE_LANGUAGE || 'auto',
-    TARGET_LANGUAGE: CONFIG.TARGET_LANGUAGE || 'English',
-    selectionTranslationMode: CONFIG.selectionTranslationMode || 'onClick',
-    COPY_REPLACE: CONFIG.COPY_REPLACE || 'copy',
+    TRANSLATION_API: CONFIG.TRANSLATION_API || ProviderRegistryIds.GOOGLE_V2,
+    MODE_PROVIDERS: CONFIG.MODE_PROVIDERS || {
+      [TranslationMode.Field]: null,
+      [TranslationMode.Select_Element]: null,
+      [TranslationMode.Selection]: null,
+      [TranslationMode.Page]: null,
+      [TranslationMode.Dictionary_Translation]: null,
+      [TranslationMode.Popup_Translate]: null,
+      [TranslationMode.Sidepanel_Translate]: null,
+      [TranslationMode.ScreenCapture]: null
+    },
+    SOURCE_LANGUAGE: CONFIG.SOURCE_LANGUAGE || 'en',
+    TARGET_LANGUAGE: CONFIG.TARGET_LANGUAGE || 'fa',
+    TIMEOUT: CONFIG.TIMEOUT || 30000,
+    selectionTranslationMode: CONFIG.selectionTranslationMode || SelectionTranslationMode.ON_CLICK,
+    COPY_REPLACE: CONFIG.COPY_REPLACE || 'replace',
     REPLACE_SPECIAL_SITES: CONFIG.REPLACE_SPECIAL_SITES ?? true,
     PROMPT_TEMPLATE: CONFIG.PROMPT_TEMPLATE || 'Please translate the following text from $_{SOURCE} to $_{TARGET}:\n\n$_{TEXT}',
     API_KEY: CONFIG.API_KEY || '',
+    GEMINI_API_KEY: CONFIG.GEMINI_API_KEY || '',
     GEMINI_API_URL: CONFIG.GEMINI_API_URL || '',
     GEMINI_MODEL: CONFIG.GEMINI_MODEL || 'gemini-2.5-flash',
-    GEMINI_THINKING_ENABLED: CONFIG.GEMINI_THINKING_ENABLED ?? true,
+    GEMINI_THINKING_ENABLED: CONFIG.GEMINI_THINKING_ENABLED ?? false,
+    LINGVA_API_URL: CONFIG.LINGVA_API_URL || 'https://lingva.ml',
     WEBAI_API_URL: CONFIG.WEBAI_API_URL || 'http://localhost:6969/translate',
-    WEBAI_API_MODEL: CONFIG.WEBAI_API_MODEL || 'gemini-2.0-flash',
+    WEBAI_API_MODEL: CONFIG.WEBAI_API_MODEL || 'gemini-2.5-flash',
     OPENAI_API_KEY: CONFIG.OPENAI_API_KEY || '',
     OPENAI_API_MODEL: CONFIG.OPENAI_API_MODEL || 'gpt-4o',
     OPENROUTER_API_KEY: CONFIG.OPENROUTER_API_KEY || '',
@@ -36,6 +52,15 @@ function getDefaultSettings() {
     CUSTOM_API_URL: CONFIG.CUSTOM_API_URL || '',
     CUSTOM_API_KEY: CONFIG.CUSTOM_API_KEY || '',
     CUSTOM_API_MODEL: CONFIG.CUSTOM_API_MODEL || '',
+    // DeepL Settings
+    DEEPL_API_KEY: CONFIG.DEEPL_API_KEY || '',
+    DEEPL_API_TIER: CONFIG.DEEPL_API_TIER || 'free',
+    DEEPL_FORMALITY: CONFIG.DEEPL_FORMALITY || 'default',
+    DEEPL_BETA_LANGUAGES_ENABLED: CONFIG.DEEPL_BETA_LANGUAGES_ENABLED ?? true,
+    // browser Translation API Settings
+    BROWSER_TRANSLATE_ENABLED: CONFIG.BROWSER_TRANSLATE_ENABLED ?? true,
+    BROWSER_TRANSLATE_AUTO_DOWNLOAD: CONFIG.BROWSER_TRANSLATE_AUTO_DOWNLOAD ?? true,
+    SHOW_DESKTOP_FAB: CONFIG.SHOW_DESKTOP_FAB ?? false,
     TRANSLATE_ON_TEXT_FIELDS: CONFIG.TRANSLATE_ON_TEXT_FIELDS ?? false,
     ENABLE_SHORTCUT_FOR_TEXT_FIELDS: CONFIG.ENABLE_SHORTCUT_FOR_TEXT_FIELDS ?? true,
     TEXT_FIELD_SHORTCUT: CONFIG.TEXT_FIELD_SHORTCUT || 'Ctrl+/',
@@ -43,10 +68,12 @@ function getDefaultSettings() {
     TRANSLATE_ON_TEXT_SELECTION: CONFIG.TRANSLATE_ON_TEXT_SELECTION ?? true,
     REQUIRE_CTRL_FOR_TEXT_SELECTION: CONFIG.REQUIRE_CTRL_FOR_TEXT_SELECTION ?? false,
     ENABLE_DICTIONARY: CONFIG.ENABLE_DICTIONARY ?? true,
-    ACTIVE_SELECTION_ICON_ON_TEXTFIELDS: CONFIG.ACTIVE_SELECTION_ICON_ON_TEXTFIELDS ?? false,
+    ENABLE_SCREEN_CAPTURE: CONFIG.ENABLE_SCREEN_CAPTURE ?? true,
+    ACTIVE_SELECTION_ICON_ON_TEXTFIELDS: CONFIG.ACTIVE_SELECTION_ICON_ON_TEXTFIELDS ?? true,
     ENHANCED_TRIPLE_CLICK_DRAG: CONFIG.ENHANCED_TRIPLE_CLICK_DRAG ?? false,
+    MOBILE_UI_MODE: CONFIG.MOBILE_UI_MODE || MOBILE_CONSTANTS.UI_MODE.AUTO,
+    MOBILE_PAGE_TRANSLATION_AUTO_CLOSE: CONFIG.MOBILE_PAGE_TRANSLATION_AUTO_CLOSE ?? false,
     DEBUG_MODE: CONFIG.DEBUG_MODE ?? false,
-    USE_MOCK: CONFIG.USE_MOCK ?? false,
     EXCLUDED_SITES: CONFIG.EXCLUDED_SITES || [],
     // Proxy Settings
     PROXY_ENABLED: CONFIG.PROXY_ENABLED ?? false,
@@ -58,6 +85,20 @@ function getDefaultSettings() {
     // Font Settings
     TRANSLATION_FONT_FAMILY: CONFIG.TRANSLATION_FONT_FAMILY || 'auto',
     TRANSLATION_FONT_SIZE: CONFIG.TRANSLATION_FONT_SIZE || '14',
+    // Whole Page Translation Settings
+    WHOLE_PAGE_TRANSLATION_ENABLED: CONFIG.WHOLE_PAGE_TRANSLATION_ENABLED ?? true,
+    WHOLE_PAGE_LAZY_LOADING: CONFIG.WHOLE_PAGE_LAZY_LOADING ?? true,
+    WHOLE_PAGE_AUTO_TRANSLATE_ON_DOM_CHANGES: CONFIG.WHOLE_PAGE_AUTO_TRANSLATE_ON_DOM_CHANGES ?? true,
+    WHOLE_PAGE_EXCLUDED_SELECTORS: CONFIG.WHOLE_PAGE_EXCLUDED_SELECTORS || ["script", "style", "code", "pre", "noscript", "meta", "textarea", "link", "time", "kbd", "svg", "ruby", "rt", "rp", "math", "d-math", "samp", ".notranslate", "[contenteditable='true']", "[translate=no]", ".social-share", ".share-nav", "[data-toolbar=share]", ".o-share", ".prism-code", ".enlighter-code", ".rc-CodeBlock", "[role=code]", "table.highlight", "hypothesis-highlight", ".hypothesis-highlight", ".material-icons", "material-icon", "span[class^=material-symbols-]", ".google-symbols", "i.fa", "i[class^=fa-]", "visuallyhidden", "[data-translate-ignore]"],
+    WHOLE_PAGE_ATTRIBUTES_TO_TRANSLATE: CONFIG.WHOLE_PAGE_ATTRIBUTES_TO_TRANSLATE || ["title", "alt", "placeholder", "label", "value"],
+    WHOLE_PAGE_MAX_ELEMENTS: CONFIG.WHOLE_PAGE_MAX_ELEMENTS || 10000,
+    WHOLE_PAGE_CHUNK_SIZE: CONFIG.WHOLE_PAGE_CHUNK_SIZE || 250,
+    WHOLE_PAGE_MAX_CHARS: CONFIG.WHOLE_PAGE_MAX_CHARS || 5000,
+    WHOLE_PAGE_AI_MAX_CHARS: CONFIG.WHOLE_PAGE_AI_MAX_CHARS || 15000,
+    WHOLE_PAGE_DEBOUNCE_DELAY: CONFIG.WHOLE_PAGE_DEBOUNCE_DELAY || 500,
+    WHOLE_PAGE_ROOT_MARGIN: CONFIG.WHOLE_PAGE_ROOT_MARGIN || '10px',
+    WHOLE_PAGE_PROGRESS_UPDATE_INTERVAL: CONFIG.WHOLE_PAGE_PROGRESS_UPDATE_INTERVAL || 100,
+    WHOLE_PAGE_SHOW_ORIGINAL_ON_HOVER: CONFIG.WHOLE_PAGE_SHOW_ORIGINAL_ON_HOVER ?? false,
     translationHistory: []
   };
 }
@@ -121,6 +162,10 @@ export const useSettingsStore = defineStore('settings', () => {
         logger.debug('Settings merged from storage');
 
         isInitialized.value = true;
+        
+        // Setup listener for future changes
+        await setupStorageListener();
+        
         return current;
       } catch (error) {
         logger.error('Failed to load settings:', error);
@@ -145,9 +190,31 @@ export const useSettingsStore = defineStore('settings', () => {
       __saveTimer = setTimeout(() => performSave().then(resolve).catch(reject), 120);
     });
   }
+
+  /**
+   * Sanitizes settings before saving to prevent logical inconsistencies.
+   * - If Desktop FAB is disabled, ensure selectionTranslationMode is not set to ON_FAB_CLICK.
+   */
+  const sanitizeSettings = () => {
+    const s = settings.value;
+    
+    // 1. FAB Consistency: If FAB is disabled, we can't use it for translation trigger.
+    // Fallback to ON_CLICK (Show icon) to ensure user has a way to translate.
+    if (s.SHOW_DESKTOP_FAB === false && s.selectionTranslationMode === SelectionTranslationMode.ON_FAB_CLICK) {
+      logger.info('Sanitizing settings: FAB disabled, falling back selectionTranslationMode to ON_CLICK');
+      s.selectionTranslationMode = SelectionTranslationMode.ON_CLICK;
+    }
+    
+    // 2. Extension State: If extension is disabled, ensure we still allow some internal state to be consistent
+    // (Add more sanitization rules here if needed in the future)
+  }
+
   async function performSave() {
     isSaving.value = true;
     try {
+      // Run sanitization before saving
+      sanitizeSettings();
+      
       await storageManager.set(settings.value);
       return true;
     } catch (error) {
@@ -207,23 +274,29 @@ export const useSettingsStore = defineStore('settings', () => {
   
   const exportSettings = async (password = '') => {
     try {
-      // Lazy read manifest version (avoid hardcoding); fallback to undefined if runtime not available.
+      const settingsToExport = await loadSettings();
+      
+      // Use the centralized secureStorage utility for consistent export behavior
+      // This will handle API key encryption and exclude large data like history
+      const exportData = await secureStorage.prepareForExport(
+        settingsToExport,
+        password
+      );
+
+      // Add additional metadata for the export
       let version;
       try { 
         version = browser.runtime.getManifest()?.version; 
       } catch {
         // Browser runtime not available, use undefined
       }
-      const exportData = {
-        ...settings.value,
+
+      return {
+        ...exportData,
         _exported: true,
         _timestamp: new Date().toISOString(),
         _version: version
       };
-      if (password) {
-        exportData._hasEncryptedKeys = true; // placeholder flag
-      }
-      return exportData;
     } catch (error) {
       logger.error('Failed to export settings:', error);
       throw error;
@@ -234,7 +307,41 @@ export const useSettingsStore = defineStore('settings', () => {
     try {
       logger.info('[Import] Starting');
       const processedSettings = await secureStorage.processImportedSettings(importData, password);
-      Object.assign(settings.value, processedSettings);
+
+      // 1. Merge imported settings with default settings to ensure no missing keys
+      const defaultSettings = getDefaultSettings();
+      const mergedSettings = { ...defaultSettings, ...processedSettings };
+      
+      // Special handling for nested MODE_PROVIDERS to ensure deep merge
+      if (processedSettings.MODE_PROVIDERS) {
+        mergedSettings.MODE_PROVIDERS = {
+          ...defaultSettings.MODE_PROVIDERS,
+          ...processedSettings.MODE_PROVIDERS
+        };
+      }
+
+      // 2. Run the centralized migration logic on the imported data
+      // This handles MODE_PROVIDERS (underscore to hyphen), API_KEY, etc.
+      const { updates, logs } = await runSettingsMigrations(mergedSettings);
+
+      // 3. Apply all migrated updates to our final settings object
+      Object.assign(mergedSettings, updates);
+      
+      if (logs && logs.length > 0) {
+        logger.info('[Import] Migrations applied:', logs);
+      }
+
+      // Temporarily remove storage listener to prevent interference during import
+      if (storageListener) {
+        storageManager.off('change', storageListener);
+        storageListener = null;
+      }
+
+      // 4. Update local state with the fully migrated and merged settings
+      // We replace the entire settings object to ensure no stale old keys remain
+      Object.keys(settings.value).forEach(k => delete settings.value[k]);
+      Object.assign(settings.value, mergedSettings);
+
       // Normalize possible empty regex placeholders
       if (typeof settings.value.RTL_REGEX === 'object' && settings.value.RTL_REGEX !== null && Object.keys(settings.value.RTL_REGEX).length === 0) {
         settings.value.RTL_REGEX = CONFIG.RTL_REGEX;
@@ -242,14 +349,23 @@ export const useSettingsStore = defineStore('settings', () => {
       if (typeof settings.value.PERSIAN_REGEX === 'object' && settings.value.PERSIAN_REGEX !== null && Object.keys(settings.value.PERSIAN_REGEX).length === 0) {
         settings.value.PERSIAN_REGEX = CONFIG.PERSIAN_REGEX;
       }
+
       await saveAllSettings();
-      logger.info('[Import] Completed – reloading UI');
+
+      // Re-setup storage listener after import is complete
+      await setupStorageListener();
+
+      logger.info('[Import] Completed');
+
+      // Reload page to apply new settings
       if (typeof window !== 'undefined') {
         window.location.reload();
       }
       return true;
     } catch (error) {
       logger.error('[Import] Failed:', error);
+      // Re-setup storage listener on error
+      await setupStorageListener();
       throw error;
     }
   }
@@ -294,27 +410,29 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
   
+  /**
+   * Resets the store to its default state.
+   * Required for setup-style Pinia stores to support $reset().
+   */
+  function $reset() {
+    settings.value = getDefaultSettings()
+    isInitialized.value = false
+    isLoading.value = false
+    isSaving.value = false
+  }
     
   // Storage change listener
   let storageListener = null
 
   // Handle storage changes from other parts of extension
-  const handleStorageChange = (changes, areaName) => {
-    if (areaName === 'local') {
-      for (const key in changes) {
-        if (Object.prototype.hasOwnProperty.call(changes, key)) {
-          const newValue = changes[key].newValue
-          // Update the reactive settings ref
-          if (settings.value[key] !== newValue) {
-            const oldValue = settings.value[key]
-            settings.value[key] = newValue
+  const handleStorageChange = ({ key, newValue, oldValue }) => {
+    // Update the reactive settings ref
+    if (settings.value[key] !== newValue) {
+      settings.value[key] = newValue
 
-            // Special handling for DEBUG_MODE - sync with logging system
-            if (key === 'DEBUG_MODE' && oldValue !== newValue) {
-              handleDebugModeChange(Boolean(newValue))
-            }
-          }
-        }
+      // Special handling for DEBUG_MODE - sync with logging system
+      if (key === 'DEBUG_MODE' && oldValue !== newValue) {
+        handleDebugModeChange(Boolean(newValue))
       }
     }
   }
@@ -362,8 +480,6 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // Initialize settings on store creation and setup listener
   loadSettings().then(async () => {
-    setupStorageListener()
-
     // Initialize DebugModeBridge after settings are loaded
     try {
       const { debugModeBridge } = await import('@/shared/logging/DebugModeBridge.js')
@@ -414,7 +530,8 @@ export const useSettingsStore = defineStore('settings', () => {
     exportSettings,
     importSettings,
     getSetting,
-    validateSettings
+    validateSettings,
+    $reset
   }
 })
 

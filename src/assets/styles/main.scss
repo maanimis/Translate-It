@@ -15,6 +15,9 @@
 @use "./components/ti-window";
 @use "./components/ti-field-icon";
 @use "./components/markdown";
+@use "./components/options-tabs";
+@use "../../components/shared/PageTranslationStatus";
+@use "../../features/page-translation/components/PageTranslationButton";
 
 // Utility styles - Helpers and utilities
 @use "./utilities/utilities";
@@ -23,22 +26,31 @@
 
 // Context-specific styles - these should be overridden by specific entry points
 
-/* Popup context (400px width) - only applied in popup.js */
+/* Popup context - Fully fluid but with base size for Desktop Extension */
 body.popup-context {
-  width: 400px !important;
-  max-height: 600px !important;
-  overflow: hidden !important;
+  width: 100% !important;
+  /* Set a base width/height so the browser knows the minimum size to open the popup */
+  min-width: 450px !important; 
+  min-height: 400px !important;
+  height: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow-x: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  background-color: var(--bg-color) !important;
 }
 
 /* Options context - only applied in options.js */
 body.options-context {
   min-height: 100vh !important;
+  min-height: 100svh !important;
   overflow: hidden !important;
   display: flex !important;
   justify-content: center !important;
-  align-items: center !important;
-  padding: 0 !important; /* No padding on body */
-  margin: 0; /* Ensure no default margin */
+  align-items: center !important; /* Restore centering at body level */
+  padding: 0 !important;
+  margin: 0; 
 }
 
 body.sidepanel-context #app {

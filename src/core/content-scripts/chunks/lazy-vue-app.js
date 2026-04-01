@@ -4,6 +4,8 @@
 import { getScopedLogger } from "@/shared/logging/logger.js";
 import { LOG_COMPONENTS } from "@/shared/logging/logConstants.js";
 import ExtensionContextManager from '@/core/extensionContext.js';
+import { utilsFactory } from '@/utils/UtilsFactory.js';
+import { UI_HOST_IDS } from '@/shared/config/constants.js';
 
 // Import Vue and dependencies (these will be chunked separately by Vite)
 import { createApp } from 'vue';
@@ -17,6 +19,29 @@ import { setupTrustedTypesCompatibility } from '@/shared/vue/vue-utils.js';
 
 // Import global styles for the app
 import contentAppStyles from '@/assets/styles/content-app-global.scss?inline';
+
+/**
+ * AUTOMATED CSS GLOB IMPORT SYSTEM
+ * Eagerly imports standalone SCSS files for components rendered in the Shadow DOM.
+ * We use a strict whitelist to prevent bloating the host page with unnecessary styles.
+ */
+const standaloneStyles = import.meta.glob([
+  // 1. Core UI components injected into the content script (FAB, Tooltip, etc.)
+  '@/apps/content/components/**/*.scss',
+  
+  // 2. Shared UI components (Status indicators, etc.) used in both Shadow DOM and Extension pages
+  '@/components/shared/**/*.scss',
+  '@/components/base/**/*.scss',
+  
+  // 3. Feature-specific UI components (Translation results, Result windows, etc.)
+  '@/features/**/components/**/*.scss',
+  
+  // EXCLUSION: Skip Sass partials (files starting with _) as they are only for @use
+  '!**/_*.scss'
+], { query: '?inline', import: 'default', eager: true });
+
+// Combine all standalone styles into a single string
+const allComponentStyles = Object.values(standaloneStyles).join('\n');
 
 const logger = getScopedLogger(LOG_COMPONENTS.CONTENT, 'LazyVueApp');
 
@@ -120,6 +145,14 @@ export async function loadVueApp(contentCore) {
 
     app.use(pinia);
 
+    // Load i18n plugin asynchronously to prevent TDZ
+    try {
+      const { i18nPlugin } = await utilsFactory.getI18nUtils();
+      app.use(i18nPlugin);
+    } catch (error) {
+      logger.warn('Failed to load i18n plugin in content app:', error);
+    }
+
     // Mount the app
     const mountPoint = await createMountPoint();
     app.mount(mountPoint);
@@ -157,7 +190,7 @@ async function createMountPoint() {
   }
 
   const isInIframe = window !== window.top;
-  const hostId = `translate-it-host-${isInIframe ? 'iframe' : 'main'}`;
+  const hostId = isInIframe ? UI_HOST_IDS.IFRAME : UI_HOST_IDS.MAIN;
 
   // Check if host already exists
   let hostElement = document.getElementById(hostId);
@@ -166,13 +199,17 @@ async function createMountPoint() {
     // Create shadow host for isolation
     hostElement = document.createElement('div');
     hostElement.id = hostId;
+    hostElement.classList.add('notranslate');
+    hostElement.setAttribute('translate', 'no');
 
     // Create shadow root
     const shadowRoot = hostElement.attachShadow({ mode: 'open' });
 
     // Create container for Vue app
     const appContainer = document.createElement('div');
-    appContainer.id = 'translate-it-app-container';
+    appContainer.id = UI_HOST_IDS.APP_CONTAINER;
+    appContainer.classList.add('notranslate');
+    appContainer.setAttribute('translate', 'no');
 
     // Add default styles
     const resetStyles = document.createElement('style');
@@ -180,32 +217,45 @@ async function createMountPoint() {
       :host {
         all: initial;
         display: block;
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: 100% !important;
+        max-height: 100% !important;
         pointer-events: none;
         z-index: 2147483647;
+        overflow: hidden !important;
       }
 
-      #translate-it-app-container {
+      #${UI_HOST_IDS.APP_CONTAINER} {
         width: 100%;
         height: 100%;
         pointer-events: none;
       }
 
-      #translate-it-app-container > * {
+      #${UI_HOST_IDS.APP_CONTAINER} > * {
         pointer-events: auto;
       }
     `;
 
     shadowRoot.appendChild(resetStyles);
 
-    // Add main app styles
+    // Add main app styles (Global resets + Theme styles)
     const appStyles = document.createElement('style');
     appStyles.textContent = contentAppStyles;
     shadowRoot.appendChild(appStyles);
+
+    // CRITICAL: Inject all Vue component styles (Scoped CSS) collected via Glob
+    // This allows <style scoped> from any component to work inside Shadow DOM automatically.
+    if (allComponentStyles) {
+      const componentStylesElement = document.createElement('style');
+      componentStylesElement.id = 'vue-sfc-automated-styles';
+      componentStylesElement.textContent = allComponentStyles;
+      shadowRoot.appendChild(componentStylesElement);
+      logger.debug('Automated Glob Injection: Injected all Vue SFC styles into Shadow Root');
+    }
 
     shadowRoot.appendChild(appContainer);
 
@@ -216,7 +266,7 @@ async function createMountPoint() {
   }
 
   // Return the app container within shadow root
-  const appContainer = hostElement.shadowRoot.getElementById('translate-it-app-container');
+  const appContainer = hostElement.shadowRoot.getElementById(UI_HOST_IDS.APP_CONTAINER);
 
   if (!appContainer) {
     throw new Error('Failed to create app container in shadow root');
@@ -236,8 +286,8 @@ export function cleanupVueApp() {
       pinia = null;
 
       // Remove mount point
-      const hostElement = document.getElementById('translate-it-host-main') ||
-                         document.getElementById('translate-it-host-iframe');
+      const hostElement = document.getElementById(UI_HOST_IDS.MAIN) ||
+                         document.getElementById(UI_HOST_IDS.IFRAME);
       if (hostElement) {
         hostElement.remove();
       }

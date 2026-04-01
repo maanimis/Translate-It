@@ -1,5 +1,6 @@
 // ToastElementDetector - Centralized Vue Sonner element detection
 import { TOAST_SELECTORS, TOAST_ELEMENT_QUERIES, EXTENSION_SELECTORS } from './constants.js';
+import { UI_HOST_IDS } from '@/shared/config/constants.js';
 
 export class ToastElementDetector {
   /**
@@ -109,11 +110,22 @@ export class ToastElementDetector {
   static isExtensionElement(element) {
     if (!element || typeof element.hasAttribute !== 'function') return false;
     
-    // Check if element has our internal classes
-    if (element.classList && (
-      element.classList.contains(EXTENSION_SELECTORS.HIGHLIGHTED_CLASS) ||
-      element.classList.contains(EXTENSION_SELECTORS.CONTAINER_CLASS)
-    )) {
+    // Check if element is our UI Host
+    if (element.id === UI_HOST_IDS.MAIN || element.id === UI_HOST_IDS.IFRAME) {
+      return true;
+    }
+
+    // Check if element is currently highlighted by us
+    // IMPORTANT: We should NOT exclude highlighted elements from selection, 
+    // because that's exactly what the user wants to click on!
+    // But we SHOULD exclude other extension elements like the popup container.
+    if (element.classList && element.classList.contains(EXTENSION_SELECTORS.HIGHLIGHTED_CLASS)) {
+      // Don't exclude the highlighted element itself, as it's the target
+      return false;
+    }
+
+    // Check if element is our UI container
+    if (element.classList && element.classList.contains(EXTENSION_SELECTORS.CONTAINER_CLASS)) {
       return true;
     }
     
@@ -127,20 +139,29 @@ export class ToastElementDetector {
     // Check if element is inside our Shadow DOM
     let currentElement = element;
     while (currentElement) {
+      if (currentElement.id === UI_HOST_IDS.MAIN || currentElement.id === UI_HOST_IDS.IFRAME) {
+        return true;
+      }
+
       if (currentElement.classList && 
           currentElement.classList.contains(EXTENSION_SELECTORS.CONTAINER_CLASS)) {
         return true;
       }
       
       // Check if we've reached the shadow root host
-      if (currentElement.host) {
-        if (currentElement.host.id && currentElement.host.id.includes('translate-it')) {
+      const root = currentElement.getRootNode();
+      if (root instanceof ShadowRoot) {
+        const host = root.host;
+        if (host && (host.id === UI_HOST_IDS.MAIN || host.id === UI_HOST_IDS.IFRAME)) {
           return true;
         }
       }
       
       // Move up to parent, but handle Shadow DOM boundary
-      currentElement = currentElement.parentElement || currentElement.parentNode?.host;
+      currentElement = currentElement.parentElement || currentElement.parentNode;
+      
+      // Safety break for extremely deep DOMs
+      if (!currentElement || currentElement === document.body) break;
     }
     
     return false;

@@ -196,11 +196,6 @@ export default defineConfig({
               return 'utils-security'
             }
 
-            // Provider utilities
-            if (id.includes('utils/providerHtmlGenerator')) {
-              return 'utils-provider-html'
-            }
-
             // UtilsFactory itself
             if (id.includes('utils/UtilsFactory')) {
               return 'utils-factory'
@@ -373,15 +368,13 @@ export default defineConfig({
       'src/utils/i18n/languages.js',
       'src/utils/i18n/plugin.js',
       'src/utils/browser/compatibility.js',
-      'src/utils/browser/platform.js',
       'src/utils/browser/events.js',
       'src/utils/browser/ActionbarIconManager.js',
       'src/utils/rendering/TranslationRenderer.js',
       'src/utils/ui/theme.js',
       'src/utils/ui/exclusion.js',
       'src/utils/ui/html-sanitizer.js',
-      'src/utils/secureStorage.js',
-      'src/utils/providerHtmlGenerator.js'
+      'src/utils/secureStorage.js'
     ]
   },
   

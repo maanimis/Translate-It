@@ -4,7 +4,12 @@ import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { LanguageSwappingService } from "@/features/translation/providers/LanguageSwappingService.js";
 import { AUTO_DETECT_VALUE } from "@/shared/config/constants.js";
-// import { ErrorTypes } from "@/shared/error-management/ErrorTypes.js";
+import {
+  getYandexTranslateUrlAsync
+} from "@/shared/config/config.js";
+import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
+import { TRANSLATION_CONSTANTS } from "@/shared/config/translationConstants.js";
+import { ErrorTypes } from "@/shared/error-management/ErrorTypes.js";
 
 const logger = getScopedLogger(LOG_COMPONENTS.PROVIDERS, 'YandexTranslate');
 
@@ -15,27 +20,27 @@ const yandexLangCode = {
 
 // Language name to code mapping
 const langNameToCodeMap = {
-  afrikaans: "af", albanian: "sq", arabic: "ar", azerbaijani: "az", belarusian: "be", bengali: "bn", bulgarian: "bg", catalan: "ca", cebuano: "ceb", "chinese (simplified)": "zh-CN", chinese: "zh-CN", croatian: "hr", czech: "cs", danish: "da", dutch: "nl", english: "en", estonian: "et", farsi: "fa", persian: "fa", filipino: "fil", finnish: "fi", french: "fr", german: "de", greek: "el", hebrew: "he", hindi: "hi", hungarian: "hu", indonesian: "id", italian: "it", japanese: "ja", kannada: "kn", kazakh: "kk", korean: "ko", latvian: "lv", lithuanian: "lt", malay: "ms", malayalam: "ml", marathi: "mr", nepal: "ne", norwegian: "no", odia: "or", pashto: "ps", polish: "pl", portuguese: "pt", punjabi: "pa", romanian: "ro", russian: "ru", serbian: "sr", sinhala: "si", slovak: "sk", slovenian: "sl", spanish: "es", swahili: "sw", swedish: "sv", tagalog: "tl", tamil: "ta", telugu: "te", thai: "th", turkish: "tr", ukrainian: "uk", urdu: "ur", uzbek: "uz", vietnamese: "vi",
+  afrikaans: "af", albanian: "sq", arabic: "ar", azerbaijani: "az", belarusian: "be", bengali: "bn", bulgarian: "bg", catalan: "ca", cebuano: "ceb", "chinese (simplified)": "zh-CN", chinese: "zh-CN", croatian: "hr", czech: "cs", danish: "da", dutch: "nl", english: "en", estonian: "et", farsi: "fa", persian: "fa", filipino: "fil", finnish: "fi", french: "fr", german: "de", greek: "el", hebrew: "he", hindi: "hi", hungarian: "hu", indonesian: "id", italian: "it", japanese: "ja", kannada: "kn", kazakh: "kk", korean: "ko", latvian: "lv", lithuanian: "lt", malay: "ms", malayalam: "ml", marathi: "mr", nepal: "ne", norwegian: "no", odia: "or", pashto: "ps", polish: "pl", portuguese: "pt", punjabi: "pa", romanian: "ro", russian: "ru", serbian: "sr", sinhala: "si", slovak: "sk", slovenian: "sl", spanish: "es", swahili: "sw", swedish: "sv", tagalog: "tl", tamil: "ta", telugu: "te", th: "th", tr: "tr", uk: "uk", ur: "ur", uz: "uz", vietnamese: "vi",
 };
 
 export class YandexTranslateProvider extends BaseTranslateProvider {
   static type = "translate";
   static description = "Yandex translation service";
   static displayName = "Yandex Translate";
-  static reliableJsonMode = false;
-  static supportsDictionary = false;
+  static reliableJsonMode = TRANSLATION_CONSTANTS.RELIABLE_JSON_MODE.YANDEX;
+  static supportsDictionary = TRANSLATION_CONSTANTS.SUPPORTS_DICTIONARY.YANDEX;
   static mainUrl = "https://translate.yandex.net/api/v1/tr.json/translate";
   static detectUrl = "https://translate.yandex.net/api/v1/tr.json/detect";
-  static CHAR_LIMIT = 10000;
+  static CHAR_LIMIT = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.YANDEX;
   
   // BaseTranslateProvider capabilities
-  static supportsStreaming = true;
-  static chunkingStrategy = 'character_limit';
-  static characterLimit = 10000;
-  static maxChunksPerBatch = 8;
+  static supportsStreaming = TRANSLATION_CONSTANTS.SUPPORTS_STREAMING.YANDEX;
+  static chunkingStrategy = TRANSLATION_CONSTANTS.CHUNKING_STRATEGIES.YANDEX;
+  static characterLimit = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.YANDEX;
+  static maxChunksPerBatch = TRANSLATION_CONSTANTS.MAX_CHUNKS_PER_BATCH.YANDEX;
 
   constructor() {
-    super("YandexTranslate");
+    super(ProviderNames.YANDEX_TRANSLATE);
   }
 
   _getLangCode(lang) {
@@ -65,8 +70,13 @@ export class YandexTranslateProvider extends BaseTranslateProvider {
    */
   async _translateChunk(chunkTexts, sourceLang, targetLang, translateMode, abortController) {
     const context = `${this.providerName.toLowerCase()}-translate-chunk`;
-    const lang = sourceLang === "auto" ? targetLang : `${sourceLang}-${targetLang}`;
-    logger.debug(`Yandex: Built lang parameter: '${lang}' from source='${sourceLang}' target='${targetLang}'`);
+    
+    const sl = this._getLangCode(sourceLang);
+    const tl = this._getLangCode(targetLang);
+    
+    // Yandex expects 'target' or 'source-target'
+    const lang = sl === "auto" ? tl : `${sl}-${tl}`;
+    logger.debug(`Yandex: Built lang parameter: '${lang}' from source='${sl}' target='${tl}'`);
 
     // Add key info log for translation start
     logger.info(`[Yandex] Starting translation: ${chunkTexts.join('').length} chars`);
@@ -76,11 +86,12 @@ export class YandexTranslateProvider extends BaseTranslateProvider {
     formData.append('lang', lang);
     chunkTexts.forEach(text => formData.append('text', text || ''));
 
-    const url = new URL(YandexTranslateProvider.mainUrl);
+    const apiUrl = await getYandexTranslateUrlAsync();
+    const url = new URL(apiUrl);
     url.searchParams.set("id", `${uuid}-0-0`);
     url.searchParams.set("srv", "android");
 
-    const result = await this._executeWithErrorHandling({
+    const result = await this._executeRequest({
       url: url.toString(),
       fetchOptions: {
         method: "POST",
@@ -93,7 +104,10 @@ export class YandexTranslateProvider extends BaseTranslateProvider {
       extractResponse: (data) => {
         if (!data || data.code !== 200 || !data.text || !Array.isArray(data.text) || data.text.length !== chunkTexts.length) {
           logger.error('Yandex API returned invalid or mismatched response for a chunk', data);
-          return chunkTexts.map(() => '');
+          const err = new Error(`Yandex API error (Code: ${data?.code || 'unknown'})`);
+          err.type = ErrorTypes.API_RESPONSE_INVALID;
+          err.statusCode = data?.code;
+          throw err;
         }
         return data.text;
       },
@@ -129,7 +143,7 @@ export class YandexTranslateProvider extends BaseTranslateProvider {
     }
 
     try {
-      const result = await this._executeWithErrorHandling({
+      const result = await this._executeRequest({
         url: url.toString(),
         fetchOptions: {
           method: "POST",

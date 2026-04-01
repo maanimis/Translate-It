@@ -1,6 +1,6 @@
 // src/managers/content/windows/NewWindowsManager.js
 
-import { getScopedLogger } from "@/shared/logging/logger.js";
+import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from "@/shared/logging/logConstants.js";
 import { WindowsConfig } from "./core/WindowsConfig.js";
 import { WindowsState } from "./core/WindowsState.js";
@@ -12,13 +12,17 @@ import { ThemeManager } from "./theme/ThemeManager.js";
 // UI-related imports removed - now handled by Vue UI Host
 // - WindowsFactory, PositionCalculator, SmartPositioner
 // - AnimationManager, TranslationRenderer, DragHandler
-import { settingsManager } from '@/shared/managers/SettingsManager.js';
-import { state } from "@/shared/config/config.js";
+import settingsManager from '@/shared/managers/SettingsManager.js';
+import { state, SelectionTranslationMode } from "@/shared/config/config.js";
 import { ErrorHandler } from "@/shared/error-management/ErrorHandler.js";
+import { ErrorTypes } from "@/shared/error-management/ErrorTypes.js";
 import ExtensionContextManager from "@/core/extensionContext.js";
 // Import event constants, get pageEventBus instance at runtime
-import { WINDOWS_MANAGER_EVENTS, WindowsManagerEvents } from '@/core/PageEventBus.js';
+import { WINDOWS_MANAGER_EVENTS, WindowsManagerEvents, pageEventBus } from '@/core/PageEventBus.js';
+import { SELECTION_EVENTS } from '@/features/text-selection/events/SelectionEvents.js';
 import ResourceTracker from '@/core/memory/ResourceTracker.js';
+import { deviceDetector } from '@/utils/browser/compatibility.js';
+import { UI_HOST_IDS, TRANSLATION_HTML, MOBILE_CONSTANTS } from '@/shared/config/constants.js';
 
 /**
  * Modular WindowsManager for translation windows and icons
@@ -28,13 +32,6 @@ import ResourceTracker from '@/core/memory/ResourceTracker.js';
 let windowsManagerInstance = null;
 
 export class WindowsManager extends ResourceTracker {
-  /**
-   * Get pageEventBus instance at runtime
-   */
-  get pageEventBus() {
-    return window.pageEventBus;
-  }
-
   constructor(options = {}) {
     // Initialize ResourceTracker first
     super('windows-manager');
@@ -50,6 +47,9 @@ export class WindowsManager extends ResourceTracker {
 
     // Store singleton instance
     windowsManagerInstance = this;
+    if (typeof window !== 'undefined') {
+      window.windowsManagerInstance = this;
+    }
     
     // Initialize cross-frame communication first to get frameId
     this.crossFrameManager = new CrossFrameManager({
@@ -88,8 +88,10 @@ export class WindowsManager extends ResourceTracker {
     this._isDismissingDueToTyping = false;
     this._preserveSelectionForTyping = false;
 
-    // State flag for preventing duplicate dismiss calls
+    // State flags for preventing duplicate dismiss calls
     this._isDismissing = false;
+    this._lastDismissTime = 0;
+    this._lastDismissedText = null;
 
     // State flag for preventing dismiss during Shift+Click operations
     this._isInShiftClickOperation = false;
@@ -150,16 +152,68 @@ export class WindowsManager extends ResourceTracker {
       onIconClick: this._handleIconClick.bind(this)
     });
     // Listen for events from the Vue UI Host
-    if (this.pageEventBus) {
+    if (pageEventBus) {
       // Create bound handler to enable proper cleanup
       this._iconClickHandler = (payload) => {
         this._handleIconClickFromVue(payload);
       };
+      this._speakRequestHandler = this._handleSpeakRequest.bind(this);
+      this._retryRequestHandler = this._handleRetryRequest.bind(this);
+      this._changeProviderRequestHandler = this._handleChangeProviderRequest.bind(this);
       
       // Remove any existing listener first to prevent duplicates
-      this.pageEventBus.off(WINDOWS_MANAGER_EVENTS.ICON_CLICKED, this._iconClickHandler);
-      this.pageEventBus.on(WINDOWS_MANAGER_EVENTS.ICON_CLICKED, this._iconClickHandler);
-      this.pageEventBus.on('translation-window-speak', this._handleSpeakRequest.bind(this));
+      pageEventBus.off(WINDOWS_MANAGER_EVENTS.ICON_CLICKED, this._iconClickHandler);
+      pageEventBus.on(WINDOWS_MANAGER_EVENTS.ICON_CLICKED, this._iconClickHandler);
+      
+      pageEventBus.off('translation-window-speak', this._speakRequestHandler);
+      pageEventBus.on('translation-window-speak', this._speakRequestHandler);
+      
+      pageEventBus.off('translation-window-retry', this._retryRequestHandler);
+      pageEventBus.on('translation-window-retry', this._retryRequestHandler);
+
+      pageEventBus.off('translation-window-change-provider', this._changeProviderRequestHandler);
+      pageEventBus.on('translation-window-change-provider', this._changeProviderRequestHandler);
+
+      // Listen for dismissal events from the UI to sync state
+      this._dismissRequestHandler = (payload) => {
+        this.logger.debug('Dismiss request received from UI', payload);
+        this.dismiss(false); // UI already handled animation/removal
+      };
+      
+      pageEventBus.off(WINDOWS_MANAGER_EVENTS.DISMISS_WINDOW, this._dismissRequestHandler);
+      pageEventBus.on(WINDOWS_MANAGER_EVENTS.DISMISS_WINDOW, this._dismissRequestHandler);
+      
+      pageEventBus.off(WINDOWS_MANAGER_EVENTS.DISMISS_ICON, this._dismissRequestHandler);
+      pageEventBus.on(WINDOWS_MANAGER_EVENTS.DISMISS_ICON, this._dismissRequestHandler);
+
+      // Listen for generic selection trigger events (Coordinator Pattern)
+      // This allows FAB or any other module to request a window display independently
+      this._selectionTriggerHandler = (payload) => {
+        this._handleSelectionTrigger(payload);
+      };
+      pageEventBus.off(SELECTION_EVENTS.GLOBAL_SELECTION_TRIGGER, this._selectionTriggerHandler);
+      pageEventBus.on(SELECTION_EVENTS.GLOBAL_SELECTION_TRIGGER, this._selectionTriggerHandler);
+
+      // Listen for global selection clear events
+      this._selectionClearHandler = () => {
+        if (this.state.isVisible || this.state.isIconMode) {
+          this.logger.debug('Global selection clear received, dismissing UI');
+          this.dismiss(false);
+        }
+      };
+      pageEventBus.off(SELECTION_EVENTS.GLOBAL_SELECTION_CLEAR, this._selectionClearHandler);
+      pageEventBus.on(SELECTION_EVENTS.GLOBAL_SELECTION_CLEAR, this._selectionClearHandler);
+
+      // Listen for global selection change events (Coordinator Pattern)
+      // This allows the manager to show its UI without being called directly
+      this._selectionChangeHandler = (detail) => {
+        // Only react to selection change if we are not already processing or showing
+        // And ensure it's from the same frame (PageEventBus is local, so this is natural)
+        this.logger.debug('Global selection change received in WindowsManager');
+        this.show(detail.text, detail.position, detail.options);
+      };
+      pageEventBus.off(SELECTION_EVENTS.GLOBAL_SELECTION_CHANGE, this._selectionChangeHandler);
+      pageEventBus.on(SELECTION_EVENTS.GLOBAL_SELECTION_CHANGE, this._selectionChangeHandler);
     } else {
       this.logger.warn('PageEventBus not available during setup');
     }
@@ -184,46 +238,23 @@ export class WindowsManager extends ResourceTracker {
   }
 
   /**
-   * Determine if enhanced renderer should be used
+   * Handle translation trigger for pending selections (Coordinator Pattern)
    */
-  _shouldUseEnhancedRenderer() {
-    // Check for development mode
-    const isDevelopment = (
-      window.location.hostname === 'localhost' ||
-      window.location.hostname.includes('dev') ||
-      localStorage.getItem('dev-mode') === 'true'
-    );
+  async _handleSelectionTrigger(payload) {
+    const { text, position } = payload;
+    this.logger.info('Selection trigger received (Global)', { textLength: text?.length });
     
-    // Check for saved preference
-    const savedPreference = localStorage.getItem('windows-manager-enhanced-version');
-    
-    if (savedPreference !== null) {
-      return savedPreference === 'true';
+    if (text && position) {
+      await this._showWindow(text, position);
     }
-    
-    // Default to enhanced in development, classic in production
-    return isDevelopment;
   }
 
   /**
-   * Toggle renderer preference - now just saves preference for Vue components
+   * Determine if enhanced renderer should be used
    */
-  toggleEnhancedRenderer() {
-    // Determine current preference
-    const savedPreference = localStorage.getItem('windows-manager-enhanced-version');
-    const isDevelopment = (
-      window.location.hostname === 'localhost' ||
-      window.location.hostname.includes('dev') ||
-      localStorage.getItem('dev-mode') === 'true'
-    );
-    
-    const currentState = savedPreference !== null ? savedPreference === 'true' : isDevelopment;
-    const newState = !currentState;
-    
-    localStorage.setItem('windows-manager-enhanced-version', newState.toString());
-    this.logger.info(`Renderer preference toggled to: ${newState ? 'Enhanced' : 'Classic'} (handled by Vue UI Host)`);
-    
-    return newState;
+  _shouldUseEnhancedRenderer() {
+    // Standardized to always use enhanced renderer (Vue UI Host in Shadow DOM)
+    return true;
   }
 
   /**
@@ -243,9 +274,24 @@ export class WindowsManager extends ResourceTracker {
    * @param {string} selectedText - Selected text to translate
    * @param {Object} position - Position to show window/icon
    */
-  async show(selectedText, position) {
+  /**
+   * Determine if we should use Mobile UI based on device detection and user preference
+   */
+  shouldUseMobileUI() {
+    const mode = settingsManager.get('MOBILE_UI_MODE', MOBILE_CONSTANTS.UI_MODE.AUTO);
+    if (mode === MOBILE_CONSTANTS.UI_MODE.MOBILE) return true;
+    if (mode === MOBILE_CONSTANTS.UI_MODE.DESKTOP) return false;
+    return deviceDetector.shouldEnableMobileUI();
+  }
+
+  async show(selectedText, position, options = {}) {
     if (!ExtensionContextManager.isValidSync()) {
       this.logger.debug('Extension context invalid, aborting show()');
+      return;
+    }
+
+    if (!selectedText || !position) {
+      this.logger.debug('Aborting show(): Missing text or position');
       return;
     }
 
@@ -257,17 +303,58 @@ export class WindowsManager extends ResourceTracker {
       text: selectedText ? selectedText.substring(0, 30) + '...' : 'null',
       position
     });
-    
+
+    // Get current mode from settings (fixed initialization order)
+    const selectionTranslationMode = settingsManager.get('selectionTranslationMode', SelectionTranslationMode.ON_CLICK);
+
     // Prevent showing same text multiple times
     if (this._shouldSkipShow(selectedText)) {
+      this.logger.debug('Skipping show() - same text already visible');
       return;
     }
+
+    // Mobile specific: Determine behavior based on translation mode
+    if (this.shouldUseMobileUI()) {
+      if (selectionTranslationMode === SelectionTranslationMode.IMMEDIATE) {
+        this.logger.info('Mobile + Immediate mode: showing mobile sheet immediately');
+        await this._showMobileSheet(selectedText);
+        return;
+      } 
+      
+      if (selectionTranslationMode === SelectionTranslationMode.ON_FAB_CLICK) {
+        this.logger.info('Mobile + onFabClick mode: preserving for FAB trigger');
+        this.state.setOriginalText(selectedText);
+        // Add a one-time outside click listener to clear the stored text if user clicks elsewhere
+        this.clickManager.addOutsideClickListener();
+        return;
+      }
+      
+      // If mode is ON_CLICK, we fall through to show the desktop-style icon even on mobile
+      this.logger.info('Mobile + onClick mode: showing translation icon as requested');
+    }
+
+    const isTextSelectionEnabled = settingsManager.get('TRANSLATE_ON_TEXT_SELECTION', true);
     
-    // Check if this is an icon->window transition OR we're in onClick mode, preserve selection if so
-    // In onClick mode, we show icons first and user will click later, so preserve selection
-    const selectionTranslationMode = settingsManager.get('selectionTranslationMode', 'onClick');
-    const isOnClickMode = selectionTranslationMode === 'onClick';
-    const preserveSelection = this._isIconToWindowTransition || isOnClickMode;
+    // Check if this is an icon->window transition OR we're in onClick/onFabClick mode, preserve selection if so
+    const isOnClickMode = selectionTranslationMode === SelectionTranslationMode.ON_CLICK;
+    const isOnFabClickMode = selectionTranslationMode === SelectionTranslationMode.ON_FAB_CLICK;
+    
+    // If the main feature is disabled, we MUST preserve selection for external modules (like FAB)
+    // and skip our own internal UI display.
+    if (!isTextSelectionEnabled) {
+      this.logger.debug('TRANSLATE_ON_TEXT_SELECTION is disabled, preserving for external modules and skipping internal UI');
+      this.state.setOriginalText(selectedText);
+      await this.dismiss(false, true); // Force preserveSelection = true
+      return;
+    }
+
+    const preserveSelection = this._isIconToWindowTransition || isOnClickMode || isOnFabClickMode;
+    
+    // Clear manual provider override for completely new selections
+    if (!this._isIconToWindowTransition) {
+      this.state.setProvider(null);
+    }
+    
     await this.dismiss(false, preserveSelection);
     
     // Reset the transition flag after using it
@@ -278,7 +365,13 @@ export class WindowsManager extends ResourceTracker {
     this.state.setProcessing(true);
 
     try {
-      if (selectionTranslationMode === "onClick") {
+      if (selectionTranslationMode === SelectionTranslationMode.ON_FAB_CLICK) {
+        this.logger.info('onFabClick mode: selection handled by external UI (like FAB)', { textLength: selectedText?.length });
+        this.state.setOriginalText(selectedText);
+        
+        // Add dismiss listener to clear if user clicks away
+        this._addDismissListener();
+      } else if (selectionTranslationMode === SelectionTranslationMode.ON_CLICK) {
         await this._showIcon(selectedText, position);
       } else {
         await this._showWindow(selectedText, position);
@@ -289,14 +382,85 @@ export class WindowsManager extends ResourceTracker {
   }
 
   /**
+   * Show mobile-specific bottom sheet
+   * @param {string} selectedText - Selected text to translate
+   */
+  async _showMobileSheet(selectedText) {
+    if (!selectedText) return;
+
+    this.logger.info('Creating mobile translation sheet', { textLength: selectedText.length });
+
+    this.state.setOriginalText(selectedText);
+    this.state.setTranslationCancelled(false);
+    this.state.setVisible(true);
+
+    // Emit event to open mobile sheet in loading state
+    WindowsManagerEvents.showMobileSheet({
+      text: selectedText,
+      view: MOBILE_CONSTANTS.VIEWS.SELECTION,
+      state: MOBILE_CONSTANTS.SHEET_STATE.PEEK,
+      isLoading: true
+    });
+
+    try {
+      // Start translation process
+      const translationResult = await this._startTranslationProcess(selectedText);
+
+      if (!translationResult) {
+        this.logger.info('Mobile translation cancelled');
+        return;
+      }
+
+      // Update mobile sheet with result
+      WindowsManagerEvents.showMobileSheet({
+        text: selectedText,
+        translation: translationResult.translatedText,
+        sourceLang: translationResult.sourceLanguage || 'auto',
+        targetLang: translationResult.targetLanguage,
+        isLoading: false
+      });
+      
+    } catch (error) {
+      this.logger.error('Error during mobile translation:', error);
+      
+      const errorInfo = await this.errorHandler.getErrorForUI(error, 'mobile-translation');
+      
+      WindowsManagerEvents.showMobileSheet({
+        text: selectedText,
+        isLoading: false,
+        isError: true,
+        error: errorInfo.message
+      });
+    }
+  }
+
+  /**
    * Check if we should skip showing (duplicate text)
    */
   _shouldSkipShow(selectedText) {
-    if (selectedText &&
-        this.state.isVisible &&
-        this.state.originalText === selectedText) {
+    if (!selectedText) return true;
+    
+    // 1. Check if the same text is already being handled by any active UI element
+    const isAlreadyVisible = this.state.isVisible || 
+                            this.state.isIconMode;
+                            
+    if (isAlreadyVisible && this.state.originalText === selectedText) {
       return true;
     }
+    
+    // 2. Race condition protection: Ignore if we just dismissed the SAME text
+    // This happens if browser selection change events arrive LATE (after unselect click)
+    const now = Date.now();
+    const dismissGracePeriod = 500; // 500ms is safe for browser event settlement
+    
+    if (this._lastDismissedText === selectedText && (now - this._lastDismissTime < dismissGracePeriod)) {
+      this.logger.debug('Skipping show() - text was dismissed very recently (race protection)', {
+        text: selectedText.substring(0, 10),
+        elapsed: now - this._lastDismissTime
+      });
+      return true;
+    }
+    
     return false;
   }
 
@@ -306,6 +470,11 @@ export class WindowsManager extends ResourceTracker {
   async _showIcon(selectedText, position) {
     if (!ExtensionContextManager.isValidSync()) {
       this.logger.debug('Extension context invalid, cannot create icon');
+      return;
+    }
+
+    if (!position) {
+      this.logger.debug('Aborting _showIcon(): Missing position');
       return;
     }
 
@@ -330,7 +499,8 @@ export class WindowsManager extends ResourceTracker {
     WindowsManagerEvents.showIcon({
       id: iconId,
       text: selectedText,
-      position: positionToUse
+      position: positionToUse,
+      frameId: this.crossFrameManager.frameId
     });
     
     // Store context for click handling
@@ -371,7 +541,7 @@ export class WindowsManager extends ResourceTracker {
 
     // Create bound handler for reuse
     this._dismissHandler = (event) => {
-      // Handle both icon mode and visible window mode
+      // Handle icon mode or visible window mode
       if (!this.state.isIconMode && !this.state.isVisible) return;
 
       // Don't dismiss during Shift+Click operations
@@ -388,17 +558,17 @@ export class WindowsManager extends ResourceTracker {
 
       // Use the same logic as ClickManager for consistency
       // Check if click is inside Vue UI Host (Shadow DOM contains both icons and windows)
-      const vueUIHostMain = document.getElementById('translate-it-host-main');
-      const vueUIHostIframe = document.getElementById('translate-it-host-iframe');
+      const vueUIHostMain = document.getElementById(UI_HOST_IDS.MAIN);
+      const vueUIHostIframe = document.getElementById(UI_HOST_IDS.IFRAME);
       const vueUIHost = vueUIHostMain || vueUIHostIframe;
 
       const isInsideVueUIHost = vueUIHost && vueUIHost.contains(target);
 
       // Also check legacy elements for compatibility
-      const iconElement = document.getElementById('translate-it-icon'); // WindowsConfig.IDS.ICON
+      const iconElement = document.getElementById(TRANSLATION_HTML.ICON_ID);
       const isInsideLegacyIcon = iconElement && iconElement.contains(target);
 
-      const windowElements = document.querySelectorAll('.translation-window');
+      const windowElements = document.querySelectorAll(`.${TRANSLATION_HTML.WINDOW_CLASS}`);
       const isInsideLegacyWindow = Array.from(windowElements).some(element =>
         element.contains(target)
       );
@@ -542,6 +712,124 @@ export class WindowsManager extends ResourceTracker {
   }
 
   /**
+   * Handle translation retry request from translation window
+   * @private
+   */
+  async _handleRetryRequest(detail) {
+    this.logger.info('Retry request received from translation window', detail);
+    
+    const windowId = detail.id || this.state.activeWindowId;
+    const textToTranslate = detail.text || this.state.originalText;
+
+    if (!windowId || !textToTranslate) {
+      this.logger.warn('Cannot retry: missing windowId or textToTranslate');
+      return;
+    }
+
+    // Set loading state in window
+    WindowsManagerEvents.updateWindow(windowId, {
+      isLoading: true,
+      isError: false,
+      initialTranslatedText: ''
+    });
+
+    try {
+      const translationResult = await this._startTranslationProcess(textToTranslate);
+
+      if (!translationResult) {
+        this.logger.info('Retry translation cancelled by user');
+        return;
+      }
+
+      // Update window with result
+      WindowsManagerEvents.updateWindow(windowId, {
+        isLoading: false,
+        isError: false,
+        initialTranslatedText: translationResult.translatedText,
+        provider: translationResult.provider
+      });
+      
+    } catch (error) {
+      this.logger.error('Error during translation retry:', error);
+      
+      const errorInfo = await this.errorHandler.getErrorForUI(error, 'windows-translation');
+      const fallbackProvider = this.translationHandler.getEffectiveProvider(textToTranslate, { provider: this.state.provider });
+      
+      WindowsManagerEvents.updateWindow(windowId, {
+        isLoading: false,
+        isError: true,
+        errorType: errorInfo.type,
+        canRetry: errorInfo.canRetry,
+        needsSettings: errorInfo.needsSettings,
+        initialTranslatedText: errorInfo.message,
+        provider: fallbackProvider
+      });
+    }
+  }
+
+  /**
+   * Handle provider change request from translation window
+   * @private
+   */
+  async _handleChangeProviderRequest(detail) {
+    this.logger.info('Provider change request received from translation window', detail);
+    
+    const windowId = detail.id || this.state.activeWindowId;
+    const newProvider = detail.provider;
+    const textToTranslate = this.state.originalText;
+
+    if (!windowId || !textToTranslate || !newProvider) {
+      this.logger.warn('Cannot change provider: missing windowId, textToTranslate, or provider');
+      return;
+    }
+
+    // Update state
+    this.state.setProvider(newProvider);
+
+    // Set loading state in window
+    WindowsManagerEvents.updateWindow(windowId, {
+      isLoading: true,
+      isError: false,
+      initialTranslatedText: '',
+      provider: newProvider
+    });
+
+    try {
+      const translationResult = await this._startTranslationProcess(textToTranslate);
+
+      if (!translationResult) {
+        this.logger.info('Provider change translation cancelled by user');
+        return;
+      }
+
+      // Update window with result
+      WindowsManagerEvents.updateWindow(windowId, {
+        isLoading: false,
+        isError: false,
+        initialTranslatedText: translationResult.translatedText,
+        targetLanguage: translationResult.targetLanguage,
+        provider: translationResult.provider
+      });
+      
+    } catch (error) {
+      this.logger.error('Error during provider change translation:', error);
+
+      
+      const errorInfo = await this.errorHandler.getErrorForUI(error, 'windows-translation-retry');
+      
+      WindowsManagerEvents.updateWindow(windowId, {
+        isLoading: false,
+        isError: true,
+        errorType: errorInfo.type,
+        canRetry: errorInfo.canRetry,
+        needsSettings: errorInfo.needsSettings,
+        initialTranslatedText: errorInfo.message,
+        provider: newProvider
+      });
+    }
+  }
+
+  /**
    * Show translation window with two-phase loading
    */
   async _showWindow(selectedText, position) {
@@ -576,7 +864,8 @@ export class WindowsManager extends ResourceTracker {
       mode: 'window',
       theme,
       initialSize: 'small',
-      isLoading: true
+      isLoading: true,
+      frameId: this.crossFrameManager.frameId
     });
     
     // Store state for this window
@@ -611,11 +900,15 @@ export class WindowsManager extends ResourceTracker {
       // If translation was cancelled (returns null for cancellation only)
       if (!translationResult) {
         this.logger.info('Translation cancelled by user, updating window with cancellation message');
+        
+        // Get localized message for cancellation
+        const errorInfo = await this.errorHandler.getErrorForUI(new Error(ErrorTypes.USER_CANCELLED), 'windows-translation');
+        
         WindowsManagerEvents.updateWindow(windowId, {
           initialSize: 'normal',
           isLoading: false,
           isError: true,
-          initialTranslatedText: 'Translation cancelled by user'
+          initialTranslatedText: errorInfo.message
         });
         return;
       }
@@ -624,37 +917,32 @@ export class WindowsManager extends ResourceTracker {
       WindowsManagerEvents.updateWindow(windowId, {
         initialSize: 'normal',
         isLoading: false,
-        initialTranslatedText: translationResult.translatedText
+        initialTranslatedText: translationResult.translatedText,
+        targetLanguage: translationResult.targetLanguage,
+        provider: translationResult.provider
       });
+      
+      this.state.setProvider(translationResult.provider);
       
       this.logger.info('Window updated with translation result', { windowId });
       
     } catch (error) {
       this.logger.error('Error during translation process:', error);
       
-      // Use ErrorHandler to get user-friendly error message
-      let userFriendlyMessage;
-      try {
-        const errorInfo = await this.errorHandler.getErrorForUI(error, 'windows-translation');
-        userFriendlyMessage = errorInfo.message;
-      } catch (handlerError) {
-        this.logger.warn('Failed to get user-friendly error message, using fallback:', handlerError);
-        // Fallback to original extraction logic
-        if (typeof error === 'string' && error.length > 0) {
-          userFriendlyMessage = error;
-        } else if (error && error.message && error.message.length > 0) {
-          userFriendlyMessage = error.message;
-        } else {
-          userFriendlyMessage = 'Translation failed';
-        }
-      }
+      // Use ErrorHandler to get robust, user-friendly error message
+      const errorInfo = await this.errorHandler.getErrorForUI(error, 'windows-translation');
+      const fallbackProvider = this.translationHandler.getEffectiveProvider(selectedText, { provider: this.state.provider });
       
       // Update window with user-friendly error message
       WindowsManagerEvents.updateWindow(windowId, {
         initialSize: 'normal',
         isLoading: false,
         isError: true,
-        initialTranslatedText: userFriendlyMessage
+        errorType: errorInfo.type,
+        canRetry: errorInfo.canRetry,
+        needsSettings: errorInfo.needsSettings,
+        initialTranslatedText: errorInfo.message,
+        provider: fallbackProvider
       });
     }
   }
@@ -664,8 +952,12 @@ export class WindowsManager extends ResourceTracker {
    */
   async _startTranslationProcess(selectedText) {
     try {
+      const options = {};
+      if (this.state.provider) {
+        options.provider = this.state.provider;
+      }
       // Perform translation
-      const result = await this.translationHandler.performTranslation(selectedText);
+      const result = await this.translationHandler.performTranslation(selectedText, options);
       
       if (this.state.isTranslationCancelled) return null;
       
@@ -740,8 +1032,11 @@ export class WindowsManager extends ResourceTracker {
         position: position,
         theme: theme,
         isLoading: false,
-        targetLanguage: result.targetLanguage || 'auto'
+        targetLanguage: result.targetLanguage || 'auto',
+        provider: result.provider
       };
+      
+      this.state.setProvider(result.provider);
       
       this.logger.debug('[WindowsManager] About to emit showWindow with:', windowPayload);
       WindowsManagerEvents.showWindow(windowPayload);
@@ -808,7 +1103,13 @@ export class WindowsManager extends ResourceTracker {
       return;
     }
 
-    await this.dismiss(true);
+    // In mobile, if we have stored original text but no visible UI elements, 
+    // we still need to dismiss/reset state when clicking outside
+    const hasStoredMobileText = this.shouldUseMobileUI() && this.state.originalText;
+
+    if (this.state.hasActiveElements || hasStoredMobileText) {
+      await this.dismiss(true);
+    }
   }
 
   /**
@@ -888,8 +1189,44 @@ export class WindowsManager extends ResourceTracker {
       this.state.setIconMode(false);
       this.state.setVisible(true);
       
-      // Start translation process
-      this._startTranslationProcess(windowId, data.selectedText);
+      // Start translation process (fire-and-forget with error handling)
+      this._startTranslationProcess(data.selectedText)
+        .then(result => {
+          // Update window with translation result
+          if (result) {
+            WindowsManagerEvents.updateWindow(windowId, {
+              initialSize: 'normal',
+              isLoading: false,
+              initialTranslatedText: result.translatedText
+            });
+          } else {
+            // Translation was cancelled
+            this.errorHandler.getErrorForUI(new Error(ErrorTypes.USER_CANCELLED), 'windows-translation')
+              .then(errorInfo => {
+                WindowsManagerEvents.updateWindow(windowId, {
+                  initialSize: 'normal',
+                  isLoading: false,
+                  isError: true,
+                  initialTranslatedText: errorInfo.message
+                });
+              });
+          }
+        })
+        .catch(async (error) => {
+          this.logger.info('Translation process failed in cross-frame mode:', error);
+
+          // Use ErrorHandler to get user-friendly error message (consistent with normal mode)
+          const errorInfo = await this.errorHandler.getErrorForUI(error, 'windows-translation');
+
+          // Update window with error
+          WindowsManagerEvents.updateWindow(windowId, {
+            initialSize: 'normal',
+            isLoading: false,
+            isError: true,
+            errorType: errorInfo.type,
+            initialTranslatedText: errorInfo.message
+          });
+        });
       
       // Notify success with the window ID
       this.crossFrameManager.notifyWindowCreated(data.frameId, true, windowId);
@@ -897,7 +1234,7 @@ export class WindowsManager extends ResourceTracker {
       this.logger.info('Cross-frame window creation event emitted successfully', { windowId, frameId: data.frameId });
       
     } catch (error) {
-      this.logger.error('Failed to create window in main document:', error);
+      this.logger.info('Failed to create window in main document:', error);
       this.crossFrameManager.notifyWindowCreated(data.frameId, false, null, error.message);
     }
   }
@@ -968,7 +1305,7 @@ export class WindowsManager extends ResourceTracker {
         adjustedPosition._isViewportRelative = true;
       }
 
-      await this.show(data.selectedText, adjustedPosition);
+      await this.show(data.selectedText, adjustedPosition, data.options);
 
     } catch (error) {
       this.logger.error('Failed to handle text selection window request from iframe:', error);
@@ -979,13 +1316,10 @@ export class WindowsManager extends ResourceTracker {
    * Handle translation error - now delegates to Vue UI Host
    */
   async _handleTranslationError(error, selectedText, position) {
-    // Get the original error message, preserve specific details
-    const originalMessage = error instanceof Error ? error.message : String(error);
-    
     // Use ErrorHandler for type detection and centralized logging
-    const errorInfo = await this.translationHandler.errorHandler.getErrorForUI(error, 'windows-manager-translate');
+    const errorInfo = await this.errorHandler.getErrorForUI(error, 'windows-manager-translate');
     
-    this.logger.error(`Translation error - Type: ${errorInfo.type}, Original: ${originalMessage}, Processed: ${errorInfo.message}`);
+    this.logger.info(`Translation error - Type: ${errorInfo.type}, Message: ${errorInfo.message}`);
     
     // Generate unique ID for error window
     const windowId = `translation-window-error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -993,24 +1327,24 @@ export class WindowsManager extends ResourceTracker {
 
     // Get current theme
     const theme = await this.themeManager.getCurrentTheme();
+    const fallbackProvider = this.translationHandler.getEffectiveProvider(selectedText, { provider: this.state.provider });
 
-    // Use the original specific error message instead of the generic one
-    const displayMessage = originalMessage && originalMessage.length > 10 && 
-                         !originalMessage.includes('Translation failed: No translated text') ? 
-                         originalMessage : errorInfo.message;
-    
     // Emit event to create error window through Vue UI Host
     WindowsManagerEvents.showWindow({
       id: windowId,
       selectedText: selectedText,
-      initialTranslatedText: `Error: ${displayMessage}`,
+      initialTranslatedText: errorInfo.message,
       position: position,
       theme: theme,
-      isError: true
+      isError: true,
+      errorType: errorInfo.type,
+      canRetry: errorInfo.canRetry,
+      needsSettings: errorInfo.needsSettings,
+      provider: fallbackProvider
     });
     
     // Use centralized error handler but keep silent to avoid double notifications
-    await this.translationHandler.errorHandler.handle(error, {
+    await this.errorHandler.handle(error, {
       type: errorInfo.type,
       context: "windows-manager-translate",
       isSilent: true
@@ -1053,7 +1387,7 @@ export class WindowsManager extends ResourceTracker {
    * Handle icon click event from the Vue UI Host
    * @param {object} detail - Event detail containing { id, text, position }
    */
-  _handleIconClickFromVue(detail) {
+  async _handleIconClickFromVue(detail) {
     this.logger.info('Icon click event received from UI Host', {
       id: detail?.id,
       processing: this.state.isProcessing,
@@ -1129,7 +1463,7 @@ export class WindowsManager extends ResourceTracker {
 
     // Show the translation window
     this.logger.info('Calling _showWindow', { textLength: text?.length });
-    this._showWindow(text, position);
+    await this._showWindow(text, position);
 
     // Reset flags after processing - don't reset immediately, let setTimeout handle it
     setTimeout(() => {
@@ -1181,6 +1515,15 @@ export class WindowsManager extends ResourceTracker {
       mode: dismissMode,
       reason: this._isDismissingDueToTyping ? 'user_typing' : 'user_action'
     });
+
+    // Notify other modules to clear selection state (Coordinator Pattern)
+    // ONLY if we are not preserving the selection for a new UI element
+    if (!preserveSelection) {
+      pageEventBus.emit(SELECTION_EVENTS.GLOBAL_SELECTION_CLEAR, { 
+        reason: this._isDismissingDueToTyping ? 'user_typing' : 'user_action',
+        mode: dismissMode 
+      });
+    }
 
     this.logger.debug('Dismiss called', {
       withFadeOut,
@@ -1240,6 +1583,10 @@ export class WindowsManager extends ResourceTracker {
 
     // Enhanced selection preservation logic
     const hasRecentActivity = this._hasRecentSelectionActivity();
+    
+    // Check if there is actually any text selected in the browser right now
+    const currentSelection = window.getSelection();
+    const hasActualSelection = currentSelection && currentSelection.toString().trim().length > 0;
 
     const shouldClearSelection = this.state.isIconMode &&
                                ExtensionContextManager.isValidSync() &&
@@ -1249,16 +1596,15 @@ export class WindowsManager extends ResourceTracker {
                                !this._preserveSelectionForTyping &&
                                !this._isDismissingDueToTyping &&
                                !isInTextField && // NEVER clear selection if in text field
-                               !hasRecentActivity; // NEW: Don't clear if recent selection activity
+                               (!hasRecentActivity || !hasActualSelection); // Clear if no recent activity OR if text is already gone
     this.logger.debug('Dismiss selection logic', {
       shouldClearSelection,
+      hasActualSelection,
+      hasRecentActivity,
       preserveSelection,
       preventDismissDueToDrag,
       preventDismissDueToShiftClick,
-      isInTextField,
-      hasRecentActivity,
-      activeElementTag: activeElement?.tagName,
-      activeElementType: activeElement?.type || 'contenteditable'
+      isInTextField
     });
     
     if (shouldClearSelection) {
@@ -1296,6 +1642,11 @@ export class WindowsManager extends ResourceTracker {
       WindowsManagerEvents.dismissWindow(windowId, withFadeOut);
     }
 
+    // Close mobile sheet if open
+    if (this.shouldUseMobileUI()) {
+      WindowsManagerEvents.showMobileSheet({ isOpen: false });
+    }
+
     // Cancel any ongoing translation when dismissing
     if (this.translationHandler) {
       this.state.setTranslationCancelled(true);
@@ -1307,15 +1658,9 @@ export class WindowsManager extends ResourceTracker {
       }
     }
 
-    // Stop any ongoing TTS when dismissing
-    try {
-      if (this.tts) {
-        await this.tts.stopAll();
-        this.logger.info('TTS stopped during dismiss');
-      }
-    } catch (error) {
-      this.logger.warn('Failed to stop TTS during dismiss:', error);
-    }
+    // Capture current text before state reset to prevent race conditions
+    this._lastDismissedText = this.state.originalText;
+    this._lastDismissTime = Date.now();
 
     // Reset flags
     this._resetState();
@@ -1324,12 +1669,10 @@ export class WindowsManager extends ResourceTracker {
     // Reset dismissing flag and cleanup tracking
     this._isDismissing = false;
 
-    // Clear dismissal tracking after a short delay to prevent immediate re-creation
-    setTimeout(() => {
-      this._lastDismissTime = null;
-    }, 200);
-
-    this.logger.debug('Translation UI dismissed successfully');
+    this.logger.debug('Translation UI dismissed successfully', { 
+      text: this._lastDismissedText?.substring(0, 10),
+      timestamp: this._lastDismissTime 
+    });
   }
 
   /**
@@ -1368,8 +1711,7 @@ export class WindowsManager extends ResourceTracker {
    * Reset state
    */
   _resetState() {
-    this.state.setPendingTranslationWindow(false);
-    this.state.setIconMode(false);
+    this.state.reset();
 
     // Reset selection preservation flag
     this._isIconToWindowTransition = false;

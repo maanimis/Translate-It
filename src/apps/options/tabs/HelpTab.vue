@@ -1,6 +1,6 @@
 <!-- eslint-disable vue/no-v-html -->
 <template>
-  <section class="help-tab">
+  <section class="options-tab-content">
     <h2>{{ t('help_section_title') || 'Help & Documentation' }}</h2>
     
     <div class="accordion">
@@ -80,6 +80,13 @@ const addTargetBlankToLinks = () => {
   })
 }
 
+const PROVIDER_URLS = {
+  gemini: 'https://aistudio.google.com/app/apikey',
+  openai: 'https://platform.openai.com/api-keys',
+  openrouter: 'https://openrouter.ai/keys',
+  deepseek: 'https://platform.deepseek.com/api_keys'
+}
+
 const toggleAccordion = (section) => {
   openAccordion.value = openAccordion.value === section ? '' : section
 }
@@ -114,22 +121,22 @@ const apiKeysHelpContent = computed(() => {
 
 ## ${t('help_free_providers_title') || 'Free Providers (No API Key Required)'}
 
-- **Google Translate** - Uses the public Google Translate endpoint
-- **Microsoft Bing** - Uses the public Bing Translate endpoint
-- **Yandex Translate** - Uses the public Yandex Translate endpoint
+- ${t('help_free_providers_google') || '**Google Translate** - Uses the public Google Translate endpoint'}
+- ${t('help_free_providers_bing') || '**Microsoft Bing** - Uses the public Bing Translate endpoint'}
+- ${t('help_free_providers_yandex') || '**Yandex Translate** - Uses the public Yandex Translate endpoint'}
 
 ## ${t('help_api_providers_title') || 'API-Based Providers (Require API Keys)'}
 
-- **Google Gemini** - Get your free API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
-- **OpenAI** - Register at [OpenAI Platform](https://platform.openai.com/api-keys)
-- **OpenRouter** - Access multiple models via [OpenRouter](https://openrouter.ai/keys)
-- **DeepSeek** - Get API access from [DeepSeek Platform](https://platform.deepseek.com/api_keys)
+- ${t('help_api_providers_gemini', { url: PROVIDER_URLS.gemini }) || `**Google Gemini** - Get your free API key from [Google AI Studio](${PROVIDER_URLS.gemini})`}
+- ${t('help_api_providers_openai', { url: PROVIDER_URLS.openai }) || `**OpenAI** - Register at [OpenAI Platform](${PROVIDER_URLS.openai})`}
+- ${t('help_api_providers_openrouter', { url: PROVIDER_URLS.openrouter }) || `**OpenRouter** - Access multiple models via [OpenRouter](${PROVIDER_URLS.openrouter})`}
+- ${t('help_api_providers_deepseek', { url: PROVIDER_URLS.deepseek }) || `**DeepSeek** - Get API access from [DeepSeek Platform](${PROVIDER_URLS.deepseek})`}
 
 ---
 
-### 🔒 Security Notice
+### ${t('help_security_notice_title') || '🔒 Security Notice'}
 
-Your API keys are stored locally in your browser and are never shared with third parties. For additional security, you can encrypt your settings when exporting them using the Import/Export feature.`
+${t('help_security_notice_content') || 'Your API keys are stored locally in your browser and are never shared with third parties. For additional security, you can encrypt your settings when exporting them using the Import/Export feature.'}`
 
   try {
     const markdownElement = SimpleMarkdown.render(content)
@@ -195,24 +202,6 @@ onMounted(() => {
 <style lang="scss" scoped>
 @use "@/assets/styles/base/variables" as *;
 
-.help-tab {
-  max-width: 100%;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-}
-
-h2 {
-  font-size: $font-size-xl;
-  font-weight: $font-weight-medium;
-  margin-top: 0;
-  margin-bottom: $spacing-lg;
-  padding-bottom: $spacing-base;
-  border-bottom: $border-width $border-style var(--color-border);
-  color: var(--color-text);
-}
-
 .accordion {
   .accordion-item {
     border: $border-width $border-style var(--color-border);
@@ -252,7 +241,7 @@ h2 {
     .accordion-icon {
       font-size: $font-size-lg;
       font-weight: $font-weight-bold;
-      margin-left: $spacing-sm;
+      margin-inline-start: $spacing-sm;
       transition: transform $transition-base;
       min-width: 20px;
       text-align: center;
@@ -282,7 +271,7 @@ h2 {
 
         :deep(ol), :deep(ul) {
           margin: 0 0 $spacing-md 0;
-          padding-left: $spacing-xl;
+          padding-inline-start: $spacing-xl;
 
           li {
             margin-bottom: $spacing-sm;

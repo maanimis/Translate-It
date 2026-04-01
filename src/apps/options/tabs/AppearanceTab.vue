@@ -1,5 +1,5 @@
 <template>
-  <section class="appearance-tab">
+  <section class="options-tab-content">
     <h2>{{ t('appearance_section_title') || 'Appearance' }}</h2>
     
     <!-- Font Settings -->
@@ -92,75 +92,50 @@ const validateFonts = () => {
 <style lang="scss" scoped>
 @use "@/assets/styles/base/variables" as *;
 
-.appearance-tab {
-  padding: $spacing-lg;
-  
-  h2 {
-    font-size: $font-size-xl;
-    font-weight: $font-weight-bold;
+.setting-group {
+  .setting-description {
+    margin: 0 0 $spacing-lg 0;
+  }
+}
+
+.font-settings {
+  background-color: var(--color-surface);
+  border: $border-width $border-style var(--color-border);
+  border-radius: $border-radius-base;
+  padding: $spacing-md;
+  margin-bottom: $spacing-lg;
+
+  h3 {
+    margin: 0 0 $spacing-sm 0;
+    padding: 0;
+    border: none;
     color: var(--color-text);
-    margin-bottom: $spacing-lg;
-    border-bottom: 2px solid var(--color-primary);
-    padding-bottom: $spacing-base;
   }
+}
 
-  .setting-group {
-    margin-bottom: $spacing-xl;
-    
-    h3 {
-      font-size: $font-size-lg;
-      font-weight: $font-weight-medium;
-      color: var(--color-text);
-      margin-bottom: $spacing-sm;
-    }
-    
-    .setting-description {
-      font-size: $font-size-sm;
-      color: var(--color-text-secondary);
-      margin-bottom: $spacing-lg;
-      line-height: 1.5;
-    }
-  }
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: $spacing-md;
+  margin-bottom: $spacing-sm;
 
-  .font-settings {
-    background-color: var(--color-background-secondary);
-    border: 1px solid var(--color-border);
-    border-radius: $border-radius-lg;
-    padding: $spacing-lg;
-    
-    h3 {
-      margin-top: 0;
-      color: var(--color-primary);
-    }
-  }
-
-  .validation-error {
-    background-color: var(--color-error);
-    color: white;
-    padding: $spacing-base;
-    border-radius: $border-radius-base;
-    margin-top: $spacing-base;
-    font-size: $font-size-sm;
-    font-weight: $font-weight-medium;
+  .setting-label {
+    font-weight: 600;
+    color: var(--color-text);
+    min-width: 150px;
   }
 }
 
 // Mobile responsive
 @media (max-width: #{$breakpoint-md}) {
-  .appearance-tab {
-    padding: $spacing-base;
-    
-    h2 {
-      font-size: $font-size-lg;
-    }
-    
-    .setting-group {
-      margin-bottom: $spacing-lg;
-    }
-    
-    .font-settings {
-      padding: $spacing-base;
-    }
+  .font-settings {
+    padding: $spacing-sm;
+  }
+
+  .setting-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: $spacing-sm;
   }
 }
 </style>

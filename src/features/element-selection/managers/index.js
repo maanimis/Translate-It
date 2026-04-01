@@ -1,25 +1,19 @@
 // Main entry point for Select Element module
-// Re-exports all components for easy importing
+// Simplified for the new domtranslator-based architecture
 
 // Unified Manager (Primary export)
-export { SelectElementManager, getSelectElementManager } from '../SelectElementManager.js';
+export { SelectElementManager } from '../SelectElementManager.js';
 export { SelectElementNotificationManager, getSelectElementNotificationManager } from '../SelectElementNotificationManager.js';
 
-// Core Services
-export { ElementHighlighter } from './services/ElementHighlighter.js';
-export { TextExtractionService } from './services/TextExtractionService.js';
-export { TranslationOrchestrator } from './services/TranslationOrchestrator.js';
-export { ModeManager } from './services/ModeManager.js';
-export { ErrorHandlingService } from './services/ErrorHandlingService.js';
-export { StateManager } from './services/StateManager.js';
+// Core Services (New simplified services)
+export { DomTranslatorAdapter } from '../core/DomTranslatorAdapter.js';
+export { ElementSelector } from '../core/ElementSelector.js';
 
-// Export utilities and constants
-export * from './utils/elementValidation.js';
-export * from './utils/domHelpers.js';
+// Export constants
 export * from './constants/selectElementConstants.js';
+export * from '../constants/SelectElementModes.js';
 
-// Export new dedicated utilities
+// Export new simplified utilities
 export * from '../utils/index.js';
 
-// Note: Legacy exports removed - Use FeatureManager to access SelectElementManager
-// Access pattern: window.featureManager.getFeatureHandler('selectElement')
+// Note: Access pattern: window.featureManager.getFeatureHandler('selectElement')

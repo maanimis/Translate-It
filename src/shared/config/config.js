@@ -4,10 +4,44 @@ import { ErrorTypes } from '@/shared/error-management/ErrorTypes.js';
 import { storageManager } from '../storage/core/StorageCore.js';
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
+import { ProviderRegistryIds } from '@/features/translation/providers/ProviderConstants.js';
+import { MessageContexts } from '@/shared/messaging/core/MessagingConstants.js';
+import { TRANSLATION_HTML, MOBILE_CONSTANTS } from './constants.js';
+
 // NOTE: Avoid importing LOG_COMPONENTS here to reduce risk of circular/TDZ during very early store initialization.
 // Using literal 'Core' keeps semantics intact.
 const logger = getScopedLogger(LOG_COMPONENTS.CONFIG, 'config');
 logger.info('Config module initialized');
+
+/**
+ * Translation Modes synchronized with MessageContexts for architectural consistency
+ */
+export const TranslationMode = {
+  Field: MessageContexts.CONTENT,
+  Select_Element: MessageContexts.SELECT_ELEMENT,
+  Selection: MessageContexts.SELECTION_MANAGER,
+  Dictionary_Translation: MessageContexts.DICTIONARY,
+  Popup_Translate: MessageContexts.POPUP,
+  Sidepanel_Translate: MessageContexts.SIDEPANEL,
+  Mobile_Translate: MessageContexts.MOBILE_TRANSLATE,
+  ScreenCapture: MessageContexts.CAPTURE_MANAGER,
+  Page: MessageContexts.PAGE_TRANSLATION_BATCH, // Whole page translation
+  
+  // Legacy aliases for backward compatibility
+  LEGACY_FIELD: 'field',
+  LEGACY_SELECT_ELEMENT: 'SelectElement',
+  LEGACY_SELECT_ELEMENT_UNDERSCORE: 'select_element',
+  LEGACY_DICTIONARY: 'dictionary'
+};
+
+/**
+ * Selection Translation Modes
+ */
+export const SelectionTranslationMode = {
+  IMMEDIATE: 'immediate',
+  ON_FAB_CLICK: 'onFabClick',
+  ON_CLICK: 'onClick'
+};
 
 export const TRANSLATION_ERRORS = {
   INVALID_CONTEXT:
@@ -23,40 +57,71 @@ export const TRANSLATION_ERRORS = {
   CONTEXT_LOST: "Extension context lost",
 };
 
+// Detect environment
+const isFirefox = typeof __BROWSER__ !== 'undefined' ? __BROWSER__ === 'firefox' : false;
+
 // Shared configuration (initial defaults)
 export const CONFIG = {
   APP_NAME: "Translate It",
   // --- Core Settings ---
-  USE_MOCK: false,
   DEBUG_MODE: false,
-  APPLICATION_LOCALIZE: "English",
+  APPLICATION_LOCALIZE: "en",
   SOURCE_LANGUAGE: "en",
   TARGET_LANGUAGE: "fa",
   THEME: "auto",
   TIMEOUT: 30000,
-  selectionTranslationMode: "onClick", // "immediate",
+  selectionTranslationMode: SelectionTranslationMode.ON_CLICK,
+
   COPY_REPLACE: "replace", // "copy",
   REPLACE_SPECIAL_SITES: true,
   CHANGELOG_URL: "https://raw.githubusercontent.com/iSegaro/Translate-It/main/Changelog.md",
 
 
   // --- API Settings ---
-  TRANSLATION_API: "google", // gemini, webai, openai, openrouter, deepseek, custom, google, browserapi
+  TRANSLATION_API: isFirefox ? ProviderRegistryIds.GOOGLE : ProviderRegistryIds.GOOGLE_V2, // gemini, webai, openai, openrouter, deepseek, custom, google, browserapi
 
-  API_KEY: "", // Gemini specific
-  GEMINI_API_URL: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", // Default Gemini API URL
+  // --- Mode Specific Provider Settings (Generated Dynamically) ---
+  MODE_PROVIDERS: Object.fromEntries(
+    Object.values(TranslationMode).map(mode => [mode, null])
+  ),
+
+  API_KEY: "", // Gemini specific (deprecated, use GEMINI_API_KEY)
+  GEMINI_API_KEY: "", // Gemini API keys (newline-separated)
+  GEMINI_API_URL: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", // Default Gemini API URL
   GEMINI_MODEL: "gemini-2.5-flash", // Selected Gemini model
   GEMINI_THINKING_ENABLED: false, // Enable/disable thinking for supported models
   GEMINI_MODELS: [
+    // Gemini 3 Series (NEW - Latest & Most Advanced)
+    { value: "gemini-3-pro-preview", name: "Gemini 3 Pro Preview", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent", thinking: { supported: true, controllable: false, defaultEnabled: false } },
+    { value: "gemini-3-flash-preview", name: "Gemini 3 Flash Preview", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
+
+    // Gemini 2.5 Series (Stable)
     { value: "gemini-2.5-pro", name: "Gemini 2.5 Pro", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent", thinking: { supported: true, controllable: false, defaultEnabled: false } },
     { value: "gemini-2.5-flash", name: "Gemini 2.5 Flash", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
+    { value: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
+
+    // Gemini 2.5 Series (Preview Versions)
+    { value: "gemini-2.5-flash-preview-09-2025", name: "Gemini 2.5 Flash Preview (09-2025)", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
+    { value: "gemini-2.5-flash-lite-preview-09-2025", name: "Gemini 2.5 Flash-Lite Preview (09-2025)", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
+
+    // Gemini 2.0 Series (Second Generation)
+    { value: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash Exp", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
     { value: "gemini-2.0-flash", name: "Gemini 2.0 Flash", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", thinking: { supported: false, controllable: false, defaultEnabled: false } },
     { value: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash-Lite", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent", thinking: { supported: false, controllable: false, defaultEnabled: false } },
+
     { value: "custom", name: "Custom Model", custom: true, thinking: { supported: true, controllable: true, defaultEnabled: false } }
   ],
-  GOOGLE_TRANSLATE_URL: "https://translate.googleapis.com/translate_a/single", // Google Translate URL
+  GOOGLE_TRANSLATE_URL: "https://translate.googleapis.com/translate_a/single",
+  GOOGLE_TRANSLATE_V2_URL: "https://translate.google.com/translate_a/single",
+  DEEPL_FREE_API_URL: "https://api-free.deepl.com/v2/translate",
+  DEEPL_PRO_API_URL: "https://api.deepl.com/v2/translate",
+  YANDEX_TRANSLATE_URL: "https://translate.yandex.net/api/v1/tr.json/translate",
+  YANDEX_DETECT_URL: "https://translate.yandex.net/api/v1/tr.json/detect",
+  MICROSOFT_EDGE_AUTH_URL: "https://edge.microsoft.com/translate/auth",
+  MICROSOFT_EDGE_TRANSLATE_URL: "https://api-edge.cognitive.microsofttranslator.com/translate",
+  LINGVA_API_URL: "https://lingva.ml",
   WEBAI_API_URL: "http://localhost:6969/translate",
-  WEBAI_API_MODEL: "gemini-2.0-flash",
+  WEBAI_API_MODEL: "gemini-2.5-flash",
   OPENAI_API_KEY: "",
   OPENAI_API_URL: "https://api.openai.com/v1/chat/completions",
   OPENAI_API_MODEL: "gpt-4o",
@@ -98,12 +163,38 @@ export const CONFIG = {
   CUSTOM_API_KEY: "",
   CUSTOM_API_MODEL: "",
 
+  // --- DeepL API Settings ---
+  DEEPL_API_KEY: "",
+  DEEPL_API_TIER: "free", // 'free' or 'pro'
+  DEEPL_FORMALITY: "default", // 'default', 'more', 'less', 'prefer_more', 'prefer_less'
+  DEEPL_BETA_LANGUAGES_ENABLED: true, // Enable beta languages support
+  DEEPL_API_TIER_OPTIONS: [
+    { value: "free", i18nKey: "deepl_api_tier_free" },
+    { value: "pro", i18nKey: "deepl_api_tier_pro" }
+  ],
+  DEEPL_FORMALITY_OPTIONS: [
+    { value: "default", i18nKey: "deepl_formality_default" },
+    { value: "more", i18nKey: "deepl_formality_more" },
+    { value: "less", i18nKey: "deepl_formality_less" },
+    { value: "prefer_more", i18nKey: "deepl_formality_prefer_more" },
+    { value: "prefer_less", i18nKey: "deepl_formality_prefer_less" }
+  ],
+
   // --- browser Translation API Settings (Chrome 138+) ---
   BROWSER_TRANSLATE_ENABLED: true, // Enable/disable browser Translation API
   BROWSER_TRANSLATE_AUTO_DOWNLOAD: true, // Automatically download language packs when needed
 
   // --- Translation Activation Settings ---
   EXTENSION_ENABLED: true, // فعال بودن افزونه (کلی)
+  SHOW_DESKTOP_FAB: true, // نمایش دکمه دسترسی سریع در دسکتاپ
+  DESKTOP_FAB_POSITION: { 
+    side: 'right', 
+    y: -1 
+  }, // موقعیت دکمه شناور دسکتاپ (سمت و ارتفاع)
+  MOBILE_FAB_POSITION: { 
+    side: MOBILE_CONSTANTS.FAB.SIDE.RIGHT, 
+    y: MOBILE_CONSTANTS.FAB.DEFAULT_Y 
+  }, // موقعیت دکمه شناور موبایل (سمت و ارتفاع)
   TRANSLATE_ON_TEXT_FIELDS: false, // نمایش آیکون ترجمه در فیلدهای متنی
   ENABLE_SHORTCUT_FOR_TEXT_FIELDS: true, // فعال کردن شورتکات Ctrl+/ برای فیلدهای متنی
   TRANSLATE_WITH_SELECT_ELEMENT: true, // فعال کردن ترجمه با انتخاب المان (مثلاً از منوی راست‌کلیک)
@@ -114,6 +205,32 @@ export const CONFIG = {
   ENABLE_SCREEN_CAPTURE: true, // فعال کردن قابلیت Screen Capture Translator
   ACTIVE_SELECTION_ICON_ON_TEXTFIELDS: true, // فعال کردن دوبار کلیک روی متن در فیلدهای متنی
   EXCLUDED_SITES: [], // وب‌سایت‌هایی که افزونه در آن‌ها غیرفعال باشد
+  MOBILE_UI_MODE: MOBILE_CONSTANTS.UI_MODE.AUTO, // حالت رابط کاربری موبایل: auto, mobile, desktop
+  MOBILE_PAGE_TRANSLATION_AUTO_CLOSE: false, // بستن خودکار شیت پس از شروع ترجمه صفحه در موبایل
+
+  // --- Whole Page Translation Settings (NEW) ---
+  WHOLE_PAGE_TRANSLATION_ENABLED: true, // فعال بودن ترجمه کل صفحه
+  WHOLE_PAGE_LAZY_LOADING: true, // فقط translate کردن قسمت‌های visible صفحه
+  WHOLE_PAGE_AUTO_TRANSLATE_ON_DOM_CHANGES: true, // ترجمه خودکار وقتی صفحه تغییر می‌کند
+  WHOLE_PAGE_EXCLUDED_SELECTORS: [
+    "script", "style", "code", "pre", "noscript", "meta", "textarea", "link", "time", "kbd", "svg", "ruby", "rt", "rp", "math", "d-math", "samp",
+    `.${TRANSLATION_HTML.NO_TRANSLATE_CLASS}`, "[contenteditable='true']", `[translate='${TRANSLATION_HTML.NO_TRANSLATE_VALUE}']`,
+    ".social-share", ".share-nav", "[data-toolbar=share]", ".o-share",
+    ".prism-code", ".enlighter-code", ".rc-CodeBlock", "[role=code]", "table.highlight",
+    "hypothesis-highlight", ".hypothesis-highlight",
+    ".material-icons", "material-icon", "span[class^=material-symbols-]", ".google-symbols", "i.fa", "i[class^=fa-]",
+    "visuallyhidden", "[data-translate-ignore]"
+  ], // المنت‌هایی که ترجمه نمی‌شوند
+  WHOLE_PAGE_ATTRIBUTES_TO_TRANSLATE: ["title", "alt", "placeholder", "label", "value"], // Attributeهایی که بصری هستند و ترجمه می‌شوند
+  WHOLE_PAGE_MAX_ELEMENTS: 10000, // حداکثر تعداد المنت برای ترجمه (برای performance)
+  WHOLE_PAGE_CHUNK_SIZE: 250, // تعداد nodeها در هر batch request
+  WHOLE_PAGE_MAX_CHARS: 5000, // حداکثر کاراکتر در هر درخواست معمولی
+  WHOLE_PAGE_AI_MAX_CHARS: 15000, // حداکثر کاراکتر در هر درخواست برای مدل‌های AI
+  WHOLE_PAGE_ROOT_MARGIN: '10px', // حاشیه اطراف viewport برای شروع ترجمه lazy
+  WHOLE_PAGE_DEBOUNCE_DELAY: 500, // تاخیر برای DOM change debouncing (ms)
+  WHOLE_PAGE_MAX_CONCURRENT_REQUESTS: 1, // حداکثر تعداد درخواست‌های همزمان برای ترجمه صفحه
+  WHOLE_PAGE_PROGRESS_UPDATE_INTERVAL: 100, // فاصله بین progress updates (ms)
+  WHOLE_PAGE_SHOW_ORIGINAL_ON_HOVER: false, // نمایش متن اصلی هنگام hover روی متن ترجمه شده
 
   // --- Proxy Settings ---
   PROXY_ENABLED: false, // فعال بودن proxy
@@ -124,19 +241,6 @@ export const CONFIG = {
   PROXY_PASSWORD: "", // رمز عبور proxy (اختیاری)
 
   // --- UI & Styling ---
-  HIGHLIGHT_NEW_ELEMENT_RED: "2px solid red", // Note: typo in original key 'HIGHTLIH'? Should be HIGHLIGHT?
-  TRANSLATION_ICON_TITLE: "Translate Text",
-  HIGHLIGHT_STYLE: "2px solid red",
-  ICON_TRANSLATION: "🌐",
-  ICON_SUCCESS: "✅ ",
-  ICON_WARNING: "⚠️ ",
-  ICON_STATUS: "⏳ ",
-  ICON_ERROR: "❌ ",
-  ICON_INFO: "🔵 ",
-  ICON_REVERT: "↩️",
-  NOTIFICATION_ALIGNMENT: "right",
-  NOTIFICATION_TEXT_DIRECTION: "rtl",
-  NOTIFICATION_TEXT_ALIGNMENT: "right",
 
   // --- Font Settings ---
   TRANSLATION_FONT_FAMILY: "auto", // Auto-detect based on target language or custom font
@@ -192,6 +296,20 @@ Your task:
   5. Ensure translations are fluent, idiomatic, and natural — not literal or robotic.
   6. Prioritize meaning and readability over strict word-for-word translation.
 
+CRITICAL - Placeholder Preservation Instructions:
+  If the text contains special placeholders in the format [[AIWC-0]], [[AIWC-1]], [[AIWC-2]], etc.:
+  1. These placeholders represent inline elements (links, emphasis, code) that MUST be preserved exactly
+  2. Copy these placeholders to your translation WITHOUT any changes
+  3. DO NOT translate the numbers inside the placeholders
+  4. DO NOT renumber, modify, or reformat the placeholders
+  5. DO NOT add spaces inside or around the placeholders
+  6. Ensure each placeholder appears exactly once in your translation
+
+Examples:
+  - Input: "Click [[AIWC-0]] to learn more"
+  - Correct: "روی [[AIWC-0]] کلیک کنید تا بیشتر بدانید"
+  - Wrong: "روی [0] کلیک کنید" or "روی [[AIWC-1]] کلیک کنید"
+
 Return **only** the translated JSON array. Do not include explanations, markdown, or any extra content.
 
 $_{TEXT}
@@ -246,15 +364,34 @@ $_{TEXT}
 /*--- End PROMPT_BASE_BATCH ---*/
 
 /*--- Start PROMPT_BASE_AI_BATCH ---*/
-  PROMPT_BASE_AI_BATCH: `Your are an exper translation service. Ensure that the translation is fluent, natural, and idiomatic — not literal or mechanical. Translate the following JSON array of texts from $_{SOURCE} to $_{TARGET}.
-  Your response MUST be a valid JSON array with the exact same number of items, each containing the translated text. 
+  PROMPT_BASE_AI_BATCH: `You are an expert translation service. Ensure that the translation is fluent, natural, and idiomatic — not literal or mechanical. Translate the following JSON array of texts from $_{SOURCE} to $_{TARGET}.
+  Your response MUST be a valid JSON array with the exact same number of items, each containing the translated text.
   Maintain the original JSON structure.
+
+CRITICAL - Placeholder Preservation Instructions:
+  If the text contains special placeholders in the format [[AIWC-0]], [[AIWC-1]], [[AIWC-2]], etc.:
+  1. These placeholders represent inline elements (links, emphasis, code) that MUST be preserved exactly
+  2. Copy these placeholders to your translation WITHOUT any changes
+  3. DO NOT translate the numbers inside the placeholders
+  4. DO NOT renumber, modify, or reformat the placeholders
+  5. DO NOT add spaces inside or around the placeholders
+  6. Ensure each placeholder appears exactly once in your translation
+
+Examples:
+  - Input: "Click [[AIWC-0]] to learn more"
+  - Correct: "روی [[AIWC-0]] کلیک کنید تا بیشتر بدانید"
+  - Wrong: "روی [0] کلیک کنید" or "روی [[AIWC-1]] کلیک کنید"
 
 Important: Return only the JSON array with translated texts, no additional text or explanations.
 
 $_{TEXT}
 `,
 /*--- End PROMPT_BASE_AI_BATCH ---*/
+
+/*--- Start PROMPT_BASE_AI_FOLLOWUP ---*/
+  PROMPT_BASE_AI_FOLLOWUP: `You are a professional translation service. Continue translating the following JSON array from $_{SOURCE} to $_{TARGET} using the same JSON format and placeholder preservation rules as established in the first turn of this session.
+  Return only the JSON array with translated texts, no additional text.`,
+/*--- End PROMPT_BASE_AI_FOLLOWUP ---*/
 
 
 /*--- Start PROMPT_BASE_DICTIONARY ---*/
@@ -328,25 +465,6 @@ $_{TEXT}
 - If the input is in any other language, translate it into $_{TARGET}, focusing on readability, tone, and meaning rather than literal translation.
 - If the input contains grammatical errors but is in $_{TARGET}, translate it into $_{SOURCE}, correcting and expressing the intended meaning in a clear, natural way.`,
   /*--- End PROMPT_TEMPLATE ---*/
-
-  // --- Debugging Values ---
-  DEBUG_TRANSLATED_ENGLISH: "This is a mock translation to English.",
-  DEBUG_TRANSLATED_PERSIAN: "این یک ترجمه آزمایشی به فارسی است.",
-  DEBUG_TRANSLATED_ENGLISH_With_NewLine:
-    "This is a mock \ntranslation to English with \nnew lines.",
-  DEBUG_TRANSLATED_PERSIAN_With_NewLine:
-    "این یک ترجمه آزمایشی \nبرای ترجمه به فارسی \nبا خطوط جدید است.",
-};
-
-// --- Enums & State ---
-export const TranslationMode = {
-  Field: "field",
-  Select_Element: "select_element",
-  Selection: "selection",
-  Dictionary_Translation: "dictionary",
-  Popup_Translate: "popup_translate",
-  Sidepanel_Translate: "sidepanel_translate",
-  ScreenCapture: "screen_capture",
 };
 
 export const state = {
@@ -423,10 +541,6 @@ const getSettingValueAsync = async (key, defaultValue) => {
   }
 };
 
-export const getUseMockAsync = async () => {
-  return getSettingValueAsync("USE_MOCK", CONFIG.USE_MOCK);
-};
-
 export const getDebugModeAsync = async () => {
   const debugMode = await getSettingValueAsync("DEBUG_MODE", CONFIG.DEBUG_MODE);
   // Update ErrorHandler with current debug mode
@@ -476,6 +590,42 @@ export const getGoogleTranslateUrlAsync = async () => {
   return getSettingValueAsync("GOOGLE_TRANSLATE_URL", CONFIG.GOOGLE_TRANSLATE_URL);
 };
 
+export const getGoogleTranslateV2UrlAsync = async () => {
+  return getSettingValueAsync("GOOGLE_TRANSLATE_V2_URL", CONFIG.GOOGLE_TRANSLATE_V2_URL);
+};
+
+// DeepL API Specific
+export const getDeeplFreeApiUrlAsync = async () => {
+  return getSettingValueAsync("DEEPL_FREE_API_URL", CONFIG.DEEPL_FREE_API_URL);
+};
+
+export const getDeeplProApiUrlAsync = async () => {
+  return getSettingValueAsync("DEEPL_PRO_API_URL", CONFIG.DEEPL_PRO_API_URL);
+};
+
+// Yandex Translate Specific
+export const getYandexTranslateUrlAsync = async () => {
+  return getSettingValueAsync("YANDEX_TRANSLATE_URL", CONFIG.YANDEX_TRANSLATE_URL);
+};
+
+export const getYandexDetectUrlAsync = async () => {
+  return getSettingValueAsync("YANDEX_DETECT_URL", CONFIG.YANDEX_DETECT_URL);
+};
+
+// Microsoft Edge Specific
+export const getMicrosoftEdgeAuthUrlAsync = async () => {
+  return getSettingValueAsync("MICROSOFT_EDGE_AUTH_URL", CONFIG.MICROSOFT_EDGE_AUTH_URL);
+};
+
+export const getMicrosoftEdgeTranslateUrlAsync = async () => {
+  return getSettingValueAsync("MICROSOFT_EDGE_TRANSLATE_URL", CONFIG.MICROSOFT_EDGE_TRANSLATE_URL);
+};
+
+// Lingva Translate Specific
+export const getLingvaApiUrlAsync = async () => {
+  return getSettingValueAsync("LINGVA_API_URL", CONFIG.LINGVA_API_URL);
+};
+
 export const getApplication_LocalizeAsync = async () => {
   return getSettingValueAsync(
     "APPLICATION_LOCALIZE",
@@ -501,6 +651,14 @@ export const getTargetLanguageAsync = async () => {
 
 export const getEnableDictionaryAsync = async () => {
   return getSettingValueAsync("ENABLE_DICTIONARY", CONFIG.ENABLE_DICTIONARY);
+};
+
+export const getMobileUiModeAsync = async () => {
+  return getSettingValueAsync("MOBILE_UI_MODE", CONFIG.MOBILE_UI_MODE);
+};
+
+export const getMobilePageTranslationAutoCloseAsync = async () => {
+  return getSettingValueAsync("MOBILE_PAGE_TRANSLATION_AUTO_CLOSE", CONFIG.MOBILE_PAGE_TRANSLATION_AUTO_CLOSE);
 };
 
 export const getPromptAsync = async () => {
@@ -533,6 +691,10 @@ export const getPromptBASEAIBatchAsync = async () => {
   return getSettingValueAsync("PROMPT_BASE_AI_BATCH", CONFIG.PROMPT_BASE_AI_BATCH);
 };
 
+export const getPromptBASEAIFollowupAsync = async () => {
+  return getSettingValueAsync("PROMPT_BASE_AI_FOLLOWUP", CONFIG.PROMPT_BASE_AI_FOLLOWUP);
+};
+
 export const getPromptBASEFieldAsync = async () => {
   return getSettingValueAsync("PROMPT_BASE_FIELD", CONFIG.PROMPT_BASE_FIELD);
 };
@@ -546,6 +708,10 @@ export const getTranslationApiAsync = async () => {
   // Translation API retrieved - logged at TRACE level for detailed debugging
   // logger.debug(`[config.js] getTranslationApiAsync - Returning: ${result}`);
   return result;
+};
+
+export const getModeProvidersAsync = async () => {
+  return getSettingValueAsync("MODE_PROVIDERS", CONFIG.MODE_PROVIDERS);
 };
 
 // WebAI Specific
@@ -579,6 +745,23 @@ export const getCustomApiModelAsync = async () => {
   return getSettingValueAsync("CUSTOM_API_MODEL", CONFIG.CUSTOM_API_MODEL);
 };
 
+// DeepL Specific
+export const getDeeplApiKeyAsync = async () => {
+  return getSettingValueAsync("DEEPL_API_KEY", CONFIG.DEEPL_API_KEY);
+};
+
+export const getDeeplApiTierAsync = async () => {
+  return getSettingValueAsync("DEEPL_API_TIER", CONFIG.DEEPL_API_TIER);
+};
+
+export const getDeeplFormalityAsync = async () => {
+  return getSettingValueAsync("DEEPL_FORMALITY", CONFIG.DEEPL_FORMALITY);
+};
+
+export const getDeeplBetaLanguagesEnabledAsync = async () => {
+  return getSettingValueAsync("DEEPL_BETA_LANGUAGES_ENABLED", CONFIG.DEEPL_BETA_LANGUAGES_ENABLED);
+};
+
 // OpenAI Specific
 export const getOpenAIApiKeyAsync = async () => {
   return getSettingValueAsync("OPENAI_API_KEY", CONFIG.OPENAI_API_KEY);
@@ -607,6 +790,27 @@ export const getOpenRouterApiModelAsync = async () => {
 };
 
 // --- New Activation Settings Getters ---
+export const getShowDesktopFabAsync = async () => {
+  return getSettingValueAsync(
+    "SHOW_DESKTOP_FAB",
+    CONFIG.SHOW_DESKTOP_FAB
+  );
+};
+
+export const getDesktopFabPositionAsync = async () => {
+  return getSettingValueAsync(
+    "DESKTOP_FAB_POSITION",
+    CONFIG.DESKTOP_FAB_POSITION
+  );
+};
+
+export const getMobileFabPositionAsync = async () => {
+  return getSettingValueAsync(
+    "MOBILE_FAB_POSITION",
+    CONFIG.MOBILE_FAB_POSITION
+  );
+};
+
 export const getTranslateOnTextFieldsAsync = async () => {
   return getSettingValueAsync(
     "TRANSLATE_ON_TEXT_FIELDS",
@@ -709,4 +913,140 @@ export const getTranslationFontFamilyAsync = async () => {
 
 export const getTranslationFontSizeAsync = async () => {
   return getSettingValueAsync("TRANSLATION_FONT_SIZE", CONFIG.TRANSLATION_FONT_SIZE);
+};
+
+// --- Multi-API Key Support (2025) ---
+// Import ApiKeyManager for multi-key support
+// Using dynamic import to avoid circular dependencies
+
+/**
+ * Get all OpenAI API keys as array
+ * @returns {Promise<string[]>} - Array of API keys
+ */
+export const getOpenAIApiKeysAsync = async () => {
+  const { ApiKeyManager } = await import("@/features/translation/providers/ApiKeyManager.js");
+  return ApiKeyManager.getKeys('OPENAI_API_KEY');
+};
+
+/**
+ * Get all Gemini API keys as array
+ * @returns {Promise<string[]>} - Array of API keys
+ */
+export const getGeminiApiKeysAsync = async () => {
+  const { ApiKeyManager } = await import("@/features/translation/providers/ApiKeyManager.js");
+  return ApiKeyManager.getKeys('GEMINI_API_KEY');
+};
+
+/**
+ * Get all DeepSeek API keys as array
+ * @returns {Promise<string[]>} - Array of API keys
+ */
+export const getDeepSeekApiKeysAsync = async () => {
+  const { ApiKeyManager } = await import("@/features/translation/providers/ApiKeyManager.js");
+  return ApiKeyManager.getKeys('DEEPSEEK_API_KEY');
+};
+
+/**
+ * Get all OpenRouter API keys as array
+ * @returns {Promise<string[]>} - Array of API keys
+ */
+export const getOpenRouterApiKeysAsync = async () => {
+  const { ApiKeyManager } = await import("@/features/translation/providers/ApiKeyManager.js");
+  return ApiKeyManager.getKeys('OPENROUTER_API_KEY');
+};
+
+/**
+ * Get all DeepL API keys as array
+ * @returns {Promise<string[]>} - Array of API keys
+ */
+export const getDeeplApiKeysAsync = async () => {
+  const { ApiKeyManager } = await import("@/features/translation/providers/ApiKeyManager.js");
+  return ApiKeyManager.getKeys('DEEPL_API_KEY');
+};
+
+/**
+ * Get all Custom API keys as array
+ * @returns {Promise<string[]>} - Array of API keys
+ */
+export const getCustomApiKeysAsync = async () => {
+  const { ApiKeyManager } = await import("@/features/translation/providers/ApiKeyManager.js");
+  return ApiKeyManager.getKeys('CUSTOM_API_KEY');
+};
+
+// --- Whole Page Translation Settings Getters (NEW) ---
+export const getWholePageTranslationEnabledAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_TRANSLATION_ENABLED",
+    CONFIG.WHOLE_PAGE_TRANSLATION_ENABLED
+  );
+};
+
+export const getWholePageLazyLoadingAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_LAZY_LOADING",
+    CONFIG.WHOLE_PAGE_LAZY_LOADING
+  );
+};
+
+export const getWholePageAutoTranslateOnDOMChangesAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_AUTO_TRANSLATE_ON_DOM_CHANGES",
+    CONFIG.WHOLE_PAGE_AUTO_TRANSLATE_ON_DOM_CHANGES
+  );
+};
+
+export const getWholePageExcludedSelectorsAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_EXCLUDED_SELECTORS",
+    CONFIG.WHOLE_PAGE_EXCLUDED_SELECTORS
+  );
+};
+
+export const getWholePageAttributesToTranslateAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_ATTRIBUTES_TO_TRANSLATE",
+    CONFIG.WHOLE_PAGE_ATTRIBUTES_TO_TRANSLATE
+  );
+};
+
+export const getWholePageMaxElementsAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_MAX_ELEMENTS",
+    CONFIG.WHOLE_PAGE_MAX_ELEMENTS
+  );
+};
+
+export const getWholePageChunkSizeAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_CHUNK_SIZE",
+    CONFIG.WHOLE_PAGE_CHUNK_SIZE
+  );
+};
+
+export const getWholePageDebounceDelayAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_DEBOUNCE_DELAY",
+    CONFIG.WHOLE_PAGE_DEBOUNCE_DELAY
+  );
+};
+
+export const getWholePageRootMarginAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_ROOT_MARGIN",
+    CONFIG.WHOLE_PAGE_ROOT_MARGIN
+  );
+};
+
+export const getWholePageProgressUpdateIntervalAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_PROGRESS_UPDATE_INTERVAL",
+    CONFIG.WHOLE_PAGE_PROGRESS_UPDATE_INTERVAL
+  );
+};
+
+export const getWholePageShowOriginalOnHoverAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_SHOW_ORIGINAL_ON_HOVER",
+    CONFIG.WHOLE_PAGE_SHOW_ORIGINAL_ON_HOVER
+  );
 };

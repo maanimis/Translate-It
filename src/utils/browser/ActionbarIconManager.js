@@ -1,5 +1,7 @@
 import browser from 'webextension-polyfill';
 import { storageManager } from '@/shared/storage/core/StorageCore.js';
+import ExtensionContextManager from '@/core/extensionContext.js';
+import { ProviderRegistryIds } from '@/features/translation/providers/ProviderConstants.js';
 
 // Lazy logger initialization to avoid TDZ
 let logger = null;
@@ -43,13 +45,14 @@ class ActionbarIconManager {
     const { default: ResourceTracker } = await import('@/core/memory/ResourceTracker.js');
     this.resourceTracker = new ResourceTracker('actionbar-icon-manager');
 
+    const logger = getLogger();
+
     try {
       // Get current provider
       const storedProvider = await storageManager.get('TRANSLATION_API');
-      this.currentProvider = storedProvider.TRANSLATION_API || 'google';
+      this.currentProvider = storedProvider.TRANSLATION_API || ProviderRegistryIds.GOOGLE_V2;
 
-      const logger = getLogger();
-      logger.debug(`🎯 Simple icon manager initialized for: ${this.currentProvider}`);
+      logger.debug(`Simple icon manager initialized for: ${this.currentProvider}`);
 
       // Update icon immediately
       await this.updateIcon(this.currentProvider);
@@ -64,10 +67,19 @@ class ActionbarIconManager {
       });
 
       this.isInitialized = true;
-      
+
     } catch (error) {
-      const logger = getLogger();
-      logger.error('❌ Failed to initialize ActionbarIconManager:', error);
+      // Use centralized context error detection
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'actionbar-icon-manager', {
+          fallbackAction: () => {
+            this.currentProvider = ProviderRegistryIds.GOOGLE_V2;
+            this.isInitialized = true;
+          }
+        });
+      } else {
+        logger.error('Failed to initialize ActionbarIconManager:', error);
+      }
     }
   }
 
@@ -75,25 +87,22 @@ class ActionbarIconManager {
    * Update icon for provider
    */
   async updateIcon(provider) {
+    const logger = getLogger();
     try {
-      const logger = getLogger();
-      logger.debug(`🎨 Updating icon for: ${provider}`);
+      logger.debug(`Updating icon for: ${provider}`);
 
       // Create composite icon with provider overlay
       const compositeImageData = await this.createCompositeIcon(provider);
 
       if (compositeImageData) {
         await this.setBrowserIconWithImageData(compositeImageData);
-        const logger = getLogger();
-        logger.debug(`✅ Icon updated for: ${provider}`);
+        logger.debug(`Icon updated for: ${provider}`);
       } else {
-        const logger = getLogger();
-        logger.warn(`⚠️ Failed to create composite icon for: ${provider}`);
+        logger.warn(`Failed to create composite icon for: ${provider}`);
       }
 
     } catch (error) {
-      const logger = getLogger();
-      logger.error(`❌ Failed to update icon for ${provider}:`, error);
+      logger.error(`Failed to update icon for ${provider}:`, error);
     }
   }
 
@@ -101,23 +110,15 @@ class ActionbarIconManager {
   /**
    * Get icon path for provider
    */
-  getProviderIconPath(provider) {
-    // Map provider to icon path
-    const providerIconPaths = {
-      'google': 'icons/providers/google.png',
-      'gemini': 'icons/providers/gemini.png',
-      'bing': 'icons/providers/bing.png',
-      'yandex': 'icons/providers/yandex.png',
-      'openai': 'icons/providers/openai.png',
-      'openrouter': 'icons/providers/openrouter.png',
-      'deepseek': 'icons/providers/deepseek.png',
-      'webai': 'icons/providers/webai.png',
-      'custom': 'icons/providers/custom.png',
-      'browserapi': 'icons/providers/chrome-translate.png',
-      'browser': 'icons/providers/provider.png'
-    };
+  async getProviderIconPath(provider) {
+    const { findProviderById } = await import('@/features/translation/providers/ProviderManifest.js');
+    const providerConfig = findProviderById(provider);
+    
+    if (providerConfig && providerConfig.icon) {
+      return `icons/providers/${providerConfig.icon}`;
+    }
 
-    return providerIconPaths[provider] || 'icons/providers/provider.png';
+    return 'icons/providers/provider.png';
   }
 
   // Note: The following methods are no longer needed with the new path-based approach:
@@ -129,6 +130,7 @@ class ActionbarIconManager {
    * Load image and convert to imageData using fetch and OffscreenCanvas
    */
   async loadImageData(iconPath) {
+    const logger = getLogger();
     try {
       // Get full URL for the icon
       const fullUrl = browser.runtime.getURL(iconPath);
@@ -136,7 +138,6 @@ class ActionbarIconManager {
       // Fetch the image
       const response = await fetch(fullUrl);
       if (!response.ok) {
-        const logger = getLogger();
         logger.error(`Failed to fetch image: ${fullUrl}`);
         return null;
       }
@@ -160,7 +161,6 @@ class ActionbarIconManager {
 
       return imageData;
     } catch (error) {
-      const logger = getLogger();
       logger.error('Error in loadImageData:', error);
       return null;
     }
@@ -170,17 +170,17 @@ class ActionbarIconManager {
    * Create composite icon with provider overlay
    */
   async createCompositeIcon(provider) {
+    const logger = getLogger();
     try {
       // Load main extension icon
       const mainIconBitmap = await this.loadImageBitmap('icons/extension/extension_icon_128.png');
 
       // Load provider overlay icon
-      const providerIconPath = this.getProviderIconPath(provider);
+      const providerIconPath = await this.getProviderIconPath(provider);
       const providerIconBitmap = await this.loadImageBitmap(providerIconPath);
 
       // Simple fallback check
       if (!mainIconBitmap || !providerIconBitmap) {
-        const logger = getLogger();
         logger.warn(`Icon loading failed - Main: ${!!mainIconBitmap}, Provider: ${!!providerIconBitmap} for ${provider}`);
         return null;
       }

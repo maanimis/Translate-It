@@ -25,6 +25,7 @@
         :readonly="readonly"
         :required="required"
         :class="inputClasses"
+        :dir="dir"
         @input="handleInput"
         @focus="handleFocus"
         @blur="handleBlur"
@@ -106,6 +107,11 @@ const props = defineProps({
   clearable: {
     type: Boolean,
     default: false
+  },
+  dir: {
+    type: String,
+    default: null,
+    validator: (value) => ['ltr', 'rtl', 'auto'].includes(value)
   }
 })
 
@@ -210,6 +216,12 @@ const handleClear = () => {
   
   &::placeholder {
     color: var(--color-text-muted);
+  }
+
+  &[dir="ltr"]::placeholder {
+    direction: rtl;
+    text-align: left;
+    unicode-bidi: plaintext;
   }
 }
 

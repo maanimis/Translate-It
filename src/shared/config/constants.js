@@ -5,7 +5,18 @@ export const AUTO_DETECT_VALUE = "auto";
 export const DEFAULT_TARGET_LANGUAGE = "fa";
 
 export const NOTIFICATION_TIME = {
-  REVERT: 1500
+  REVERT: 1500,
+  FAST: 1500,
+  SUCCESS: 4000,
+  INFO: 4000,
+  DEFAULT: 4000,
+  WARNING: 5000,
+  WARNING_PROVIDER: 3000,
+  ERROR: 6000,
+  FATAL: 10000,
+  LONG: 8000,
+  HINT: 3000,
+  PERSISTENT: 0
 }
 
 // HTML Input Types for text field detection
@@ -34,6 +45,23 @@ export const INPUT_TYPES = {
     'code'
   ]
 }
+
+// ===== UI HOST CONSTANTS =====
+export const UI_HOST_IDS = {
+  MAIN: 'translate-it-host-main',
+  IFRAME: 'translate-it-host-iframe',
+  APP_CONTAINER: 'translate-it-app-container',
+  TOOLTIP: 'ti-original-text-tooltip'
+};
+
+// ===== TRANSLATION HTML CONSTANTS =====
+export const TRANSLATION_HTML = {
+  IGNORE_CLASS: 'ti-ignore-translation',
+  NO_TRANSLATE_CLASS: 'notranslate',
+  NO_TRANSLATE_VALUE: 'no',
+  ICON_ID: 'translate-it-icon',
+  WINDOW_CLASS: 'translation-window'
+};
 
 // ===== TEXT FIELD DETECTION CONSTANTS =====
 export const FIELD_DETECTION = {
@@ -171,4 +199,46 @@ export const FIELD_DETECTION = {
     'email', 'month', 'number', 'range', 'search', 'tel', 'time',
     'url', 'week'
   ]
+};
+
+// ===== MOBILE SYSTEM CONSTANTS =====
+export const MOBILE_CONSTANTS = {
+  VIEWS: {
+    DASHBOARD: 'dashboard',
+    SELECTION: 'selection',
+    INPUT: 'input',
+    PAGE_TRANSLATION: 'page_translation',
+    HISTORY: 'history'
+  },
+  SHEET_STATE: {
+    PEEK: 'peek',
+    FULL: 'full',
+    CLOSED: 'closed'
+  },
+  UI_MODE: {
+    AUTO: 'auto',
+    MOBILE: 'mobile',
+    DESKTOP: 'desktop'
+  },
+  FAB: {
+    SIDE: {
+      LEFT: 'left',
+      RIGHT: 'right'
+    },
+    DEFAULT_Y: 120
+  }
+};
+
+// ===== TRANSLATION STATUS CONSTANTS =====
+export const TRANSLATION_STATUS = {
+  IDLE: 'idle',
+  TRANSLATING: 'translating',
+  COMPLETED: 'completed',
+  ERROR: 'error'
+};
+
+// ===== GLOBAL REPOSITORY URLS =====
+export const REPO_URLS = {
+  GITHUB_MAIN: 'https://github.com/iSegaro/Translate-It',
+  WEBAI_API: 'https://github.com/Amm1rr/WebAI-to-API'
 };

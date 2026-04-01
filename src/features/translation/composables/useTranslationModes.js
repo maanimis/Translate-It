@@ -1,5 +1,6 @@
 import { ref, onMounted, onUnmounted } from "vue";
 import { generateMessageId } from "@/utils/messaging/messageId.js";
+import { ProviderRegistryIds } from "@/features/translation/providers/ProviderConstants.js";
 import { isSingleWordOrShortPhrase } from "@/shared/utils/text/textAnalysis.js";
 import { TranslationMode, getSettingsAsync } from "@/shared/config/config.js";
 
@@ -61,7 +62,7 @@ const _registerSelectStateListener = async () => {
 
   // Initialize from background via messaging
   try {
-    const { sendMessage, createMessage, MessageActions } = useMessaging('sidepanel');
+    const { sendMessage, createMessage, MessageActions } = useMessaging(MessageContexts.SIDEPANEL);
     const message = createMessage(MessageActions.GET_SELECT_ELEMENT_STATE);
     const response = await sendMessage(message);
     if (response && response.success) {
@@ -101,7 +102,7 @@ const _registerSelectStateListener = async () => {
   try {
     // Create UI-specific MessageHandler instance
     // Only activate in sidepanel/popup context, not in background or content scripts
-    if (typeof window !== 'undefined' && (window.location?.pathname?.includes('sidepanel') || window.location?.pathname?.includes('popup'))) {
+    if (typeof window !== 'undefined' && (window.location?.pathname?.includes(MessageContexts.SIDEPANEL) || window.location?.pathname?.includes(MessageContexts.POPUP))) {
       if (!_uiMessageHandler) {
         _uiMessageHandler = createMessageHandler();
       }
@@ -164,7 +165,7 @@ export function useSidepanelTranslation() {
 
       // Get current provider from settings
       const settings = await getSettingsAsync();
-      const currentProvider = settings.TRANSLATION_API || 'google';
+      const currentProvider = settings.TRANSLATION_API || ProviderRegistryIds.GOOGLE_V2;
       const messageId = generateMessageId('sidepanel-translate');
       
       // Determine translation mode (same logic as TranslationService.sidepanelTranslate)
@@ -177,7 +178,7 @@ export function useSidepanelTranslation() {
       const response = await sendMessage({
         action: MessageActions.TRANSLATE,
         messageId: messageId,
-        context: 'sidepanel',
+        context: MessageContexts.SIDEPANEL,
         timestamp: Date.now(),
         data: {
           text: text,
@@ -244,7 +245,7 @@ export function useSelectElementTranslation() {
             // Query background directly for select element state for the new tab
             const response = await sendMessage({
               action: MessageActions.GET_SELECT_ELEMENT_STATE,
-              context: 'sidepanel',
+              context: MessageContexts.SIDEPANEL,
               timestamp: Date.now()
             });
             if (response && response.success) {
@@ -281,17 +282,21 @@ export function useSelectElementTranslation() {
     }
   });
 
-  const activateSelectMode = async () => {
+  const activateSelectMode = async (options = {}) => {
     isActivating.value = true;
     error.value = null;
 
     try {
-      getLogger().debug('Activating select element mode');
+      getLogger().debug('Activating select element mode', options);
       const result = await sendMessage({
         action: MessageActions.ACTIVATE_SELECT_ELEMENT_MODE,
-        context: 'sidepanel',
+        context: MessageContexts.SIDEPANEL,
         timestamp: Date.now(),
-        data: { active: true }
+        data: { 
+          active: true, 
+          provider: options.provider, // اضافه کردن پرووایدر به پیام
+          ...options 
+        }
       });
       
       // Check if activation actually succeeded
@@ -334,7 +339,7 @@ export function useSelectElementTranslation() {
       getLogger().debug('Deactivating select element mode');
       await sendMessage({
         action: MessageActions.DEACTIVATE_SELECT_ELEMENT_MODE,
-        context: 'sidepanel',
+        context: MessageContexts.SIDEPANEL,
         timestamp: Date.now(),
         data: { active: false }
       });
@@ -350,7 +355,7 @@ export function useSelectElementTranslation() {
     }
   };
 
-  const toggleSelectElement = async () => {
+  const toggleSelectElement = async (options = {}) => {
     const originalState = isSelectModeActive.value;
     // Optimistically update the UI for a smoother experience
     sharedIsSelectModeActive.value = !originalState;
@@ -359,7 +364,7 @@ export function useSelectElementTranslation() {
       let success = false;
       if (sharedIsSelectModeActive.value) {
         // If we are activating
-        success = await activateSelectMode();
+        success = await activateSelectMode(options);
       } else {
         // If we are deactivating
         success = await deactivateSelectMode();
@@ -396,7 +401,7 @@ export function useSidepanelActions() {
   const error = ref(null);
 
   // Use useMessaging like Popup does
-  const { sendMessage: sendMessageViaMessaging } = useMessaging('sidepanel');
+  const { sendMessage: sendMessageViaMessaging } = useMessaging(MessageContexts.SIDEPANEL);
 
   const revertTranslation = async () => {
     isProcessing.value = true;
@@ -441,7 +446,7 @@ export function useSidepanelActions() {
 
       const errorMsg = err.message || "Failed to revert translation";
       error.value = errorMsg;
-      getLogger().error('Error reverting translation:', err);
+      getLogger().info('Error reverting translation:', err);
       return false;
     } finally {
       isProcessing.value = false;
@@ -453,11 +458,11 @@ export function useSidepanelActions() {
       getLogger().debug('Stopping TTS');
       await sendMessage({
         action: MessageActions.TTS_STOP,
-        context: 'sidepanel',
+        context: MessageContexts.SIDEPANEL,
         timestamp: Date.now()
       });
     } catch (err) {
-      getLogger().error('TTS stop failed (might not be active):', err,
+      getLogger().info('TTS stop failed (might not be active):', err,
       );
     }
   };

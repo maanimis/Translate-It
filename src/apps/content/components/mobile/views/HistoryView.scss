@@ -1,0 +1,256 @@
+/* src/apps/content/components/mobile/views/HistoryView.scss */
+
+.ti-m-history-view {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  font-family: sans-serif !important;
+  gap: 15px !important;
+  background-color: inherit !important;
+  padding: 0 15px !important; /* پدینگ سراسری مشابه InputView */
+}
+
+.ti-m-view-header {
+  display: flex !important;
+  align-items: center !important;
+  padding: 10px 0 !important;
+  border-bottom: 1px solid var(--ti-mobile-header-border) !important;
+  margin: 0 -15px 15px !important;
+  padding-left: 10px !important;
+  padding-right: 15px !important;
+}
+
+.ti-m-back-btn {
+  background: none !important;
+  border: none !important;
+  width: 40px !important;
+  height: 40px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  border-radius: 50% !important;
+  color: var(--ti-mobile-text) !important;
+  -webkit-tap-highlight-color: transparent !important;
+  transition: background-color 0.2s ease !important;
+  margin-right: 5px !important;
+
+  &:active {
+    background-color: var(--ti-mobile-header-border) !important;
+  }
+
+  svg {
+    display: block !important;
+    width: 20px !important;
+    height: 20px !important;
+    flex-shrink: 0 !important;
+    transform: rotate(90deg) !important;
+    stroke: currentColor !important;
+    stroke-width: 1.2px !important;
+  }
+}
+
+.ti-m-header-title {
+  font-weight: 700 !important;
+  font-size: 18px !important;
+  color: var(--ti-mobile-text) !important;
+  cursor: pointer !important;
+  flex: 1 !important;
+}
+
+.ti-m-header-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+/* Export select handling (Invisible native select overlay) */
+.ti-m-export-container {
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+.ti-m-export-btn {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 6px 10px !important;
+  border-radius: 8px !important;
+  border: 1px solid var(--ti-mobile-border) !important;
+  background: var(--ti-mobile-btn-bg) !important;
+  color: var(--ti-mobile-text) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  pointer-events: none !important;
+}
+
+.ti-m-native-select {
+  position: absolute !important;
+  inset: 0 !important;
+  opacity: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  cursor: pointer !important;
+  -webkit-appearance: none !important;
+  background-color: var(--ti-mobile-bg) !important;
+  color: var(--ti-mobile-text) !important;
+
+  option {
+    background-color: var(--ti-mobile-bg) !important;
+    color: var(--ti-mobile-text) !important;
+  }
+}
+
+/* Dark Mode Specific Overrides for Native Select */
+.ti-m-history-view.is-dark {
+  .ti-m-native-select {
+    color-scheme: dark !important; /* به مرورگر می‌گوید که از تم تیره برای منوهای بومی استفاده کند */
+    
+    option {
+      background-color: #2d2d2d !important;
+      color: #ffffff !important;
+    }
+  }
+}
+
+.ti-m-clear-all-btn {
+  background: transparent !important;
+  border: 1px solid var(--ti-mobile-error) !important;
+  color: var(--ti-mobile-error) !important;
+  padding: 6px 10px !important;
+  border-radius: 8px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+
+.ti-m-clear-all-btn:active {
+  background: var(--ti-mobile-error-bg) !important;
+}
+
+/* History Items */
+.ti-m-history-list {
+  flex: 1 !important;
+  overflow-y: auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+  padding-bottom: 20px !important;
+  margin: 0 -5px !important; /* جبران فاصله جانبی برای کارتها */
+  padding: 0 5px !important;
+}
+
+.ti-m-history-card {
+  border-radius: 12px !important;
+  padding: 12px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  cursor: pointer !important;
+  transition: transform 0.1s ease !important;
+}
+
+.ti-m-history-card:active {
+  transform: scale(0.98) !important;
+}
+
+.ti-m-card-header {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+}
+
+.ti-m-lang-badge {
+  padding: 2px 8px !important;
+  border-radius: 6px !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  background: var(--ti-mobile-card-bg) !important;
+  color: var(--ti-mobile-accent) !important;
+  border: 1px solid var(--ti-mobile-border) !important;
+}
+
+.ti-m-delete-btn {
+  background: transparent !important;
+  border: none !important;
+  padding: 8px !important;
+  margin: -8px !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 50% !important;
+  -webkit-tap-highlight-color: rgba(244, 67, 54, 0.1) !important;
+}
+
+.ti-m-delete-btn:active {
+  background-color: rgba(244, 67, 54, 0.1) !important;
+}
+
+.ti-m-icon-img-small {
+  width: 16px !important;
+  height: 16px !important;
+  object-fit: contain !important;
+}
+
+.ti-m-source-preview {
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  color: var(--ti-mobile-text-secondary) !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  text-align: start !important;
+}
+
+.ti-m-target-preview {
+  font-size: 14px !important;
+  color: var(--ti-mobile-accent) !important;
+  line-height: 1.4 !important;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 3 !important;
+  -webkit-box-orient: vertical !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  text-align: start !important;
+}
+
+.ti-m-timestamp {
+  font-size: 10px !important;
+  color: var(--ti-mobile-text-muted) !important;
+  text-align: end !important;
+}
+
+/* States */
+.ti-m-spinner-container, .ti-m-empty-state {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 40px 0 !important;
+  color: var(--ti-mobile-text-muted) !important;
+  gap: 12px !important;
+}
+
+.ti-m-empty-icon {
+  width: 48px !important;
+  height: 48px !important;
+  opacity: 0.3 !important;
+}
+
+.ti-m-spinner {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 50% !important;
+  border: 3px solid var(--ti-mobile-border) !important;
+  border-top-color: var(--ti-mobile-accent) !important;
+  animation: ti-m-spin 0.8s linear infinite !important;
+}
+
+@keyframes ti-m-spin {
+  to { transform: rotate(360deg); }
+}

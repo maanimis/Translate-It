@@ -7,7 +7,7 @@
       </span>
       <a
         class="api-link"
-        href="https://github.com/Amm1rr/WebAI-to-API"
+        :href="REPO_URLS.WEBAI_API"
         target="_blank"
         rel="noopener noreferrer"
       >
@@ -19,6 +19,7 @@
       <BaseInput
         v-model="webAIApiUrl"
         :placeholder="t('webai_api_url_placeholder') || 'Enter WebAI API URL'"
+        dir="ltr"
       />
     </div>
     <div class="setting-group">
@@ -26,6 +27,7 @@
       <BaseInput
         v-model="webAIApiModel"
         :placeholder="t('webai_api_model_placeholder') || 'Enter WebAI API model'"
+        dir="ltr"
       />
     </div>
   </div>
@@ -36,6 +38,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/features/settings/stores/settings.js'
 import BaseInput from '@/components/base/BaseInput.vue'
+import { REPO_URLS } from '@/shared/config/constants.js'
 
 const { t } = useI18n()
 

@@ -2,46 +2,47 @@
 import { BaseAIProvider } from "@/features/translation/providers/BaseAIProvider.js";
 import {
   getCustomApiUrlAsync,
-  getCustomApiKeyAsync,
+  getCustomApiKeysAsync,
   getCustomApiModelAsync,
 } from "@/shared/config/config.js";
-import { buildPrompt } from "@/features/translation/utils/promptBuilder.js";
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
+import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
 
-const logger = getScopedLogger(LOG_COMPONENTS.PROVIDERS, 'CustomProvider');
+const logger = getScopedLogger(LOG_COMPONENTS.PROVIDERS, 'Custom');
 
 export class CustomProvider extends BaseAIProvider {
   static type = "ai";
-  static description = "Custom OpenAI compatible";
-  static displayName = "Custom Provider";
-  static reliableJsonMode = false;
+  static description = "Custom OpenAI-compatible API";
+  static displayName = "Custom AI";
+  static reliableJsonMode = true;
   static supportsDictionary = true;
 
-  // AI Provider capabilities - Safe defaults for unknown APIs
-  static supportsStreaming = true; // Enable streaming for segment-based real-time translation
+  // AI Provider capabilities - Generic settings for compatible APIs
+  static supportsStreaming = true; // Most compatible APIs support streaming
   static preferredBatchStrategy = 'smart';
-  static optimalBatchSize = 25; // Conservative batch size
-  static maxComplexity = 400;
-  static supportsImageTranslation = false; // Conservative default
+  static optimalBatchSize = 20;
+  static maxComplexity = 350;
+  static supportsImageTranslation = true; // Often supported in newer compatible APIs
 
-  // Batch processing strategy - Use JSON like Gemini for better compatibility
+  // Batch processing strategy
   static batchStrategy = 'json'; // Uses JSON format for batch translation
 
   constructor() {
-    super("Custom");
+    super(ProviderNames.CUSTOM);
+    this.providerSettingKey = 'CUSTOM_API_KEY';
   }
 
-  
-  async _translateSingle(text, sourceLang, targetLang, translateMode, abortController) {
-    const [apiUrl, apiKey, model] = await Promise.all([
+
+  async _translateSingle(text, sourceLang, targetLang, translateMode, abortController, sessionId = null, isBatch = false) {
+    const [apiUrl, apiKeys, model] = await Promise.all([
       getCustomApiUrlAsync(),
-      getCustomApiKeyAsync(),
+      getCustomApiKeysAsync(),
       getCustomApiModelAsync(),
     ]);
 
-    logger.info(`[Custom] Using model: ${model}`);
-    logger.info(`[Custom] Starting translation: ${text.length} chars`);
+    // Get first available key
+    const apiKey = apiKeys.length > 0 ? apiKeys[0] : '';
 
     // Validate configuration
     this._validateConfig(
@@ -50,16 +51,16 @@ export class CustomProvider extends BaseAIProvider {
       `${this.providerName.toLowerCase()}-translation`
     );
 
-    // Check if text is already a batch prompt (like Gemini does)
-    const prompt = text.includes('Translate the following')
-      ? text
-      : await buildPrompt(
-          text,
-          sourceLang,
-          targetLang,
-          translateMode,
-          this.constructor.type
-        );
+    // Build base prompt using explicit isBatch flag
+    const { systemPrompt, userText } = await this._preparePromptAndText(text, sourceLang, targetLang, translateMode, sessionId, isBatch);
+
+    // Simple logging
+    const isFirst = await this._isFirstTurn(sessionId);
+    logger.info(`[Custom] Model: ${model || 'default'}${sessionId ? ` (Session: ${sessionId.substring(0, 15)}..., Turn: ${isFirst ? '1' : 'Subsequent'})` : ''}`);
+    logger.debug(`[Custom] Translating ${isBatch ? 'batch' : text.length + ' chars'}`);
+
+    // Get messages with conversation history
+    const { messages } = await this._getConversationMessages(sessionId, this.providerName, userText, systemPrompt, translateMode);
 
     const fetchOptions = {
       method: "POST",
@@ -69,53 +70,35 @@ export class CustomProvider extends BaseAIProvider {
       },
       body: JSON.stringify({
         model: model, // مدل باید توسط کاربر مشخص شود
-        messages: [{ role: "user", content: prompt }],
+        messages: messages,
       }),
     };
 
-    const result = await this._executeApiCall({
+    // Use unified API request handler
+    const result = await this._executeRequest({
       url: apiUrl,
       fetchOptions,
       extractResponse: (data) => data?.choices?.[0]?.message?.content,
       context: `${this.providerName.toLowerCase()}-translation`,
       abortController,
+      updateApiKey: (newKey, options) => {
+        options.headers.Authorization = `Bearer ${newKey}`;
+      }
     });
 
-    // CRITICAL FIX: Handle single segment JSON arrays properly
-    // When we receive ```json\n["translated text"]\n``` or ["translated text"] for single segments, extract the text content
-    let processedResult = result;
-
-    if (result && typeof result === 'string') {
-      let jsonString = null;
-
-      // First try to find JSON array in markdown code blocks
-      const markdownMatch = result.match(/```json\s*([\s\S]*?)\s*```/);
-      if (markdownMatch) {
-        jsonString = markdownMatch[1].trim();
-      } else {
-        // Try to find direct JSON array (without markdown)
-        const directMatch = result.match(/^\s*\[([\s\S]*)\]\s*$/);
-        if (directMatch) {
-          // Reconstruct the JSON string for parsing
-          jsonString = `[${directMatch[1]}]`;
-        }
-      }
-
-      if (jsonString) {
-        try {
-          const parsed = JSON.parse(jsonString);
-
-          if (Array.isArray(parsed) && parsed.length === 1 && typeof parsed[0] === 'string') {
-            logger.debug(`[Custom] Single segment JSON array detected, extracting text properly`);
-            processedResult = parsed[0];
-          }
-        } catch (error) {
-          logger.debug(`[Custom] Failed to parse JSON array, using original result:`, error.message);
-        }
-      }
+    // Update session history
+    if (sessionId && result) {
+      await this._updateSessionHistory(sessionId, userText, result);
     }
 
     logger.info(`[Custom] Translation completed successfully`);
-    return processedResult;
+    return this._cleanAIResponse(result);
+  }
+
+  /**
+   * AI-specific validation for custom providers
+   */
+  _validateConfig(config, requiredFields, context) {
+    super._validateConfig(config, requiredFields, context);
   }
 }

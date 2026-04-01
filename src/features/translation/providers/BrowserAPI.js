@@ -11,6 +11,7 @@ import { ErrorTypes } from "@/shared/error-management/ErrorTypes.js";
 import { TranslationMode } from "@/shared/config/config.js";
 import { matchErrorToType } from '@/shared/error-management/ErrorMatcher.js';
 import { ErrorHandler } from "@/shared/error-management/ErrorHandler.js";
+import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
 import browser from 'webextension-polyfill';
 
 
@@ -82,7 +83,7 @@ export class browserTranslateProvider extends BaseTranslateProvider {
   static translators = {};
 
   constructor() {
-    super("browserTranslate");
+    super(ProviderNames.BROWSER_API);
   }
 
   /**
@@ -238,12 +239,18 @@ export class browserTranslateProvider extends BaseTranslateProvider {
 
   async translate(text, sourceLang, targetLang, _translateMode = null, originalSourceLang = 'English', originalTargetLang = 'Farsi') {
     logger.info(`[BrowserAPI] Starting translation: ${text.length} chars`);
-    logger.debug(`[BrowserAPI] translate called (ENTRY): ${text?.slice(0, 30)}... | ${sourceLang} → ${targetLang}`);
+    
     // Check API availability first
     if (!this._isAPIAvailable()) {
       const err = new Error("Chrome Translation API not available. Requires Chrome 138+");
-      err.type = ErrorTypes.API;
+      err.type = ErrorTypes.BROWSER_API_UNAVAILABLE;
       err.context = `${this.providerName.toLowerCase()}-api-unavailable`;
+      
+      // Let ErrorHandler handle it centrally
+      await ErrorHandler.getInstance().handle(err, {
+        context: 'browser-api-availability',
+        showToast: true
+      });
       throw err;
     }
 
@@ -345,8 +352,9 @@ export class browserTranslateProvider extends BaseTranslateProvider {
         return JSON.stringify(translatedJson, null, 2);
       } else {
         if (textsToTranslate.length > 1) {
-          // Handle delimiter-separated text
-          const parts = translatedResults[0].split(TEXT_DELIMITER);
+          // Handle delimiter-separated text using the standard robust split
+          const parts = await this._robustSplit(translatedResults[0], textsToTranslate);
+          
           if (parts.length === textsToTranslate.length) {
             return parts.join("");
           }
@@ -426,8 +434,10 @@ export class browserTranslateProvider extends BaseTranslateProvider {
     // Check API availability first
     if (!this._isAPIAvailable()) {
       const err = new Error("Chrome Translation API not available. Requires Chrome 138+");
-      err.type = ErrorTypes.API;
+      err.type = ErrorTypes.BROWSER_API_UNAVAILABLE;
       err.context = `${this.providerName.toLowerCase()}-api-unavailable`;
+      
+      // Error will be caught and handled by central system
       throw err;
     }
 

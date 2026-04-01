@@ -1,13 +1,13 @@
 <template>
   <form
-    class="translation-form"
+    class="ti-translation-form"
     @submit.prevent="handleTranslate"
   >
     <!-- Source Input Field -->
     <TranslationInputField
       ref="sourceInputRef"
       v-model="sourceText"
-      :placeholder="t('popup_source_text_placeholder') || 'متن را اینجا وارد کنید...'"
+      :placeholder="t('popup_source_text_placeholder') || 'اینجا بنویسید'"
       :language="currentSourceLanguage"
       :source-language="currentSourceLanguage"
       :rows="2"
@@ -32,7 +32,8 @@
       :target-language="currentTargetLanguage"
       :is-loading="isTranslating"
       :error="translationError"
-      :placeholder="t('popup_target_text_placeholder') || 'Translation result will appear here...'"
+      :error-type="errorType"
+      :placeholder="t('popup_target_text_placeholder') || 'Translation result will appear here'"
       :copy-title="t('popup_copy_target_title_icon') || 'کپی نتیجه'"
       :copy-alt="t('popup_copy_target_alt_icon') || 'Copy Result'"
       :tts-title="t('popup_voice_target_title_icon') || 'خواندن متن مقصد'"
@@ -59,6 +60,9 @@ import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { useResourceTracker } from '@/composables/core/useResourceTracker.js';
 
+// Import adjacent SCSS
+import './TranslationForm.scss';
+
 const logger = getScopedLogger(LOG_COMPONENTS.UI, 'PopupTranslationForm');
 
 // Resource tracker for memory management
@@ -73,6 +77,10 @@ const props = defineProps({
   targetLanguage: {
     type: String,
     required: true
+  },
+  provider: {
+    type: String,
+    default: ''
   }
 })
 
@@ -99,6 +107,7 @@ const {
   translatedText,
   isTranslating,
   translationError,
+  errorType,
   canTranslate,
   triggerTranslation,
   clearTranslation,
@@ -168,7 +177,7 @@ const handleKeydown = (_event) => {
 }
 
 const handleTranslate = async () => {
-  logger.debug("🎯 Translation button clicked");
+  logger.debug("Translation button clicked");
   
   if (!canTranslate.value) {
     logger.warn("⚠️ Translation blocked - canTranslate is false");
@@ -176,7 +185,7 @@ const handleTranslate = async () => {
   }
   
   try {
-    logger.info("🚀 Starting translation process...");
+    logger.info("🗳️ Starting translation process...");
     logger.debug("📝 Source text:", sourceText.value?.substring(0, 100) + "...");
     
     // Get current language values from props
@@ -194,8 +203,8 @@ const handleTranslate = async () => {
     }
     
     // Use composable translation function with current language values
-    logger.debug("📡 Triggering translation...");
-    await triggerTranslation(sourceLanguage, targetLanguage)    
+    logger.debug("📡 Triggering translation...", { provider: props.provider });
+    await triggerTranslation(sourceLanguage, targetLanguage, props.provider)    
     logger.info("✅ Translation completed successfully");
 
   } catch (error) {
@@ -233,12 +242,6 @@ onMounted(async () => {
   // Listen for global events from header component
   tracker.addEventListener(document, 'clear-storage', clearStorage)
   tracker.addEventListener(document, 'revert-translation', revertTranslation)
-  tracker.addEventListener(document, 'translate-request', (_event) => {
-    logger.debug("Translate request received from header");
-    if (sourceText.value.trim()) {
-      handleTranslate()
-    }
-  })
   tracker.addEventListener(document, 'languages-swapped', () => {
     // Note: We only swap languages, not text content
     // Text content should remain in their respective fields
@@ -302,53 +305,10 @@ watch(isTranslating, (newLoading, oldLoading) => {
     popupResize.resetLayout()
   }
 })
+
+// Expose methods to parent
+defineExpose({
+  triggerTranslation: handleTranslate,
+  clearFields: clearStorage
+})
 </script>
-
-<style scoped>
-.translation-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  height: 100%;
-  flex: 1;
-}
-
-/* Popup-specific adjustments */
-.translation-form :deep(.textarea-container) {
-  position: relative;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  background-color: var(--color-textarea-background);
-  padding: 5px;
-  margin: 6px 12px;
-}
-
-.translation-form :deep(.translation-textarea) {
-  min-height: 50px;
-  max-height: 120px;
-  font-size: 13px;
-  padding: 42px 8px 8px 8px;
-}
-
-.translation-form :deep(.translation-display.popup-mode) {
-  margin: 6px 12px;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.translation-form :deep(.result-content) {
-  flex: 1;
-  min-height: 0;
-  max-height: none;
-  font-size: 13px;
-  height: 100%;
-}
-
-.result {
-  background-color: var(--bg-result-color);
-  white-space: normal !important;
-  word-wrap: break-word;
-  overflow-y: auto;
-}
-</style>

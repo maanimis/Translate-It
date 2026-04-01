@@ -7,6 +7,7 @@ import { SelectionManager } from '../core/SelectionManager.js';
 import ElementDetectionService from '@/shared/services/ElementDetectionService.js';
 import { settingsManager } from '@/shared/managers/SettingsManager.js';
 import { INPUT_TYPES } from '@/shared/config/constants.js';
+import { SelectionTranslationMode } from '@/shared/config/config.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.TEXT_SELECTION, 'SimpleTextSelectionHandler');
 
@@ -317,6 +318,8 @@ export class SimpleTextSelectionHandler extends ResourceTracker {
       this._settingsListeners.push(
         settingsManager.onChange('REQUIRE_CTRL_FOR_TEXT_SELECTION', (newValue) => {
           logger.debug('REQUIRE_CTRL_FOR_TEXT_SELECTION changed:', newValue);
+          // Reset Ctrl state when setting changes to avoid stale "stuck" keys
+          this.ctrlKeyPressed = false;
         }, 'simple-text-selection')
       );
 
@@ -324,7 +327,7 @@ export class SimpleTextSelectionHandler extends ResourceTracker {
       this._settingsListeners.push(
         settingsManager.onChange('selectionTranslationMode', (newValue) => {
           logger.debug('selectionTranslationMode changed:', newValue);
-          if (newValue === 'onClick' && this.selectionManager) {
+          if (newValue === SelectionTranslationMode.ON_CLICK && this.selectionManager) {
             this.selectionManager.dismissWindow();
           }
         }, 'simple-text-selection')
@@ -495,11 +498,11 @@ export class SimpleTextSelectionHandler extends ResourceTracker {
       });
 
       if (!selectedText) {
-        // Check if preservation is active - if so, skip dismissal
-        if (this._isPreservationActive()) {
-          logger.debug('Selection preservation active - skipping dismissal', {
-            reason: this._preservationState.reason,
-            remainingTime: this._preservationState.duration - (Date.now() - this._preservationState.timestamp)
+        // Only skip dismissal if preservation is active AND we are dragging
+        // If the user clicked to unselect (not dragging), we should dismiss regardless of preservation
+        if (this._isPreservationActive() && this.isDragging) {
+          logger.debug('Selection preservation active during drag - skipping dismissal', {
+            reason: this._preservationState.reason
           });
           return;
         }
@@ -570,14 +573,15 @@ export class SimpleTextSelectionHandler extends ResourceTracker {
         return;
       }
 
-      // Check Ctrl key requirement
-      if (!(await this.shouldProcessSelection())) {
-        logger.debug('Ctrl requirement not met, skipping selection');
+      // Detect selection type and start preservation
+      const selectionType = this._detectSelectionType();
+
+      // CRITICAL: Ignore selections originating from our own UI
+      if (this.isSelectionInsideUI(selection)) {
+        logger.debug('Selection is inside extension UI, ignoring');
         return;
       }
 
-      // Detect selection type and start preservation
-      const selectionType = this._detectSelectionType();
       this._startSelectionPreservation(selectionType);
 
       // Process the selection
@@ -585,9 +589,15 @@ export class SimpleTextSelectionHandler extends ResourceTracker {
         this.logger.debug('Processing valid text selection', {
           textLength: selectedText.length,
           sourceElement: selection?.anchorNode?.nodeName || 'unknown',
-          selectionType: selectionType
+          selectionType: selectionType,
+          ctrlPressed: this.ctrlKeyPressed
         });
-        await this.selectionManager.processSelection(selectedText, selection);
+        
+        // Pass the keyboard state to selection manager
+        await this.selectionManager.processSelection(selectedText, selection, {
+          ctrlPressed: this.ctrlKeyPressed,
+          shiftPressed: this.shiftKeyPressed
+        });
       } else {
         logger.warn('SelectionManager is null - this should not happen with critical protection');
       }
@@ -608,30 +618,57 @@ export class SimpleTextSelectionHandler extends ResourceTracker {
   }
 
   /**
+   * Check if the selection originated from inside our own UI elements
+   */
+  isSelectionInsideUI(selection) {
+    // 1. Check if the last mouse up was inside our UI (highly reliable)
+    if (this.isClickInsideTranslationWindow()) {
+      return true;
+    }
+
+    if (!selection || !selection.anchorNode) return false;
+
+    try {
+      // 2. Check anchorNode (where selection started)
+      const anchorElement = selection.anchorNode.nodeType === Node.TEXT_NODE ? 
+                           selection.anchorNode.parentElement : selection.anchorNode;
+      
+      if (this.elementDetection.isUIElement(anchorElement)) {
+        return true;
+      }
+
+      // 3. Check if nodes are in a Shadow Root (most reliable indicator for UI components)
+      const root = selection.anchorNode.getRootNode();
+      if (root instanceof ShadowRoot) {
+        return true;
+      }
+
+    } catch (error) {
+      logger.debug('Error checking if selection is inside UI:', error);
+    }
+
+    return false;
+  }
+
+  /**
    * Check if we should process this selection based on settings
    */
   async shouldProcessSelection() {
     try {
-      // Check if extension and text selection feature are enabled
+      // Check if extension is enabled
       const isExtensionEnabled = settingsManager.get('EXTENSION_ENABLED', false);
-      const isTextSelectionEnabled = settingsManager.get('TRANSLATE_ON_TEXT_SELECTION', false);
-
-      if (!isExtensionEnabled || !isTextSelectionEnabled) {
+      if (!isExtensionEnabled) {
+        logger.debug('Extension disabled, skipping selection');
         return false;
       }
 
-      const selectionTranslationMode = settingsManager.get('selectionTranslationMode', 'onClick');
-      logger.debug('Selection translation mode:', selectionTranslationMode);
+      // Check if either the main text selection feature OR the Desktop FAB is enabled
+      const isTextSelectionEnabled = settingsManager.get('TRANSLATE_ON_TEXT_SELECTION', false);
+      const isFabEnabled = settingsManager.get('SHOW_DESKTOP_FAB', false);
 
-      // Only check Ctrl requirement in immediate mode
-      if (selectionTranslationMode === "immediate") {
-        const requireCtrl = settingsManager.get('REQUIRE_CTRL_FOR_TEXT_SELECTION', false);
-        const isCtrlPressed = this.isCtrlRecentlyPressed();
-        logger.debug('Ctrl requirement check:', { requireCtrl, ctrlPressed: isCtrlPressed });
-        if (requireCtrl && !isCtrlPressed) {
-          logger.debug('Ctrl key required but not pressed, skipping selection');
-          return false;
-        }
+      if (!isTextSelectionEnabled && !isFabEnabled) {
+        logger.debug('Both text selection and FAB are disabled, skipping');
+        return false;
       }
 
       return true;
@@ -912,9 +949,11 @@ export class SimpleTextSelectionHandler extends ResourceTracker {
     this.isDragging = true;
     this.mouseDownTime = Date.now();
 
-    // Update Ctrl state from mouse event if available
-    if (event.ctrlKey || event.metaKey) {
-      this.ctrlKeyPressed = true;
+    // Update modifier states from mouse event (Sync both TRUE and FALSE states)
+    this.ctrlKeyPressed = event.ctrlKey || event.metaKey;
+    this.shiftKeyPressed = event.shiftKey;
+
+    if (this.ctrlKeyPressed) {
       this.lastKeyEventTime = Date.now();
     }
 
@@ -949,14 +988,12 @@ export class SimpleTextSelectionHandler extends ResourceTracker {
     this.lastMouseEventTime = Date.now();
     this.lastMouseUpEvent = event; // Store for translation window detection
 
-    // Update Ctrl and Shift state from mouse event if available
-    if (event.ctrlKey || event.metaKey) {
-      this.ctrlKeyPressed = true;
-      this.lastKeyEventTime = Date.now(); // Update to extend the "recent" window
-    }
-    if (event.shiftKey) {
-      this.shiftKeyPressed = true;
-      this.lastKeyEventTime = Date.now(); // Update to extend the "recent" window
+    // Update modifier states from mouse event (Sync both TRUE and FALSE states)
+    this.ctrlKeyPressed = event.ctrlKey || event.metaKey;
+    this.shiftKeyPressed = event.shiftKey;
+
+    if (this.ctrlKeyPressed) {
+      this.lastKeyEventTime = Date.now();
     }
 
     // For Shift+Click operations, we need special handling to preserve selection

@@ -23,11 +23,24 @@
           v-if="isWideLayout"
           class="translate-button-inline"
         >
+          <button
+            class="ti-icon-button inline-clear-btn"
+            :title="t('SIDEPANEL_CLEAR_STORAGE_TITLE_ICON', 'Clear fields')"
+            @click="clearFields"
+          >
+            <img
+              :src="browser.runtime.getURL('icons/ui/clear.png')"
+              class="ti-toolbar-icon"
+              alt="Clear"
+            >
+          </button>
           <ProviderSelector
+            v-model="currentProviderLocal"
             mode="split"
+            :is-global="false"
+            :show-sync="true"
             :disabled="!canTranslateFromForm"
             @translate="handleTranslate"
-            @provider-change="handleProviderChange"
           />
         </div>
       </div>
@@ -37,12 +50,28 @@
         v-if="!isWideLayout"
         class="translate-button-row"
       >
-        <ProviderSelector
-          mode="split"
-          :disabled="!canTranslateFromForm"
-          @translate="handleTranslate"
-          @provider-change="handleProviderChange"
-        />
+        <button
+          class="ti-icon-button row-clear-btn"
+          :title="t('SIDEPANEL_CLEAR_STORAGE_TITLE_ICON', 'Clear fields')"
+          @click="clearFields"
+        >
+          <img
+            :src="browser.runtime.getURL('icons/ui/clear.png')"
+            class="ti-toolbar-icon"
+            alt="Clear"
+          >
+        </button>
+        <div class="center-spacer">
+          <ProviderSelector
+            v-model="currentProviderLocal"
+            mode="split"
+            :is-global="false"
+            :show-sync="true"
+            :disabled="!canTranslateFromForm"
+            @translate="handleTranslate"
+          />
+        </div>
+        <div class="end-spacer" />
       </div>
     </div>
 
@@ -56,7 +85,7 @@
       <TranslationInputField
         ref="sourceInputRef"
         v-model="sourceText"
-        :placeholder="t('SIDEPANEL_SOURCE_TEXT_PLACEHOLDER', 'Enter text to translate...')"
+        :placeholder="t('SIDEPANEL_SOURCE_TEXT_PLACEHOLDER', 'Type Here')"
         :language="currentSourceLanguage"
         :source-language="currentSourceLanguage"
         :rows="6"
@@ -80,7 +109,8 @@
           :target-language="currentTargetLanguage"
           :is-loading="isTranslating"
           :error="translationError"
-          :placeholder="t('SIDEPANEL_TARGET_TEXT_PLACEHOLDER', 'Translation result will appear here...')"
+          :error-type="errorType"
+          :placeholder="t('SIDEPANEL_TARGET_TEXT_PLACEHOLDER', 'Translation result will appear here')"
           :copy-title="t('SIDEPANEL_COPY_TARGET_TITLE_ICON', 'Copy translation')"
           :copy-alt="t('SIDEPANEL_COPY_TARGET_ALT_ICON', 'Copy Result')"
           :tts-title="t('SIDEPANEL_VOICE_TARGET_TITLE_ICON', 'Speak translation')"
@@ -105,6 +135,7 @@ import LanguageSelector from '@/components/shared/LanguageSelector.vue'
 import ProviderSelector from '@/components/shared/ProviderSelector.vue'
 import TranslationInputField from '@/components/shared/TranslationInputField.vue'
 import TranslationDisplay from '@/components/shared/TranslationDisplay.vue'
+import browser from 'webextension-polyfill'
 
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
@@ -123,6 +154,7 @@ const {
   targetLanguage,
   isTranslating,
   translationError,
+  errorType,
   canTranslate,
   triggerTranslation,
   clearTranslation,
@@ -134,6 +166,27 @@ const { handleError } = useErrorHandler()
 const sourceInputRef = ref(null)
 const translationResultRef = ref(null)
 
+// Props
+const props = defineProps({
+  provider: {
+    type: String,
+    default: ''
+  }
+})
+
+// Emits
+defineEmits(['can-translate-change', 'update:provider'])
+
+// State
+const currentProviderLocal = ref(props.provider)
+
+// Watch for prop changes to sync local state
+watch(() => props.provider, (newVal) => {
+  if (newVal && newVal !== currentProviderLocal.value) {
+    currentProviderLocal.value = newVal
+  }
+})
+
 // Language state management
 const autoTranslateOnPaste = ref(false)
 const canTranslateFromForm = ref(false)
@@ -141,7 +194,7 @@ const canTranslateFromForm = ref(false)
 // Responsive layout management for Translate button placement
 const languageControlsRef = ref(null)
 const isWideLayout = ref(false)
-const WIDE_LAYOUT_THRESHOLD = 470 // Minimum width for horizontal layout with Translate button
+const WIDE_LAYOUT_THRESHOLD = 510 // Minimum width for horizontal layout with Translate button and Clear Fields button
 
 // Resize observer for responsive layout
 let resizeObserver = null
@@ -207,7 +260,7 @@ const currentTargetLanguage = computed(() => {
 
 // Methods
 const handleTranslate = async () => {
-  logger.debug("🎯 Translation button clicked");
+  logger.debug("Translation button clicked", { provider: currentProviderLocal.value });
   
   if (!canTranslate.value) {
     logger.warn("⚠️ Translation blocked - canTranslate is false");
@@ -215,10 +268,15 @@ const handleTranslate = async () => {
   }
   
   try {
-    logger.info("🚀 Starting translation process...");
+    logger.info("🗳️ Starting translation process...");
     
-    // Use computed values to handle AUTO_DETECT_VALUE correctly
-    await triggerTranslation(currentSourceLanguage.value, currentTargetLanguage.value)    
+    // Use ref to trigger translation if available, otherwise fallback to composable
+    if (sourceInputRef.value && typeof sourceInputRef.value.triggerTranslation === 'function') {
+      await sourceInputRef.value.triggerTranslation();
+    } else {
+      // Fallback to direct composable call (already handles languages)
+      await triggerTranslation(currentSourceLanguage.value, currentTargetLanguage.value, currentProviderLocal.value);
+    }
     
     logger.info("✅ Translation completed successfully");
 
@@ -226,10 +284,6 @@ const handleTranslate = async () => {
     logger.error("❌ Translation failed:", error);
     await handleError(error, 'sidepanel-translation')
   }
-}
-
-const handleProviderChange = (provider) => {
-  logger.info("[SidepanelMainContent] 🔄 Provider changed to:", provider);
 }
 
 const clearFields = async () => {
@@ -263,7 +317,9 @@ onUnmounted(() => {
 });
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
+@use "@/assets/styles/base/mixins" as *;
+
 .sidepanel-wrapper {
   display: flex;
   flex-direction: column;
@@ -288,7 +344,7 @@ onUnmounted(() => {
   box-sizing: border-box;
   flex-shrink: 0;
   position: relative;
-  z-index: 10;
+  z-index: 10; /* Restored to original priority */
 }
 
 /* Wide layout: Translate button alongside language selectors */
@@ -305,8 +361,15 @@ onUnmounted(() => {
 }
 
 .language-controls--wide .translate-button-inline {
-  flex: 0 0 auto;
+  flex: 1;
   margin-left: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.language-controls--wide .inline-clear-btn {
+  margin-right: auto;
 }
 
 .language-controls--wide .translate-button-inline :deep(.provider-selector) {
@@ -386,7 +449,6 @@ onUnmounted(() => {
 
 .translate-button-row {
   display: flex;
-  justify-content: center;
   align-items: center;
   width: 100%;
   position: relative;
@@ -394,12 +456,38 @@ onUnmounted(() => {
   min-height: 40px;
   box-sizing: border-box;
   margin-top: 8px;
+  padding: 0 8px;
+}
+
+.center-spacer {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.end-spacer {
+  width: 20px; /* Same as clear button width to keep Translate perfectly centered */
 }
 
 .translate-button-row :deep(.provider-selector) {
   min-width: auto;
 }
 
+.ti-icon-button {
+  @include toolbar-button-minimal;
+}
+
+.ti-toolbar-icon {
+  width: 16px;
+  height: 16px;
+  opacity: var(--icon-opacity, 0.6);
+  filter: var(--icon-filter);
+  transition: opacity 0.2s ease-in-out;
+}
+
+.ti-icon-button:hover .ti-toolbar-icon {
+  opacity: var(--icon-hover-opacity, 1);
+}
 
 @keyframes spin {
   0% { transform: rotate(0deg); }

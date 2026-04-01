@@ -58,10 +58,6 @@ createThemeTransition(() => settingsStore.settings?.THEME, {
 <style lang="scss">
 @use "@/assets/styles/base/variables" as *;
 @use "@/assets/styles/components/ui-transitions" as *;
-</style>
-
-<style lang="scss" scoped>
-@use "@/assets/styles/base/variables" as *;
 
 .options-layout {
   display: flex;
@@ -74,12 +70,12 @@ createThemeTransition(() => settingsStore.settings?.THEME, {
   border: $border-width $border-style var(--color-border);
   margin: 0 auto;
   box-sizing: border-box;
-  height: calc(
-    100vh - 40px
-  ) !important; /* Force height to leave space at the bottom */
-  margin-bottom: 40px !important; /* Force spacing at the bottom */
-
-  /* Debug outline removed */
+  
+  /* Robust height for both desktop and mobile/emulators */
+  height: calc(100vh - 20px);
+  height: calc(100svh - 20px); 
+  
+  overflow: hidden;
 }
 
 /* RTL layout adjustments */
@@ -93,23 +89,21 @@ createThemeTransition(() => settingsStore.settings?.THEME, {
   background-color: var(--color-background);
   border-radius: 0 $border-radius-lg $border-radius-lg 0;
   min-width: 0;
-  width: 900px; // 200px navigation + 700px content
-  max-width: 900px;
+  width: 100%;
   box-sizing: border-box;
 }
 
 .tab-content-container {
   flex: 1;
-  width: 700px;
-  // min-width: 700px;
-  max-width: 700px;
-  padding: $spacing-xl;
+  padding: $spacing-sm $spacing-xl $spacing-xl; /* Increased top padding to 10px (spacing-sm) */
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable; // Prevent layout shift when scrollbar appears
   position: relative;
   scroll-behavior: smooth;
   box-sizing: border-box;
+  max-width: 100%;
 
-  // Better scrollbar styling
   &::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -123,14 +117,7 @@ createThemeTransition(() => settingsStore.settings?.THEME, {
   &::-webkit-scrollbar-thumb {
     background-color: var(--color-border);
     border-radius: 4px;
-
-    &:hover {
-      background-color: var(--color-text-secondary);
-    }
-  }
-
-  &::-webkit-scrollbar-corner {
-    background-color: var(--color-surface);
+    &:hover { background-color: var(--color-text-secondary); }
   }
 
   // Ensure all child content respects container width
@@ -138,33 +125,17 @@ createThemeTransition(() => settingsStore.settings?.THEME, {
     max-width: 100%;
     box-sizing: border-box;
     overflow-wrap: break-word;
-    word-wrap: break-word;
   }
 
   // Global styles for all tab content
   :global(.tab-content) {
     max-width: 100%;
     box-sizing: border-box;
+    padding-bottom: 20px; /* Default desktop padding */
 
-    // Ensure all form elements and content respect container width
     * {
       max-width: 100%;
       box-sizing: border-box;
-    }
-
-    // Specific handling for wide elements
-    table,
-    pre,
-    code {
-      overflow-x: auto;
-    }
-
-    // Handle long text content
-    p,
-    div,
-    span {
-      word-wrap: break-word;
-      overflow-wrap: break-word;
     }
   }
 }
@@ -172,89 +143,75 @@ createThemeTransition(() => settingsStore.settings?.THEME, {
 // Tablet responsive
 @media (max-width: #{$breakpoint-lg}) {
   .options-layout {
-    width: 95vw;
-    height: auto;
-    min-height: 90vh;
+    flex-direction: column !important; /* Force stack layout for sidebar header */
+    width: 100%;
+    height: 100vh;
+    height: 100svh;
+    margin: 0;
+    border-radius: 0;
+    border: none;
   }
-
+  
   .options-main {
-    width: auto;
-    max-width: none;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden; 
   }
 
   .tab-content-container {
-    width: auto;
-    min-width: 300px;
-    max-width: none;
-    padding: $spacing-lg;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    padding: $spacing-md;
+    
+    :global(.tab-content) {
+      padding-bottom: 80px; /* Space for sticky nav/header if needed */
+    }
   }
 }
 
 // Mobile responsive
 @media (max-width: #{$breakpoint-md}) {
   .options-layout {
-    flex-direction: column;
-    height: auto;
-    width: 98vw;
-    min-height: 95vh;
+    flex-direction: column !important;
+    height: 100vh !important;
+    height: 100svh !important; /* Use Small Viewport Height for mobile browsers */
+    width: 100vw !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    border: none !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    padding-bottom: env(safe-area-inset-bottom, 0px) !important; /* Respect Android Nav Bar */
   }
 
   .options-main {
-    flex-direction: column;
-    width: 100%;
-    max-width: none;
+    flex: 1 !important;
+    flex-direction: column !important;
+    height: auto !important;
+    min-height: 0 !important;
+    border-radius: 0 !important;
+    overflow: hidden; /* Prevent body scroll, use container scroll */
   }
 
   .tab-content-container {
-    width: 100%;
-    min-width: auto;
-    max-width: none;
-    padding: $spacing-md;
+    padding: $spacing-md !important;
+    flex: 1 !important;
+    overflow-y: auto !important;
+    min-height: 0;
+    
+    // Additional padding for the content itself
+    :global(.tab-content) {
+      padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px)) !important;
+    }
   }
 }
 
 // Small mobile responsive
 @media (max-width: #{$breakpoint-sm}) {
-  .options-layout {
-    border-radius: 0;
-    min-height: 100vh;
-    width: 100vw;
-  }
-
   .tab-content-container {
-    padding: $spacing-base;
+    padding: $spacing-base $spacing-sm !important;
   }
-}
-
-/* Tab content transition styles */
-.tab-content {
-  opacity: 0;
-  display: none;
-  transition: opacity 300ms ease;
-
-  &.active {
-    display: block;
-    opacity: 1;
-  }
-}
-</style>
-
-<style scoped>
-.options-layout {
-  height: 100vh; /* ارتفاع کاملاً ثابت */
-  max-height: 100vh; /* جلوگیری از افزایش ارتفاع */
-  overflow: hidden; /* جلوگیری از اسکرول داخلی */
-}
-
-.tab-content-container {
-  flex: 1; /* Allow the container to grow and fill available space */
-  height: calc(
-    100% - var(--options-main-padding, 20px)
-  ); /* Dynamically adjust based on options-main height */
-  max-height: calc(
-    100% - var(--options-main-padding, 20px)
-  ); /* Ensure it fits within options-main */
-  overflow-y: auto; /* Enable vertical scrolling */
-  overflow-x: hidden; /* Prevent horizontal scrolling */
 }
 </style>

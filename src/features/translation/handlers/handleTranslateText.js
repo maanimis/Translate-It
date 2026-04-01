@@ -1,8 +1,10 @@
 import { ErrorHandler } from '@/shared/error-management/ErrorHandler.js';
 import { ErrorTypes } from '@/shared/error-management/ErrorTypes.js';
 import { MessageActions } from '@/shared/messaging/core/MessageActions.js';
+import { ProviderRegistryIds } from '@/features/translation/providers/ProviderConstants.js';
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
+import { unifiedTranslationService } from '@/core/services/translation/UnifiedTranslationService.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.TRANSLATION, 'handleTranslateText');
 
@@ -38,13 +40,14 @@ export async function handleTranslateText(message, sender, sendResponse) {
       throw new Error('Text is required for translation');
     }
     
-    // Format request for TranslationEngine.handleTranslateMessage
+    // Format request for UnifiedTranslationService.handleTranslationRequest
     const translationRequest = {
       action: MessageActions.TRANSLATE,
-      context: message.source || "vue-component",
+      messageId: message.messageId || `vue-${Date.now()}`,
+      context: message.source || message.context || "vue-component",
       data: {
         text,
-        provider: provider || 'google',
+        provider: provider || ProviderRegistryIds.GOOGLE_V2,
         sourceLanguage: from || 'auto',
         targetLanguage: to || 'fa',
         mode: message.data.mode || 'simple',
@@ -52,8 +55,8 @@ export async function handleTranslateText(message, sender, sendResponse) {
       }
     };
     
-    // Use the translation engine's handleTranslateMessage method
-    const result = await backgroundService.translationEngine.handleTranslateMessage(translationRequest, sender);
+    // Use the unified translation service's handleTranslationRequest method
+    const result = await unifiedTranslationService.handleTranslationRequest(translationRequest, sender);
     
     logger.debug(`✅ [TRANSLATE_TEXT] Translation result:`, result);
     
@@ -65,14 +68,14 @@ export async function handleTranslateText(message, sender, sendResponse) {
         sourceLanguage: result.sourceLanguage,
         targetLanguage: result.targetLanguage
       };
-      logger.debug(`🚀 [TRANSLATE_TEXT] Returning successful response:`, response);
+      logger.debug(`✅ [TRANSLATE_TEXT] Returning successful response:`, response);
       return response;
     } else {
       const response = {
         success: false,
         error: result.error?.message || 'Translation failed'
       };
-      logger.debug(`🚀 [TRANSLATE_TEXT] Returning error response:`, response);
+      logger.debug(`✅ [TRANSLATE_TEXT] Returning error response:`, response);
       return response;
     }
     
@@ -88,7 +91,7 @@ export async function handleTranslateText(message, sender, sendResponse) {
       success: false,
       error: error.message || 'Translation failed'
     };
-    logger.debug(`🚀 [TRANSLATE_TEXT] Returning catch error response:`, errorResponse);
+    logger.debug(`✅ [TRANSLATE_TEXT] Returning catch error response:`, errorResponse);
     return errorResponse;
   }
 }

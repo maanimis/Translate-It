@@ -7,6 +7,7 @@ import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { MessageActions } from '@/shared/messaging/core/MessageActions.js';
 import { MessageFormat } from '@/shared/messaging/core/MessagingCore.js';
 import { getTranslationApiAsync } from '@/shared/config/config.js';
+import { ProviderRegistryIds } from '@/features/translation/providers/ProviderConstants.js';
 import { utilsFactory } from '@/utils/UtilsFactory.js';
 // Element selection handler will be loaded lazily when needed
 import ResourceTracker from '@/core/memory/ResourceTracker.js';
@@ -43,12 +44,13 @@ async function getApiProviders() {
 
     for (const provider of availableProviders) {
       // Handle both lazy providers and loaded provider classes
-      let id, name;
+      let id, name, category;
 
       if (provider.isLazy) {
         // This is a lazy provider with metadata
         id = provider.id;
         name = provider.name;
+        category = provider.category || provider.type; // Support both naming conventions
       } else {
         // This is a loaded provider class - should have been filtered out at registry level
         // But we handle it defensively
@@ -86,11 +88,9 @@ async function getApiProviders() {
         continue;
       }
 
-      // Check against known provider IDs for extra validation
-      const knownProviderIds = [
-        'google', 'yandex', 'gemini', 'openai', 'openrouter',
-        'deepseek', 'webai', 'bing', 'browser', 'custom'
-      ];
+      // Check against known provider IDs for extra validation from manifest
+      const { PROVIDER_MANIFEST } = await import('@/features/translation/providers/ProviderManifest.js');
+      const knownProviderIds = PROVIDER_MANIFEST.map(p => p.id.toLowerCase());
 
       if (!knownProviderIds.includes(id.toLowerCase())) {
         logger.warn("Unknown provider ID detected:", { id, name });
@@ -99,7 +99,8 @@ async function getApiProviders() {
 
       validProviders.push({
         id: id.toLowerCase(), // Normalize ID to lowercase
-        defaultTitle: name
+        defaultTitle: name,
+        category: category
       });
     }
 
@@ -130,16 +131,19 @@ async function getApiProviders() {
 
     // Fallback to basic provider list if dynamic loading fails
     return [
-      { id: "google", defaultTitle: "Google Translate" },
-      { id: "yandex", defaultTitle: "Yandex Translate" },
-      { id: "gemini", defaultTitle: "Google Gemini" },
-      { id: "openai", defaultTitle: "OpenAI" },
-      { id: "openrouter", defaultTitle: "OpenRouter" },
-      { id: "deepseek", defaultTitle: "DeepSeek" },
-      { id: "webai", defaultTitle: "WebAI" },
-      { id: "bing", defaultTitle: "Bing Translate" },
-      { id: "browser", defaultTitle: "Browser API" },
-      { id: "custom", defaultTitle: "Custom Provider" }
+      { id: ProviderRegistryIds.GOOGLE_V2, defaultTitle: "Google Translate" },
+      { id: ProviderRegistryIds.GOOGLE, defaultTitle: "Google Translate (Classic)" },
+      { id: ProviderRegistryIds.YANDEX, defaultTitle: "Yandex Translate" },
+      { id: ProviderRegistryIds.DEEPL, defaultTitle: "DeepL Translate" },
+      { id: ProviderRegistryIds.GEMINI, defaultTitle: "Google Gemini" },
+      { id: ProviderRegistryIds.OPENAI, defaultTitle: "OpenAI" },
+      { id: ProviderRegistryIds.OPENROUTER, defaultTitle: "OpenRouter" },
+      { id: ProviderRegistryIds.DEEPSEEK, defaultTitle: "DeepSeek" },
+      { id: ProviderRegistryIds.WEBAI, defaultTitle: "WebAI" },
+      { id: ProviderRegistryIds.BING, defaultTitle: "Bing Translate" },
+      { id: ProviderRegistryIds.LINGVA, defaultTitle: "Lingva Translate" },
+      { id: ProviderRegistryIds.BROWSER, defaultTitle: "Browser API" },
+      { id: ProviderRegistryIds.CUSTOM, defaultTitle: "Custom Provider" }
     ];
   }
 }
@@ -237,6 +241,13 @@ export class ContextMenuManager extends ResourceTracker {
     try {
       this.browser = browser;
 
+      // Check if contextMenus API is available (not available on mobile)
+      if (!this.browser.contextMenus) {
+        logger.info("Context menus API not available, skipping initialization");
+        this.initialized = true;
+        return;
+      }
+
       logger.info("Initializing context menu manager", force ? '(forced)' : '');
 
       // Set up default context menus (this clears existing ones)
@@ -262,26 +273,69 @@ export class ContextMenuManager extends ResourceTracker {
    */
   // Prevent concurrent menu setup
   _menuSetupLock = false;
+  _pendingSetupPromise = null;
   async setupDefaultMenus(locale = null) {
+    if (!this.browser?.contextMenus && !browser?.contextMenus) {
+      logger.debug("Skipping setupDefaultMenus: contextMenus API not available");
+      return;
+    }
+
     logger.debug("🔧 [ContextMenuManager] Starting setupDefaultMenus...");
 
     // Global lock to prevent any race conditions across the entire extension
     if (this._menuSetupLock) {
-      logger.debug("setupDefaultMenus called concurrently, skipping to prevent duplicate menus");
+      logger.debug("setupDefaultMenus called concurrently, waiting for existing setup to complete");
+      // If there's a pending setup, wait for it instead of skipping
+      if (this._pendingSetupPromise) {
+        await this._pendingSetupPromise;
+      }
       return;
     }
+
     this._menuSetupLock = true;
 
+    // Store the promise so concurrent calls can wait for it
+    this._pendingSetupPromise = this._setupMenusInternal(locale);
+
+    try {
+      await this._pendingSetupPromise;
+    } finally {
+      this._menuSetupLock = false;
+      this._pendingSetupPromise = null;
+    }
+  }
+
+  /**
+   * Internal implementation of menu setup (separated for proper locking)
+   * @private
+   */
+  async _setupMenusInternal(locale) {
     try {
       // Get i18n utility from factory
       const { getTranslationString } = await utilsFactory.getI18nUtils();
 
       // Clear existing menus first and wait for completion
-      // Add a small delay to ensure any pending operations complete
-      await new Promise(resolve => setTimeout(resolve, 50));
+      // Increase delay to ensure removeAll() fully completes before creating new menus
+      // This prevents "duplicate id" errors from Chrome
       await browser.contextMenus.removeAll();
+
+      // Verify menus are cleared by waiting longer
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Double-check that all menus are cleared
+      try {
+        const existingMenus = await browser.contextMenus.getAll();
+        if (existingMenus.length > 0) {
+          logger.warn(`Found ${existingMenus.length} menus still after removeAll(), clearing again`);
+          await browser.contextMenus.removeAll();
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      } catch (e) {
+        logger.debug("Could not verify menu removal:", e);
+      }
+
       this.createdMenus.clear();
-      logger.debug("[ContextMenuManager] Cleared existing menus");
+      logger.debug("[ContextMenuManager] Cleared existing menus and verified");
 
       // Get the currently active API to set the 'checked' state
       const currentApi = await getTranslationApiAsync();
@@ -289,23 +343,30 @@ export class ContextMenuManager extends ResourceTracker {
       // Get commands for keyboard shortcuts
       const commands = await browser.commands.getAll();
 
+      // Get settings for feature enablement
+      const settings = await storageManager.get(['TRANSLATE_WITH_SELECT_ELEMENT', 'EXTENSION_ENABLED']);
+      const isExtensionEnabled = settings.EXTENSION_ENABLED !== false;
+      const isSelectElementEnabled = isExtensionEnabled && (settings.TRANSLATE_WITH_SELECT_ELEMENT !== false); // Default to true
+
       // --- 1. Create Page Context Menu ---
-      try {
-        let pageMenuTitle =
-          (await getTranslationString("context_menu_translate_with_selection", locale)) ||
-          "Translate Element";
-        const command = commands.find((c) => c.name === "SELECT-ELEMENT-COMMAND");
-        if (command && command.shortcut) {
-          pageMenuTitle = `${pageMenuTitle} (${command.shortcut})`;
+      if (isSelectElementEnabled) {
+        try {
+          let pageMenuTitle =
+            (await getTranslationString("context_menu_translate_with_selection", locale)) ||
+            "Translate Element";
+          const command = commands.find((c) => c.name === "SELECT-ELEMENT-COMMAND");
+          if (command && command.shortcut) {
+            pageMenuTitle = `${pageMenuTitle} (${command.shortcut})`;
+          }
+          await this.createMenu({
+            id: PAGE_CONTEXT_MENU_ID,
+            title: pageMenuTitle,
+            contexts: ["page", "selection", "link", "image", "video", "audio"],
+          });
+          logger.debug(`Created page context menu: "${pageMenuTitle}"`);
+        } catch (e) {
+          logger.error("Error creating page context menu:", e);
         }
-        await this.createMenu({
-          id: PAGE_CONTEXT_MENU_ID,
-          title: pageMenuTitle,
-          contexts: ["page", "selection", "link", "image", "video", "audio"],
-        });
-        logger.debug(`Created page context menu: "${pageMenuTitle}"`);
-      } catch (e) {
-        logger.error("Error creating page context menu:", e);
       }
 
       // --- 2. Create Action (Browser Action) Context Menus ---
@@ -313,19 +374,21 @@ export class ContextMenuManager extends ResourceTracker {
         logger.debug("🎯 [ContextMenuManager] Creating Action (Browser Action) menus...");
 
         // --- Translate Element Menu (First option) ---
-        let actionPageMenuTitle =
-          (await getTranslationString("context_menu_translate_with_selection", locale)) ||
-          "Translate Element";
-        const command = commands.find((c) => c.name === "SELECT-ELEMENT-COMMAND");
-        if (command && command.shortcut) {
-          actionPageMenuTitle = `${actionPageMenuTitle} (${command.shortcut})`;
+        if (isSelectElementEnabled) {
+          let actionPageMenuTitle =
+            (await getTranslationString("context_menu_translate_with_selection", locale)) ||
+            "Translate Element";
+          const command = commands.find((c) => c.name === "SELECT-ELEMENT-COMMAND");
+          if (command && command.shortcut) {
+            actionPageMenuTitle = `${actionPageMenuTitle} (${command.shortcut})`;
+          }
+          await this.createMenu({
+            id: ACTION_TRANSLATE_ELEMENT_ID,
+            title: actionPageMenuTitle,
+            contexts: ["action"],
+          });
+          logger.debug(`Created Translate Element action menu: "${actionPageMenuTitle}"`);
         }
-        await this.createMenu({
-          id: ACTION_TRANSLATE_ELEMENT_ID,
-          title: actionPageMenuTitle,
-          contexts: ["action"],
-        });
-        logger.debug(`Created Translate Element action menu: "${actionPageMenuTitle}"`);
 
         // --- API Provider Parent Menu ---
         await this.createMenu({
@@ -341,12 +404,28 @@ export class ContextMenuManager extends ResourceTracker {
         const apiProviders = await getApiProviders();
         logger.debug(`📊 [ContextMenuManager] Found ${apiProviders.length} providers`);
 
+        let lastCategory = null;
+        let separatorCount = 0;
+
         for (const provider of apiProviders) {
+          // Add separator if category changes (except for the first provider)
+          if (lastCategory !== null && provider.category && provider.category !== lastCategory) {
+            separatorCount++;
+            await this.createMenu({
+              id: `api-provider-separator-${separatorCount}`,
+              parentId: API_PROVIDER_PARENT_ID,
+              type: "separator",
+              contexts: ["action"],
+            });
+          }
+          
+          lastCategory = provider.category;
+
           await this.createMenu({
             id: `${API_PROVIDER_ITEM_ID_PREFIX}${provider.id}`,
             parentId: API_PROVIDER_PARENT_ID,
             title: provider.defaultTitle,
-            type: "radio",
+            type: "checkbox",
             checked: provider.id === currentApi,
             contexts: ["action"],
           });
@@ -393,8 +472,6 @@ export class ContextMenuManager extends ResourceTracker {
     } catch (error) {
       logger.error("❌ Failed to setup default menus:", error);
       throw error;
-    } finally {
-      this._menuSetupLock = false;
     }
   }
 
@@ -404,26 +481,55 @@ export class ContextMenuManager extends ResourceTracker {
    * @returns {Promise<string>} Menu item ID
    */
   async createMenu(menuConfig) {
-    // Use browser API check instead of initialized check to avoid recursion
     if (!this.browser) {
       this.browser = browser;
     }
 
     try {
-      const menuId = await this.browser.contextMenus.create(menuConfig);
-      this.createdMenus.add(menuConfig.id || menuId);
+      const menuId = await new Promise((resolve, reject) => {
+        // Detect if we are in a Chromium-based browser to handle the specific lastError behavior
+        // Firefox usually doesn't have chrome.runtime.lastError warnings for unchecked callbacks
+        // but Chromium browsers do.
+        const isChromium = typeof chrome !== 'undefined' && !!chrome.runtime && !navigator.userAgent.includes('Firefox');
+        const chromeApi = isChromium ? chrome : null;
+        
+        if (chromeApi?.contextMenus?.create) {
+          // Chromium-specific: Use callback to clear lastError synchronously
+          chromeApi.contextMenus.create(menuConfig, () => {
+            const lastError = chromeApi.runtime.lastError;
+            if (lastError) {
+              const msg = lastError.message || "";
+              if (msg.toLowerCase().includes('duplicate id') || msg.toLowerCase().includes('already exists')) {
+                logger.debug(`Context menu with duplicate ID "${menuConfig.id}" already exists, skipping`);
+                resolve(menuConfig.id);
+              } else {
+                reject(new Error(msg));
+              }
+            } else {
+              resolve(menuConfig.id);
+            }
+          });
+        } else {
+          // Firefox/Standard: Use the polyfill which returns a promise
+          this.browser.contextMenus.create(menuConfig)
+            .then(id => resolve(id))
+            .catch(err => {
+              const msg = err.message || "";
+              // Handle both Chrome and Firefox error strings
+              if (msg.toLowerCase().includes('duplicate id') || msg.toLowerCase().includes('already exists')) {
+                logger.debug(`Context menu with duplicate ID "${menuConfig.id}" already exists (polyfill/firefox), skipping`);
+                resolve(menuConfig.id);
+              } else {
+                reject(err);
+              }
+            });
+        }
+      });
 
-      logger.debug(
-        `📋 Created context menu: ${menuConfig.title || menuConfig.id}`,
-      );
+      this.createdMenus.add(menuConfig.id || menuId);
+      logger.debug(`📋 Created context menu: ${menuConfig.title || menuConfig.id}`);
       return menuId;
     } catch (error) {
-      // Check if this is a duplicate ID error - if so, log but don't fail
-      if (error.message && error.message.includes('duplicate id')) {
-        logger.debug(`⚠️ Context menu with duplicate ID "${menuConfig.id}" already exists, skipping:`, error);
-        return menuConfig.id; // Return the ID without failing
-      }
-
       logger.error("❌ Failed to create context menu:", error);
       throw error;
     }
@@ -507,10 +613,14 @@ export class ContextMenuManager extends ResourceTracker {
       }
 
       logger.info(`Activating select mode for tab ${tab.id} via central handler`);
+      
+      const { getTargetLanguageAsync } = await import('@/shared/config/config.js');
+      const targetLanguage = await getTargetLanguageAsync();
+
       const message = {
         action: MessageActions.ACTIVATE_SELECT_ELEMENT_MODE,
         context: 'context-menu',
-        data: { active: true, tabId: tab.id }
+        data: { active: true, tabId: tab.id, targetLanguage }
       };
       const sender = { tab };
 
@@ -664,9 +774,9 @@ export class ContextMenuManager extends ResourceTracker {
   registerStorageListener() {
     if (browser?.storage?.onChanged) {
       this.storageListener = (changes, areaName) => {
-        if (areaName === "local" && changes.TRANSLATION_API) {
+        if (areaName === "local" && (changes.TRANSLATION_API || changes.TRANSLATE_WITH_SELECT_ELEMENT || changes.EXTENSION_ENABLED)) {
           logger.info(
-            "TRANSLATION_API setting changed in storage. Rebuilding context menus for synchronization."
+            "Settings changed in storage (API, Select Element or Global Enable). Rebuilding context menus for synchronization."
           );
           this.setupDefaultMenus();
         }

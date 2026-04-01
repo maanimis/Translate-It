@@ -50,25 +50,31 @@
               <span class="timestamp">{{ item.formattedTime }}</span>
               <button
                 class="delete-btn"
-                title="Delete this item"
+                :title="t('history_delete_item') || 'Delete this item'"
                 @click.stop="handleDeleteHistoryItem(item.index, $event)"
               >
                 <img
                   src="@/icons/ui/trash-small.svg"
-                  alt="Delete"
+                  :alt="t('history_delete') || 'Delete'"
                   class="delete-icon"
                 >
               </button>
             </div>
           </div>
           <div class="history-item-content">
-            <div class="source-text">
+            <div 
+              class="source-text"
+              :dir="shouldApplyRtl(item.sourceText) ? 'rtl' : 'ltr'"
+            >
               {{ truncateText(item.sourceText) || '[No source text]' }}
             </div>
             <div class="arrow">
               ↓
             </div>
-            <div class="translated-text">
+            <div 
+              class="translated-text"
+              :dir="shouldApplyRtl(item.translatedText) ? 'rtl' : 'ltr'"
+            >
               {{ truncateText(item.translatedText) || '[No translation]' }}
             </div>
           </div>
@@ -77,6 +83,54 @@
     </div>
     <!-- Footer with clear all button -->
     <div class="history-footer">
+      <BaseDropdown 
+        position="top-start" 
+        size="sm"
+        :dir="t('IsRTL') === 'true' ? 'rtl' : 'ltr'"
+      >
+        <template #trigger="{ toggle }">
+          <button
+            class="export-btn"
+            :title="t('SIDEPANEL_EXPORT_HISTORY_TOOLTIP') || 'Export history data'"
+            @click.stop="toggle"
+          >
+            <img
+              src="@/icons/ui/copy.png"
+              alt="Export"
+              class="export-icon"
+            >
+            <span>{{ t('SIDEPANEL_EXPORT_HISTORY') || 'Export' }}</span>
+          </button>
+        </template>
+        
+        <template #default="{ close }">
+          <button
+            class="dropdown-item"
+            @click="handleExportHistory('json_clean'); close()"
+          >
+            {{ t('SIDEPANEL_EXPORT_JSON_CLEAN') || 'Export as JSON (Clean)' }}
+          </button>
+          <button
+            class="dropdown-item"
+            @click="handleExportHistory('json_raw'); close()"
+          >
+            {{ t('SIDEPANEL_EXPORT_JSON_RAW') || 'Export as JSON (Raw)' }}
+          </button>
+          <button
+            class="dropdown-item"
+            @click="handleExportHistory('csv'); close()"
+          >
+            {{ t('SIDEPANEL_EXPORT_CSV') || 'Export as CSV' }}
+          </button>
+          <button
+            class="dropdown-item"
+            @click="handleExportHistory('anki'); close()"
+          >
+            {{ t('SIDEPANEL_EXPORT_ANKI') || 'Export for Anki' }}
+          </button>
+        </template>
+      </BaseDropdown>
+
       <button
         id="clearAllHistoryBtn"
         class="clear-all-btn"
@@ -85,7 +139,7 @@
       >
         <img
           src="@/icons/ui/trash.svg"
-          alt="Clear All"
+          :alt="t('history_delete') || 'Delete'"
           class="clear-all-icon"
         >
         <span>{{ t('SIDEPANEL_CLEAR_ALL_HISTORY') || 'Clear All History' }}</span>
@@ -101,6 +155,8 @@ import { useUI } from '@/composables/ui/useUI.js'
 import { useErrorHandler } from '@/composables/shared/useErrorHandler.js'
 import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js'
 import { useLanguages } from '@/composables/shared/useLanguages.js'
+import { shouldApplyRtl } from "@/shared/utils/text/textAnalysis.js";
+import BaseDropdown from '@/components/base/BaseDropdown.vue'
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 const logger = getScopedLogger(LOG_COMPONENTS.UI, 'SidepanelHistory');
@@ -174,6 +230,7 @@ const {
   historyError,
   deleteHistoryItem,
   clearAllHistory,
+  exportHistory,
   formatTime,
   createMarkdownContent,
   loadHistory
@@ -238,6 +295,16 @@ const handleClearAllHistory = async () => {
     await handleError(error, 'sidepanel-history-clear-all')
     const button = document.getElementById('clearAllHistoryBtn')
     showVisualFeedback(button, 'error')
+  }
+}
+
+// Handle export history
+const handleExportHistory = (format) => {
+  try {
+    exportHistory(format)
+    logger.debug(`[SidepanelHistory] History exported as ${format}`)
+  } catch (error) {
+    handleError(error, 'sidepanel-history-export')
   }
 }
 
@@ -397,7 +464,38 @@ onUnmounted(() => {
 .history-footer {
   padding: $spacing-base;
   border-top: $border-width $border-style var(--color-border);
-  text-align: center;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: $spacing-sm;
+}
+
+.export-btn {
+  background-color: var(--color-surface-alt);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: $border-radius-sm;
+  padding: $spacing-xs $spacing-base;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-xs;
+  font-size: $font-size-base;
+  font-weight: $font-weight-medium;
+  transition: all $transition-fast;
+  white-space: nowrap;
+
+  &:hover {
+    background-color: var(--color-background);
+    border-color: var(--color-primary);
+  }
+
+  .export-icon {
+    width: 18px;
+    height: 18px;
+    filter: var(--icon-filter);
+  }
 }
 
 .clear-all-btn {
@@ -413,6 +511,7 @@ onUnmounted(() => {
   font-size: $font-size-base;
   font-weight: $font-weight-medium;
   transition: background-color $transition-fast;
+  white-space: nowrap;
 
   &:hover {
     background-color: #d32f2f; /* Darker red for hover */
@@ -504,9 +603,10 @@ onUnmounted(() => {
     font-size: $font-size-sm;
     color: var(--color-text);
     padding: $spacing-xs;
-    background-color: var(--color-background);
+    background-color: var(--color-surface-alt);
     border-radius: $border-radius-xs;
-    border-left: 3px solid var(--color-primary);
+    border-inline-start: 3px solid var(--color-primary);
+    text-align: start;
   }
 
   .arrow {
@@ -522,7 +622,8 @@ onUnmounted(() => {
     padding: $spacing-xs;
     background-color: var(--color-surface-alt);
     border-radius: $border-radius-xs;
-    border-left: 3px solid var(--color-success);
+    border-inline-start: 3px solid var(--color-success);
+    text-align: start;
   }
 }
 

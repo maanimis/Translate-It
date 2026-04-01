@@ -1,9 +1,9 @@
 <template>
-  <section class="prompt-tab">
+  <section class="options-tab-content">
     <h2>{{ t('prompt_section_title') || 'Prompt Template' }}</h2>
     
     <div class="setting-group prompt-template-group">
-      <label class="prompt-label-with-button">
+      <div class="prompt-label-with-button">
         <span>{{ t('prompt_template_label') || 'Prompt Template' }}</span>
         <button
           type="button"
@@ -12,13 +12,14 @@
         >
           {{ t('prompt_reset_button') || 'Reset' }}
         </button>
-      </label>
+      </div>
       
       <BaseTextarea
         v-model="promptTemplate"
         :placeholder="t('prompt_template_placeholder') || 'Enter your prompt template here. Use keywords like $_{SOURCE}, $_{TARGET}, and $_{TEXT}.'"
-        :rows="5"
+        :rows="10"
         class="prompt-template-input"
+        dir="ltr"
       />
 
       <!-- Validation error -->
@@ -33,15 +34,15 @@
         <p>{{ t('prompt_template_help') || 'You can use the following keywords in your prompt template:' }}</p>
         <ul>
           <li>
-            <code>${_SOURCE}</code>: {{ t('prompt_source_help') || 'Source language.' }}
+            <code dir="ltr">${_SOURCE}</code>: {{ t('prompt_source_help') || 'Source language.' }}
             <span class="lang-name">({{ sourceLanguageName }})</span>
           </li>
           <li>
-            <code>${_TARGET}</code>: {{ t('prompt_target_help') || 'Target language.' }}
+            <code dir="ltr">${_TARGET}</code>: {{ t('prompt_target_help') || 'Target language.' }}
             <span class="lang-name">({{ targetLanguageName }})</span>
           </li>
           <li>
-            <code>${_TEXT}</code>: {{ t('prompt_text_help') || 'Text to be translated.' }}
+            <code dir="ltr">${_TEXT}</code>: {{ t('prompt_text_help') || 'Text to be translated.' }}
           </li>
         </ul>
       </div>
@@ -58,14 +59,20 @@ import BaseTextarea from '@/components/base/BaseTextarea.vue'
 import { useI18n } from 'vue-i18n'
 
 const settingsStore = useSettingsStore()
-const { validatePromptTemplate: validate, getFirstError, clearErrors } = useValidation()
+const { validatePromptTemplate: validate, getFirstError, getFirstErrorTranslated, clearErrors } = useValidation()
 
 // Default prompt template from config
 const DEFAULT_PROMPT = CONFIG.PROMPT_TEMPLATE
 const { t } = useI18n()
 
 // Validation
-const validationError = ref('')
+const validationErrorKey = ref('')
+
+// Reactive translated validation error
+const validationError = computed(() => {
+  if (!validationErrorKey.value) return ''
+  return getFirstErrorTranslated('promptTemplate', t) || ''
+})
 
 // Prompt template
 const promptTemplate = computed({
@@ -84,13 +91,14 @@ const targetLanguageName = computed(() => settingsStore.settings?.TARGET_LANGUAG
 const validatePrompt = async () => {
   clearErrors()
   const isValid = await validate(promptTemplate.value)
-  
+
   if (!isValid) {
-    validationError.value = getFirstError('promptTemplate')
+    // Get the error key (not translated) for reactive translation
+    validationErrorKey.value = getFirstError('promptTemplate') || ''
   } else {
-    validationError.value = ''
+    validationErrorKey.value = ''
   }
-  
+
   return isValid
 }
 
@@ -113,30 +121,6 @@ const resetPrompt = async () => {
 <style lang="scss" scoped>
 @use "@/assets/styles/base/variables" as *;
 
-.prompt-tab {
-  max-width: 100%;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-h2 {
-  font-size: $font-size-xl;
-  font-weight: $font-weight-medium;
-  margin-top: 0;
-  margin-bottom: $spacing-lg;
-  padding-bottom: $spacing-base;
-  border-bottom: $border-width $border-style var(--color-border);
-  color: var(--color-text);
-}
-
-.setting-group {
-  margin-bottom: $spacing-lg;
-  
-  &:last-child {
-    margin-bottom: 0;
-  }
-}
-
 .prompt-label-with-button {
   display: flex;
   justify-content: space-between;
@@ -145,6 +129,8 @@ h2 {
   max-width: 100%;
   margin-bottom: $spacing-sm;
   box-sizing: border-box;
+  /* Match the 1px padding of the input container for perfect alignment */
+  padding: 0 1px;
   
   span {
     font-size: $font-size-base;
@@ -166,7 +152,7 @@ h2 {
   cursor: pointer;
   transition: all $transition-base;
   flex-shrink: 0;
-  margin-left: $spacing-sm;
+  margin-inline-start: $spacing-sm;
   white-space: nowrap;
   
   &:hover {
@@ -178,13 +164,16 @@ h2 {
 .prompt-template-input {
   width: 100%;
   margin-bottom: $spacing-lg;
+  /* Fix for border being cut off in RTL due to overflow:hidden on container */
+  padding: 1px;
+  box-sizing: border-box;
   
   :deep(textarea) {
     font-family: inherit;
     line-height: 1.6;
     background-color: var(--input-bg-color, var(--color-background));
     color: var(--input-text-color, var(--color-text));
-    min-height: 150px;
+    min-height: 280px;
     
     &.highlight-on-reset {
       animation: strong-highlight 1s ease-out;
@@ -207,7 +196,7 @@ h2 {
   }
   
   ul {
-    padding-left: $spacing-lg;
+    padding-inline-start: $spacing-lg;
     margin: 0;
   }
   
@@ -255,12 +244,6 @@ h2 {
     flex-direction: column;
     align-items: stretch;
     gap: $spacing-sm;
-  }
-  
-  .prompt-template-help {
-    max-width: 100%;
-    margin-left: 0;
-    margin-right: 0;
   }
 }
 </style>

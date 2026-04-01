@@ -5,11 +5,14 @@ import { LOG_COMPONENTS } from "@/shared/logging/logConstants.js";
 import { WindowsConfig } from "../core/WindowsConfig.js";
 import { generateTranslationMessageId } from "@/utils/messaging/messageId.js";
 import { TranslationMode } from "@/shared/config/config.js";
+import { ProviderRegistryIds } from "@/features/translation/providers/ProviderConstants.js";
 import { settingsManager } from '@/shared/managers/SettingsManager.js';
 import { AUTO_DETECT_VALUE } from "@/shared/config/constants.js";
 import { sendMessage } from "@/shared/messaging/core/UnifiedMessaging.js";
 import { MessageActions } from "@/shared/messaging/core/MessageActions.js";
 import { isSingleWordOrShortPhrase } from "@/shared/utils/text/textAnalysis.js";
+import { ErrorHandler } from "@/shared/error-management/ErrorHandler.js";
+import ExtensionContextManager from "@/core/extensionContext.js";
 
 /**
  * Handles translation requests and responses for WindowsManager
@@ -21,6 +24,33 @@ export class TranslationHandler {
   }
 
   /**
+   * Get the provider that would be used for a given text
+   * @param {string} selectedText 
+   * @param {object} options 
+   * @returns {string}
+   */
+  getEffectiveProvider(selectedText, options = {}) {
+    const settings = {
+      TRANSLATION_API: settingsManager.get('TRANSLATION_API', ProviderRegistryIds.GOOGLE_V2),
+      MODE_PROVIDERS: settingsManager.get('MODE_PROVIDERS', {}),
+      ENABLE_DICTIONARY: settingsManager.get('ENABLE_DICTIONARY', true)
+    };
+
+    let translationMode = TranslationMode.Selection;
+    const isDictionaryCandidate = isSingleWordOrShortPhrase(selectedText);
+    if (settings.ENABLE_DICTIONARY && isDictionaryCandidate) {
+      translationMode = TranslationMode.Dictionary_Translation;
+    }
+
+    let modeSpecificProvider = settings.MODE_PROVIDERS?.[translationMode];
+    if (!options.provider && !modeSpecificProvider && translationMode === TranslationMode.Dictionary_Translation) {
+      modeSpecificProvider = settings.MODE_PROVIDERS?.[TranslationMode.Selection];
+    }
+
+    return options.provider || modeSpecificProvider || settings.TRANSLATION_API || ProviderRegistryIds.GOOGLE_V2;
+  }
+
+  /**
    * Perform translation request
    */
   async performTranslation(selectedText, options = {}) {
@@ -29,7 +59,8 @@ export class TranslationHandler {
     settings = {
         SOURCE_LANGUAGE: settingsManager.get('SOURCE_LANGUAGE', 'auto'),
         TARGET_LANGUAGE: settingsManager.get('TARGET_LANGUAGE', 'fa'),
-        TRANSLATION_API: settingsManager.get('TRANSLATION_API', 'google'),
+        TRANSLATION_API: settingsManager.get('TRANSLATION_API', ProviderRegistryIds.GOOGLE_V2),
+        MODE_PROVIDERS: settingsManager.get('MODE_PROVIDERS', {}),
         ENABLE_DICTIONARY: settingsManager.get('ENABLE_DICTIONARY', true)
       };
 
@@ -40,11 +71,37 @@ export class TranslationHandler {
         translationMode = TranslationMode.Dictionary_Translation;
       }
 
+      // Determine the best provider to use
+      // Priority: 
+      // 1. Manual override (from UI toggle)
+      // 2. Mode-specific setting (dictionary or selection)
+      // 3. Fallback: If dictionary mode and no specific provider, try selection provider
+      // 4. Global default
+      
+      let modeSpecificProvider = settings.MODE_PROVIDERS?.[translationMode];
+      
+      // Smart fallback: Dictionary often shares the same user preference as Selection
+      if (!options.provider && !modeSpecificProvider && translationMode === TranslationMode.Dictionary_Translation) {
+        modeSpecificProvider = settings.MODE_PROVIDERS?.[TranslationMode.Selection];
+        this.logger.debug('Dictionary mode fallback to Selection provider:', modeSpecificProvider);
+      }
+
+      const finalProvider = options.provider || modeSpecificProvider || settings.TRANSLATION_API || ProviderRegistryIds.GOOGLE_V2;
+
+      this.logger.debug('Provider resolution details:', {
+        mode: translationMode,
+        modeSpecificProvider,
+        globalDefault: settings.TRANSLATION_API,
+        manualOverride: options.provider,
+        finalProvider
+      });
+
       this.logger.debug('Translation mode determination:', {
         text: selectedText?.substring(0, 30) + '...',
         isDictionaryCandidate,
         enableDictionary: settings.ENABLE_DICTIONARY,
-        finalMode: translationMode
+        finalMode: translationMode,
+        finalProvider
       });
 
       // Generate unique messageId
@@ -59,7 +116,7 @@ export class TranslationHandler {
         text: selectedText,
         from: AUTO_DETECT_VALUE,
         to: settings.TARGET_LANGUAGE || 'fa',
-        provider: settings.TRANSLATION_API || 'google',
+        provider: finalProvider,
         messageId: messageId,
         mode: translationMode,
         options: { ...options }
@@ -68,19 +125,26 @@ export class TranslationHandler {
       this.logger.debug("Sending translation request", payload);
 
       // Send translation request using reliable messenger (retries + port fallback)
-      const ackOrResult = await sendMessage({
-        action: MessageActions.TRANSLATE,
-        context: 'content',
-        messageId: messageId,
-        data: {
-          text: payload.text,
-          provider: payload.provider,
-          sourceLanguage: payload.from,
-          targetLanguage: payload.to,
-          mode: payload.mode,
-          options: payload.options
-        }
-      })
+      let ackOrResult;
+      try {
+        ackOrResult = await sendMessage({
+          action: MessageActions.TRANSLATE,
+          context: 'content',
+          messageId: messageId,
+          data: {
+            text: payload.text,
+            provider: payload.provider,
+            sourceLanguage: payload.from,
+            targetLanguage: payload.to,
+            mode: payload.mode,
+            options: payload.options
+          }
+        });
+      } catch (sendError) {
+        this.logger.info("sendMessage failed:", sendError);
+        this._cleanupRequest(messageId);
+        throw sendError;
+      }
 
       // Check if sendMessage returned the complete result directly
       this.logger.debug("sendMessage returned:", ackOrResult);
@@ -89,16 +153,12 @@ export class TranslationHandler {
         // Direct result from sendMessage - use it immediately
         this.logger.operation("Translation completed successfully (direct result)");
         
-        // Clean up the timeout and pending request
-        const request = this.activeRequests.get(messageId);
-        if (request && request.timeout) {
-          clearTimeout(request.timeout);
-        }
-        this.activeRequests.delete(messageId);
+        this._cleanupRequest(messageId);
         
         return { 
           translatedText: ackOrResult.translatedText,
-          targetLanguage: payload.to 
+          targetLanguage: payload.to,
+          provider: payload.provider
         };
       }
       
@@ -109,24 +169,24 @@ export class TranslationHandler {
         // Check for error in port fallback result
         if (final.success === false && final.error) {
           this.logger.debug("Port fallback detected error, will be handled by WindowsManager:", final.error);
-          const errorMessage = final.error.message || final.error || 'Translation failed';
-          throw new Error(errorMessage);
+          this._cleanupRequest(messageId);
+          throw final.error; // Throw the actual error object/message
         }
         
         if (!final || !final.translatedText) {
-          this.logger.error("Port fallback result has no translatedText:", final);
+          this.logger.info("Port fallback result has no translatedText:", final);
+          this._cleanupRequest(messageId);
           throw new Error('Translation failed: No translated text received')
         }
         this.logger.operation("Translation completed successfully (via port fallback)");
         
-        // Clean up the timeout and pending request
-        const request = this.activeRequests.get(messageId);
-        if (request && request.timeout) {
-          clearTimeout(request.timeout);
-        }
-        this.activeRequests.delete(messageId);
+        this._cleanupRequest(messageId);
         
-        return { translatedText: final.translatedText }
+        return { 
+          translatedText: final.translatedText,
+          targetLanguage: payload.to,
+          provider: payload.provider
+        }
       }
 
       // Otherwise wait for the translation result via messaging (TRANSLATION_RESULT_UPDATE)
@@ -143,19 +203,38 @@ export class TranslationHandler {
         
         // If we reach here successfully, the result should be valid
         if (!result?.translatedText) {
-          this.logger.error("resultPromise resolved but no translatedText - this should not happen");
+          this.logger.info("resultPromise resolved but no translatedText - this should not happen");
           throw new Error('Translation failed: No translated text received');
         }
 
         this.logger.operation("Translation completed successfully");
-        return result;
+        return {
+          ...result,
+          provider: payload.provider
+        };
       } catch (resultError) {
         // Preserve the specific error message from resultPromise
-        this.logger.error("resultPromise was rejected with error:", resultError.message);
+        this.logger.info("resultPromise was rejected with error:", resultError.message);
         this.logger.debug("Full error object:", resultError);
+        this._cleanupRequest(messageId);
         throw resultError; // Re-throw the original error from messageListener
       }
 
+  }
+
+  /**
+   * Helper to clean up an active request
+   * @private
+   */
+  _cleanupRequest(messageId) {
+    const request = this.activeRequests.get(messageId);
+    if (request) {
+      if (request.timeout) {
+        clearTimeout(request.timeout);
+      }
+      this.activeRequests.delete(messageId);
+      this.logger.debug(`Cleaned up request: ${messageId}`);
+    }
   }
 
   /**
@@ -167,7 +246,22 @@ export class TranslationHandler {
       // Set timeout
       const timeout = setTimeout(() => {
         this.activeRequests.delete(messageId);
-        reject(new Error('Translation timeout'));
+
+        // Create timeout error
+        const timeoutError = new Error('Translation timeout');
+
+        // Handle through ErrorHandler for proper error management
+        if (ExtensionContextManager.isValidSync()) {
+          ErrorHandler.getInstance().handle(timeoutError, {
+            context: 'translation-handler-timeout',
+            messageId: messageId,
+            showToast: false // WindowsManager will handle UI feedback
+          }).catch(handlerError => {
+            this.logger.warn('ErrorHandler failed to handle timeout:', handlerError);
+          });
+        }
+
+        reject(timeoutError);
       }, WindowsConfig.TIMEOUTS.TRANSLATION_TIMEOUT);
 
       // Store request info for central handler to find
@@ -187,8 +281,7 @@ export class TranslationHandler {
     const request = this.activeRequests.get(messageId);
     if (!request) return;
 
-    clearTimeout(request.timeout);
-    this.activeRequests.delete(messageId);
+    this._cleanupRequest(messageId);
     
     // Instead of rejecting with an error, resolve with a cancellation marker
     // This prevents uncaught promise rejection errors in the console
@@ -204,32 +297,60 @@ export class TranslationHandler {
   handleTranslationResult(message) {
     const { messageId } = message;
     const request = this.activeRequests.get(messageId);
-    
+
     if (!request) {
       this.logger.debug(`No active request found for messageId: ${messageId}`);
       return false;
     }
 
     this.logger.operation("Message matched! Processing translation result");
-    clearTimeout(request.timeout);
-    this.activeRequests.delete(messageId);
     
     // Check for error first - error can be in data.error or directly in data
     if (message.data?.error || (message.data?.type && message.data?.message)) {
       this.logger.debug("Error detected in central handler, rejecting promise with error");
       const errorMessage = message.data?.error?.message || message.data?.message || 'Translation failed';
-      request.reject(new Error(errorMessage));
+      const error = new Error(errorMessage);
+
+      // Handle through ErrorHandler for proper error management
+      if (ExtensionContextManager.isValidSync()) {
+        ErrorHandler.getInstance().handle(error, {
+          context: 'translation-handler-result-error',
+          messageId: messageId,
+          showToast: false // WindowsManager will handle UI feedback
+        }).catch(handlerError => {
+          this.logger.warn('ErrorHandler failed to handle translation error:', handlerError);
+        });
+      }
+
+      this._cleanupRequest(messageId);
+      request.reject(error);
       return true;
     } else if (message.data?.translatedText) {
       this.logger.operation("Translation success received");
-      request.resolve({ 
+      
+      this._cleanupRequest(messageId);
+      request.resolve({
         translatedText: message.data.translatedText,
-        targetLanguage: message.data.targetLanguage 
+        targetLanguage: message.data.targetLanguage
       });
       return true;
     } else {
-      this.logger.error("Unexpected message data - no error and no translatedText", message.data);
-      request.reject(new Error('No translated text in result'));
+      this.logger.info("Unexpected message data - no error and no translatedText", message.data);
+      const error = new Error('No translated text in result');
+
+      // Handle through ErrorHandler for proper error management
+      if (ExtensionContextManager.isValidSync()) {
+        ErrorHandler.getInstance().handle(error, {
+          context: 'translation-handler-invalid-result',
+          messageId: messageId,
+          showToast: false
+        }).catch(handlerError => {
+          this.logger.warn('ErrorHandler failed to handle invalid result:', handlerError);
+        });
+      }
+
+      this._cleanupRequest(messageId);
+      request.reject(error);
       return true;
     }
   }

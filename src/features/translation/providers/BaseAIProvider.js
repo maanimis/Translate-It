@@ -4,16 +4,17 @@
  */
 
 import { BaseProvider } from "@/features/translation/providers/BaseProvider.js";
+import { buildPrompt } from "@/features/translation/utils/promptBuilder.js";
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { createTimeoutPromise, calculateBatchTimeout } from '@/features/translation/utils/timeoutCalculator.js';
 import { MessageActions } from '@/shared/messaging/core/MessageActions.js';
 import { MessageFormat } from '@/shared/messaging/core/MessagingCore.js';
 import { ErrorHandler } from '@/shared/error-management/ErrorHandler.js';
-import { matchErrorToType } from '@/shared/error-management/ErrorMatcher.js';
+import { matchErrorToType, isFatalError } from '@/shared/error-management/ErrorMatcher.js';
 import { ErrorTypes } from '@/shared/error-management/ErrorTypes.js';
 import { getProviderBatching } from '../core/ProviderConfigurations.js';
-import { getPromptBASEAIBatchAsync } from '@/shared/config/config.js';
+import { getPromptBASEAIBatchAsync, getPromptBASEAIFollowupAsync } from '@/shared/config/config.js';
 import { getLanguageNameFromCode } from '@/shared/config/languageConstants.js';
 import { AUTO_DETECT_VALUE } from '@/shared/config/constants.js';
 import browser from 'webextension-polyfill';
@@ -153,7 +154,9 @@ export class BaseAIProvider extends BaseProvider {
           batch,
           batchIndex,
           messageId,
-          engine
+          engine,
+          sourceLang,
+          targetLang
         );
 
                 // Streamed batch progress
@@ -169,17 +172,22 @@ export class BaseAIProvider extends BaseProvider {
         
         // Send error stream message to content script
         await this._streamErrorResults(error, batchIndex, messageId, engine);
-        
-        // Send streaming end notification with error status
-        await this._sendStreamEnd(messageId, engine, { error: true });
-        
+
+        // Send streaming end notification with error details
+        await this._sendStreamEnd(messageId, engine, {
+          error: {
+            message: error.message,
+            type: errorType
+          }
+        });
+
         // Stop streaming on error - don't continue with other batches
         throw error;
       }
     }
 
     // Send streaming end notification
-    await this._sendStreamEnd(messageId, engine);
+    await this._sendStreamEnd(messageId, engine, { targetLanguage: targetLang });
 
     // Log performance metrics for Select Element mode
     const totalTime = Date.now() - startTime;
@@ -256,6 +264,13 @@ export class BaseAIProvider extends BaseProvider {
    * @returns {string[][]} - Array of batches
    */
   _createOptimalBatches(texts, translateMode = null) {
+    // CRITICAL: Check for placeholders and use atomic batching
+    // When placeholders are present, NEVER split texts across batches
+    if (this._hasPlaceholders(texts)) {
+      logger.debug(`[${this.providerName}] Placeholders detected in ${texts.length} texts, using atomic batching`);
+      return [texts]; // Single batch to preserve placeholder integrity
+    }
+
     // Get mode-specific batching configuration
     const batchingConfig = this._getBatchingConfig(translateMode);
     const strategy = batchingConfig.strategy || this.constructor.preferredBatchStrategy;
@@ -277,6 +292,16 @@ export class BaseAIProvider extends BaseProvider {
       default:
         return this._createFixedBatches(texts, optimalSize);
     }
+  }
+
+  /**
+   * Check if any text contains placeholder markers
+   * @param {string[]} texts - Texts to check
+   * @returns {boolean} - True if placeholders found
+   */
+  _hasPlaceholders(texts) {
+    const PLACEHOLDER_PATTERN = /\[\[AIWC-\d+\]\]/;
+    return texts.some(text => PLACEHOLDER_PATTERN.test(text));
   }
 
   /**
@@ -388,8 +413,10 @@ export class BaseAIProvider extends BaseProvider {
    * @param {number} batchIndex - Index of this batch
    * @param {string} messageId - Message ID
    * @param {object} engine - Translation engine
+   * @param {string} sourceLanguage - Actual source language
+   * @param {string} targetLanguage - Actual target language
    */
-  async _streamBatchResults(batchResults, originalBatch, batchIndex, messageId, engine) {
+  async _streamBatchResults(batchResults, originalBatch, batchIndex, messageId, engine, sourceLanguage = null, targetLanguage = null) {
     if (!engine || !messageId) {
       logger.warn(`[${this.providerName}] Cannot stream results - missing engine or messageId`);
       return;
@@ -405,10 +432,12 @@ export class BaseAIProvider extends BaseProvider {
           originalData: originalBatch,
           batchIndex: batchIndex,
           provider: this.providerName,
+          sourceLanguage,
+          targetLanguage,
           timestamp: Date.now()
         },
         'background-streaming',
-        { messageId }
+        messageId
       );
 
       // Get sender info from engine's active translations
@@ -439,12 +468,16 @@ export class BaseAIProvider extends BaseProvider {
         {
           success: !options.error,
           completed: true,
-          error: options.error,
+          error: options.error ? {
+            message: options.error.message || 'Translation failed',
+            type: options.error.type || matchErrorToType(options.error) || 'TRANSLATION_ERROR'
+          } : null,
           provider: this.providerName,
+          targetLanguage: options.targetLanguage,
           timestamp: Date.now()
         },
         'background-streaming',
-        { messageId }
+        messageId
       );
 
       const senderInfo = engine.getStreamingSender?.(messageId);
@@ -473,14 +506,14 @@ export class BaseAIProvider extends BaseProvider {
           success: false,
           error: {
             message: error.message || 'Translation failed',
-            type: error.type || 'TRANSLATION_ERROR'
+            type: error.type || matchErrorToType(error) || 'TRANSLATION_ERROR'
           },
           batchIndex: batchIndex,
           provider: this.providerName,
           timestamp: Date.now()
         },
         'background-streaming',
-        { messageId }
+        messageId
       );
       const senderInfo = engine.getStreamingSender?.(messageId);
       if (senderInfo && senderInfo.tab?.id) {
@@ -502,75 +535,230 @@ export class BaseAIProvider extends BaseProvider {
    * @param {AbortController} abortController - Cancellation controller
    * @param {object} engine - Translation engine instance (optional)
    * @param {string} messageId - Message ID (optional)
+   * @param {string} sessionId - Session ID for maintaining context (optional)
    * @returns {Promise<string[]>} - Translated texts
    */
-  async _translateBatch(batch, sourceLang, targetLang, translateMode, abortController, engine = null, messageId = null) {
-    // Check if provider supports batch translation
+  async _translateBatch(batch, sourceLang, targetLang, translateMode, abortController, engine = null, messageId = null, sessionId = null) {
     const batchStrategy = this.constructor.batchStrategy || 'single';
     
-    // Single text fallback
     if (batch.length === 1) {
-      const result = await this._translateSingle(batch[0], sourceLang, targetLang, translateMode, abortController);
-      return [result || batch[0]];
+      return [await this._translateSingle(batch[0], sourceLang, targetLang, translateMode, abortController, sessionId)];
     }
     
-    // Use strategy pattern based on provider configuration
     try {
       if (batchStrategy === 'json') {
-        // JSON batch strategy (used by Gemini, OpenAI)
-        const batchPrompt = await this._buildBatchPrompt(batch, sourceLang, targetLang);
-        const result = await this._translateSingle(batchPrompt, sourceLang, targetLang, translateMode, abortController);
+        // Prepare batch text once here
+        const jsonInput = batch.map((t, i) => ({ id: i, text: t }));
+        const batchText = JSON.stringify(jsonInput, null, 2);
         
-        // Parse JSON batch result
+        // Pass with explicit isBatch=true flag - no more guessing inside _translateSingle
+        const result = await this._translateSingle(batchText, sourceLang, targetLang, translateMode, abortController, sessionId, true);
+        
         const parsedResults = this._parseBatchResult(result, batch.length, batch);
-        if (parsedResults.length === batch.length) {
-          logger.debug(`[${this.providerName}] JSON batch translation successful: ${batch.length} segments`);
-          return parsedResults;
-        } else {
-          throw new Error('JSON batch result count mismatch');
-        }
+        if (parsedResults.length === batch.length) return parsedResults;
+        throw new Error('JSON batch result count mismatch');
       }
-      
-      throw new Error(`Unknown or unsupported batch strategy: ${batchStrategy}`);
-      
+      throw new Error(`Unsupported batch strategy: ${batchStrategy}`);
     } catch (error) {
-      logger.warn(`[${this.providerName}] Batch translation failed, falling back to individual requests:`, error);
+      const errorType = error.type || matchErrorToType(error);
+
+      // CRITICAL: Check if the error is fatal (Rate Limit, Auth, Model Missing, etc.)
+      const isFatal = isFatalError(error) || 
+      error.statusCode === 429 || 
+      error.statusCode === 401 ||
+      error.statusCode === 403 ||
+      error.statusCode === 402 ||
+      error.statusCode === 404;
+
+      if (isFatal) {
+        logger.info(`[${this.providerName}] Batch failed with fatal error, skipping fallback:`, error.message);
+        // Ensure error type is set for higher level managers
+        if (!error.type) error.type = errorType;
+        throw error;
+      }
+
+      logger.warn(`[${this.providerName}] Batch failed (likely structural), falling back to individual requests:`, error.message);
       return this._fallbackSingleRequests(batch, sourceLang, targetLang, translateMode, engine, messageId, abortController);
     }
   }
 
   /**
-   * Abstract method for single text translation - must be implemented by subclasses
-   * @param {string} _text - Text to translate
-   * @param {string} _sourceLang - Source language
-   * @param {string} _targetLang - Target language
-   * @param {string} _translateMode - Translation mode
-   * @param {AbortController} _abortController - Cancellation controller
-   * @returns {Promise<string>} - Translated text
+   * Abstract method for single text translation
+   * @param {string} text - Text to translate
+   * @param {string} sourceLang - Source language
+   * @param {string} targetLang - Target language
+   * @param {string} translateMode - Translation mode
+   * @param {AbortController} abortController - Cancellation controller
+   * @param {string} sessionId - Session ID (optional)
+   * @param {boolean} isBatch - Whether this is a batch request (optional)
    */
-  async _translateSingle(/* text, sourceLang, targetLang, translateMode, abortController */) {
-    throw new Error(`_translateSingle method must be implemented by ${this.constructor.name}`);
+  async _translateSingle() {
+    throw new Error(`_translateSingle must be implemented by ${this.constructor.name}`);
   }
 
   /**
-   * Build batch prompt for providers that support batch translation
-   * @param {string[]} textBatch - Batch of texts
+   * Check if this is the first turn in a session
+   * @param {string} sessionId - Session ID
+   * @returns {Promise<boolean>} - True if first turn or no session
+   * @private
+   */
+  async _isFirstTurn(sessionId) {
+    if (!sessionId) return true;
+    try {
+      const { translationSessionManager } = await import('@/features/translation/core/TranslationSessionManager.js');
+      const session = translationSessionManager.sessions.get(sessionId);
+      return !session || session.history.length === 0;
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Helper to prepare system prompt and user text
+   * @param {string} text - Input text
    * @param {string} sourceLang - Source language
    * @param {string} targetLang - Target language
-   * @returns {string} - Batch prompt
+   * @param {string} translateMode - Translation mode
+   * @param {string} sessionId - Session identifier
+   * @param {boolean} isBatch - Whether this is a batch request
+   * @returns {Promise<object>} - { systemPrompt, userText }
+   * @protected
    */
-  async _buildBatchPrompt(textBatch, sourceLang, targetLang) {
-    const jsonInput = textBatch.map((text, index) => ({
-      id: index,
-      text: text
-    }));
-    
-    const promptTemplate = await getPromptBASEAIBatchAsync();
-    
-    return promptTemplate
-      .replace("_{SOURCE}", sourceLang)
-      .replace("_{TARGET}", targetLang)
-      .replace("_{TEXT}", JSON.stringify(jsonInput, null, 2));
+  async _preparePromptAndText(text, sourceLang, targetLang, translateMode, sessionId = null, isBatch = false) {
+    const isFirstTurn = await this._isFirstTurn(sessionId);
+    let systemPrompt;
+
+    if (isBatch) {
+      if (isFirstTurn) {
+        const promptTemplate = await getPromptBASEAIBatchAsync();
+        systemPrompt = promptTemplate
+          .replace("_{SOURCE}", sourceLang)
+          .replace("_{TARGET}", targetLang)
+          .split("_{TEXT}")[0].trim();
+      } else {
+        const followUpTemplate = await getPromptBASEAIFollowupAsync();
+        systemPrompt = followUpTemplate
+          .replace("_{SOURCE}", sourceLang)
+          .replace("_{TARGET}", targetLang);
+      }
+    } else {
+      systemPrompt = await buildPrompt("", sourceLang, targetLang, translateMode, this.constructor.type);
+    }
+
+    return { systemPrompt, userText: text };
+  }
+
+  /**
+   * Helper to get conversation messages for AI providers
+   * @param {string} sessionId - Session identifier
+   * @param {string} providerName - Name of the provider
+   * @param {string} currentText - New text to translate
+   * @param {string} systemPrompt - Base system prompt
+   * @param {string} translateMode - Translation mode (Page, Selection, etc.)
+   * @returns {object} - { messages, session }
+   * @protected
+   */
+  async _getConversationMessages(sessionId, providerName, currentText, systemPrompt, translateMode = '') {
+    if (!sessionId) {
+      return {
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: currentText }
+        ],
+        session: null
+      };
+    }
+
+    const { translationSessionManager } = await import('@/features/translation/core/TranslationSessionManager.js');
+    const session = translationSessionManager.getOrCreateSession(sessionId, providerName);
+
+    // Initial turn: Set system prompt
+    if (session.history.length === 0) {
+      session.systemPrompt = systemPrompt;
+      return {
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: currentText }
+        ],
+        session
+      };
+    }
+
+    // Subsequent turns: Send history + instructions reminder + current text
+    const messages = [
+      { role: 'system', content: session.systemPrompt }
+    ];
+
+    // For Page Translation, we MUST NOT send history of previous batches.
+    // Each batch is independent content from the page. Sending history
+    // causes massive token bloat and triggers Rate Limits (especially on Gemini Free).
+    if (translateMode !== 'page') {
+      const maxHistoryMessages = 10;
+      const history = session.history.slice(-maxHistoryMessages);
+      messages.push(...history);
+    }
+
+    // Add current text
+    messages.push({ role: 'user', content: currentText });
+
+    return { messages, session };
+  }
+
+  /**
+   * Helper to update session history with results
+   */
+  async _updateSessionHistory(sessionId, userContent, assistantContent) {
+    if (!sessionId) return;
+    try {
+      const { translationSessionManager } = await import('@/features/translation/core/TranslationSessionManager.js');
+      translationSessionManager.addMessage(sessionId, 'user', userContent);
+      translationSessionManager.addMessage(sessionId, 'assistant', assistantContent);
+      
+      const session = translationSessionManager.sessions.get(sessionId);
+      if (session) session.batchCount++;
+    } catch (e) {
+      logger.warn('Failed to update session history:', e);
+    }
+  }
+
+  /**
+   * Centralized helper to clean AI responses from common artifacts
+   * Handles markdown JSON blocks and accidental single-segment arrays
+   * @param {string} result - Raw text from AI
+   * @returns {string} Cleaned text
+   * @protected
+   */
+  _cleanAIResponse(result) {
+    if (!result || typeof result !== 'string') return result;
+
+    let processedResult = result;
+    let jsonString = null;
+
+    // 1. Try to find JSON array in markdown code blocks
+    const markdownMatch = result.match(/```json\s*([\s\S]*?)\s*```/);
+    if (markdownMatch) {
+      jsonString = markdownMatch[1].trim();
+    } else {
+      // 2. Try to find direct JSON array (without markdown)
+      const directMatch = result.match(/^\s*\[([\s\S]*)\]\s*$/);
+      if (directMatch) {
+        jsonString = `[${directMatch[1]}]`;
+      }
+    }
+
+    if (jsonString) {
+      try {
+        const parsed = JSON.parse(jsonString);
+        if (Array.isArray(parsed) && parsed.length === 1 && typeof parsed[0] === 'string') {
+          logger.debug(`[${this.providerName}] Single segment JSON array detected and extracted`);
+          processedResult = parsed[0];
+        }
+      } catch {
+        // Not a valid JSON or not a single-segment array, keep original result
+      }
+    }
+
+    return processedResult;
   }
 
   /**
@@ -705,7 +893,7 @@ export class BaseAIProvider extends BaseProvider {
         
         // Stream the result immediately for this segment
         if (engine && messageId) {
-          await this._streamFallbackResult([translatedResult], [batch[i]], i, messageId, engine);
+          await this._streamFallbackResult([translatedResult], [batch[i]], i, messageId, engine, sourceLang, targetLang);
         }
       } catch (error) {
         // Log cancellation as debug instead of warn using proper error management
@@ -731,8 +919,10 @@ export class BaseAIProvider extends BaseProvider {
    * @param {number} segmentIndex - Index of this segment in the batch
    * @param {string} messageId - Message ID
    * @param {object} engine - Translation engine instance
+   * @param {string} sourceLanguage - Actual source language
+   * @param {string} targetLanguage - Actual target language
    */
-  async _streamFallbackResult(result, original, segmentIndex, messageId, engine) {
+  async _streamFallbackResult(result, original, segmentIndex, messageId, engine, sourceLanguage = null, targetLanguage = null) {
     try {
       const { MessageFormat } = await import('@/shared/messaging/core/MessagingCore.js');
       const { MessageActions } = await import('@/shared/messaging/core/MessageActions.js');
@@ -745,10 +935,12 @@ export class BaseAIProvider extends BaseProvider {
           originalData: original,
           batchIndex: segmentIndex,
           provider: this.providerName,
+          sourceLanguage,
+          targetLanguage,
           timestamp: Date.now()
         },
         'background-streaming',
-        { messageId }
+        messageId
       );
 
       const senderInfo = engine.getStreamingSender?.(messageId);
@@ -880,5 +1072,191 @@ export class BaseAIProvider extends BaseProvider {
     logger.debug(`[${this.providerName}] Created ${batches.length} ${balancedBatching ? 'balanced' : ''}character-based batches for ${texts.length} segments (${totalChars} chars, target: ${targetBatchChars} chars/batch)`);
 
     return batches;
+  }
+
+  /**
+   * Split text into sentences using Intl.Segmenter API (100+ language support)
+   * This is the GOLD STANDARD for sentence boundary detection across all languages
+   * @param {string} text - Text to split
+   * @param {string} sourceLanguage - Source language code
+   * @returns {string[]} - Array of sentences
+   */
+  splitIntoSentences(text, sourceLanguage = 'en') {
+    // Use Intl.Segmenter for culture-aware sentence splitting
+    if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+      try {
+        const segmenter = new Intl.Segmenter(sourceLanguage, { granularity: 'sentence' });
+        const segments = segmenter.segment(text);
+        return Array.from(segments).map(s => s.segment);
+      } catch (error) {
+        logger.debug(`[${this.providerName}] Intl.Segmenter failed for ${sourceLanguage}, falling back to regex:`, error.message);
+      }
+    }
+
+    // Fallback to regex-based splitting for older browsers
+    return this._fallbackSentenceSplitting(text);
+  }
+
+  /**
+   * Fallback sentence splitting using regex
+   * @param {string} text - Text to split
+   * @returns {string[]} - Array of sentences
+   */
+  _fallbackSentenceSplitting(text) {
+    // Simple regex fallback - not as accurate as Intl.Segmenter
+    const sentences = text.split(/(?<=[.!?。！？])\s+/);
+    return sentences.filter(s => s.trim().length > 0);
+  }
+
+  /**
+   * Smart chunking with placeholder boundary protection
+   * Uses hierarchical chunking strategy for 100+ languages
+   * @param {string} text - Text to chunk
+   * @param {number} limit - Character limit per chunk
+   * @param {string} sourceLanguage - Source language code
+   * @returns {string[]} - Array of text chunks
+   */
+  smartChunkWithPlaceholders(text, limit, sourceLanguage = 'en') {
+    if (text.length <= limit) {
+      return [text];
+    }
+
+    // Layer 1: Paragraph boundaries (double newlines)
+    let chunks = this._splitAtParagraphBoundaries(text, limit);
+    if (chunks.length > 1 && this._validatePlaceholderBoundaries(chunks, text)) {
+      return chunks;
+    }
+
+    // Layer 2: Sentence boundaries using Intl.Segmenter
+    const sentences = this.splitIntoSentences(text, sourceLanguage);
+    chunks = this._groupSentencesIntoChunks(sentences, limit);
+
+    // Layer 3: Validate placeholder boundaries
+    if (!this._validatePlaceholderBoundaries(chunks, text)) {
+      // Fallback to single chunk if placeholders would be split
+      logger.warn(`[${this.providerName}] Cannot chunk without splitting placeholders, using single batch`);
+      return [text];
+    }
+
+    return chunks;
+  }
+
+  /**
+   * Split text at paragraph boundaries
+   * @param {string} text - Text to split
+   * @param {number} limit - Character limit
+   * @returns {string[]} - Array of chunks
+   */
+  _splitAtParagraphBoundaries(text, limit) {
+    const paragraphs = text.split(/\n\n+/);
+    const chunks = [];
+    let currentChunk = '';
+
+    for (const paragraph of paragraphs) {
+      if ((currentChunk + paragraph).length > limit && currentChunk.length > 0) {
+        chunks.push(currentChunk.trim());
+        currentChunk = paragraph;
+      } else {
+        currentChunk += (currentChunk ? '\n\n' : '') + paragraph;
+      }
+    }
+
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk.trim());
+    }
+
+    return chunks;
+  }
+
+  /**
+   * Group sentences into chunks respecting character limit
+   * @param {string[]} sentences - Array of sentences
+   * @param {number} limit - Character limit per chunk
+   * @returns {string[]} - Array of chunks
+   */
+  _groupSentencesIntoChunks(sentences, limit) {
+    const chunks = [];
+    let currentChunk = '';
+    let currentLength = 0;
+
+    for (const sentence of sentences) {
+      const sentenceLength = sentence.length;
+
+      // If adding this sentence would exceed limit
+      if (currentLength + sentenceLength > limit && currentChunk.length > 0) {
+        chunks.push(currentChunk.trim());
+        currentChunk = sentence;
+        currentLength = sentenceLength;
+      } else {
+        currentChunk += sentence;
+        currentLength += sentenceLength;
+      }
+    }
+
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk.trim());
+    }
+
+    return chunks;
+  }
+
+  /**
+   * Validate that placeholder boundaries are preserved
+   * @param {string[]} chunks - Array of text chunks
+   * @param {string} originalText - Original text
+   * @returns {boolean} - True if placeholders are intact
+   */
+  _validatePlaceholderBoundaries(chunks, originalText) {
+    const PLACEHOLDER_PATTERN = /\[\[AIWC-\d+\]\]/g;
+
+    // Count placeholders in original text
+    const originalMatches = originalText.match(PLACEHOLDER_PATTERN);
+    const originalCount = originalMatches ? originalMatches.length : 0;
+
+    // Count placeholders in all chunks
+    let chunkCount = 0;
+    for (const chunk of chunks) {
+      const matches = chunk.match(PLACEHOLDER_PATTERN);
+      if (matches) {
+        chunkCount += matches.length;
+      }
+
+      // Check for broken placeholders
+      const brokenPattern = /\[\[AIWC-\d+$|^\d+\]\]|\[\[AIWC-|AIWC-\d+\]\]/;
+      if (brokenPattern.test(chunk)) {
+        logger.error(`[${this.providerName}] Found broken placeholder in chunk`);
+        return false;
+      }
+    }
+
+    return chunkCount === originalCount;
+  }
+
+  /**
+   * Check if a position is inside a placeholder marker
+   * @param {string} text - Text to check
+   * @param {number} position - Position to check
+   * @returns {boolean} - True if inside placeholder
+   */
+  _isInsidePlaceholder(text, position) {
+    const PLACEHOLDER_PATTERN = /\[\[AIWC-\d+\]\]/g;
+    const matches = [...text.matchAll(PLACEHOLDER_PATTERN)];
+
+    for (const match of matches) {
+      const startIndex = match.index;
+      const endIndex = match.index + match[0].length;
+
+      // Check if position is inside placeholder
+      if (position >= startIndex && position < endIndex) {
+        return true;
+      }
+
+      // Protect 2 characters before and after
+      if (Math.abs(position - startIndex) <= 2 || Math.abs(position - endIndex) <= 2) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }

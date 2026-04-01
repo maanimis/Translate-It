@@ -44,12 +44,15 @@ const globalState = {
     TextActions: 2,
     TextSelection: 2,
     Translation: 2,
+    PageTranslation: 2,
     Shortcuts: 2,
     Exclusion: 2,
     Capture: 2,
     ScreenCapture: 2,
     Subtitle: 2,
     TTS: 2,
+    Mobile: 2,
+    DesktopFab: 2,
 
     // Services/Utilities
     Browser: 2,

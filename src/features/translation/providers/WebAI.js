@@ -7,6 +7,7 @@ import {
 import { buildPrompt } from "@/features/translation/utils/promptBuilder.js";
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
+import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
 
 const logger = getScopedLogger(LOG_COMPONENTS.PROVIDERS, 'WebAI');
 
@@ -28,7 +29,7 @@ export class WebAIProvider extends BaseAIProvider {
   static batchStrategy = 'json'; // Uses JSON format for batch translation
 
   constructor() {
-    super("WebAI");
+    super(ProviderNames.WEBAI);
   }
 
   
@@ -67,7 +68,8 @@ export class WebAIProvider extends BaseAIProvider {
       }),
     };
 
-    const result = await this._executeApiCall({
+    // Use unified API request handler
+    const result = await this._executeRequest({
       url: apiUrl,
       fetchOptions,
       extractResponse: (data) =>
@@ -76,30 +78,8 @@ export class WebAIProvider extends BaseAIProvider {
       abortController,
     });
 
-    // CRITICAL FIX: Handle single segment JSON arrays properly
-    // When we receive ```json\n["translated text"]\n``` for single segments, extract the text content
-    let processedResult = result;
-
-    if (result && typeof result === 'string') {
-      // Check if this is a JSON array response in markdown
-      const jsonMatch = result.match(/```json\s*([\s\S]*?)\s*```/);
-      if (jsonMatch) {
-        try {
-          const jsonString = jsonMatch[1].trim();
-          const parsed = JSON.parse(jsonString);
-
-          if (Array.isArray(parsed) && parsed.length === 1 && typeof parsed[0] === 'string') {
-            logger.debug(`[WebAI] Single segment JSON array detected, extracting text properly`);
-            processedResult = parsed[0];
-          }
-        } catch (error) {
-          logger.debug(`[WebAI] Failed to parse JSON array, using original result:`, error.message);
-        }
-      }
-    }
-
     logger.info(`[WebAI] Translation completed successfully`);
     this.storeSessionContext({ model: apiModel, lastUsed: Date.now() });
-    return processedResult;
+    return this._cleanAIResponse(result);
   }
 }

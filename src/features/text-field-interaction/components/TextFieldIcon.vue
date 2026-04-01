@@ -4,14 +4,14 @@
     appear
   >
     <button
-      v-if="internalVisible"
+      v-if="internalVisible && !isFullscreen"
       class="ti-field-icon"
       :data-id="id"
       :data-translate-ui="true"
       :class="computedClasses"
       :style="computedStyle"
-      :title="$t ? $t('translateWithTranslateIt') : 'Translate with Translate-It'"
-      :aria-label="$t ? $t('translateWithTranslateIt') : 'Translate with Translate-It'"
+      :title="t('translateWithTranslateIt')"
+      :aria-label="t('translateWithTranslateIt')"
       role="button"
       tabindex="0"
       @click="onClick"
@@ -73,9 +73,15 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
 import { useResourceTracker } from '@/composables/core/useResourceTracker.js';
+import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js';
+import { useMobileStore } from '@/store/modules/mobile.js';
 
 // Use the new Vue composable for automatic cleanup
 const tracker = useResourceTracker('text-field-icon-component')
+const mobileStore = useMobileStore();
+
+// i18n
+const { t } = useUnifiedI18n();
 
 const props = defineProps({
   id: { type: String, required: true },
@@ -83,7 +89,7 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
   visible: { type: Boolean, default: true },
   size: { type: String, default: 'medium', validator: (value) => ['small', 'medium', 'large'].includes(value) },
-  targetElement: { type: Object, default: null }, // Reference to target element
+  targetElement: { type: Object, default: null }, 
   attachmentMode: { type: String, default: 'smart' },
   positioningMode: { type: String, default: 'absolute', validator: (value) => ['fixed', 'absolute'].includes(value) }
 });
@@ -93,15 +99,14 @@ const emit = defineEmits(['click', 'hover', 'focus', 'position-updated']);
 const isHovering = ref(false);
 const isActive = ref(false);
 const isFocused = ref(false);
-
+const isFullscreen = computed(() => mobileStore.isFullscreen);
 
 // Internal position state for smooth updates
 const internalPosition = ref({ ...props.position });
 const internalVisible = ref(props.visible);
 const isSmoothFollowing = ref(false);
 
-
-// Watch for position prop changes and animate to new position
+// Watch for position prop changes
 watch(() => props.position, (newPosition) => {
   if (newPosition && (newPosition.top !== internalPosition.value.top || newPosition.left !== internalPosition.value.left)) {
     internalPosition.value = { ...newPosition };
@@ -131,14 +136,12 @@ const computedStyle = computed(() => {
     left: `${internalPosition.value.left}px`
   };
 
-  // Performance optimizations for smooth following
   if (isSmoothFollowing.value) {
-    baseStyle.transition = 'none'; // No transitions for immediate updates during scroll
-    baseStyle.willChange = 'transform'; // Hint for GPU acceleration
-    baseStyle.transform = 'translateZ(0)'; // Force GPU layer
+    baseStyle.transition = 'none';
+    baseStyle.willChange = 'transform';
+    baseStyle.transform = 'translateZ(0)';
   }
 
-  // Set width and height based on size
   if (props.size === 'small') {
     baseStyle.width = '24px';
     baseStyle.height = '24px';
@@ -150,47 +153,19 @@ const computedStyle = computed(() => {
     baseStyle.height = '32px';
   }
 
-  // Add transform based on placement for better positioning
   const placement = props.position.placement;
   if (placement) {
     const transforms = [];
-
     switch (placement) {
-      case 'top-right':
-        transforms.push('translate(-100%, 0)');
-        break;
-      case 'bottom-right':
-        transforms.push('translate(-100%, -100%)');
-        break;
-      case 'top-left':
-        transforms.push('translate(0, 0)');
-        break;
-      case 'bottom-left':
-        transforms.push('translate(0, -100%)');
-        break;
-      case 'inside-right':
-        transforms.push('translate(-50%, 0)');
-        break;
-      case 'inside-left':
-        transforms.push('translate(-50%, 0)');
-        break;
-      case 'inside-bottom-right':
-        transforms.push('translate(0, 0)');
-        break;
-      case 'inside-bottom-left':
-        transforms.push('translate(0, 0)');
-        break;
-      case 'inside-top-right':
-        transforms.push('translate(0, 0)');
-        break;
-      case 'inside-top-left':
-        transforms.push('translate(0, 0)');
-        break;
+      case 'top-right': transforms.push('translate(-100%, 0)'); break;
+      case 'bottom-right': transforms.push('translate(-100%, -100%)'); break;
+      case 'top-left': transforms.push('translate(0, 0)'); break;
+      case 'bottom-left': transforms.push('translate(0, -100%)'); break;
+      case 'inside-right': transforms.push('translate(-50%, 0)'); break;
+      case 'inside-left': transforms.push('translate(-50%, 0)'); break;
+      default: transforms.push('translate(0, 0)');
     }
-
-    if (transforms.length > 0) {
-      baseStyle.transform = transforms.join(' ');
-    }
+    if (transforms.length > 0) baseStyle.transform = transforms.join(' ');
   }
 
   return baseStyle;
@@ -198,16 +173,10 @@ const computedStyle = computed(() => {
 
 const onClick = (event) => {
   if (props.disabled) return;
-
   event.preventDefault();
   event.stopPropagation();
-
   isActive.value = true;
-  // Use ResourceTracker for timeout management
-  tracker.trackTimeout(() => {
-    isActive.value = false;
-  }, 150);
-
+  tracker.trackTimeout(() => { isActive.value = false; }, 150);
   emit('click', props.id, event);
 };
 
@@ -241,39 +210,18 @@ const onKeydown = (event) => {
   }
 };
 
-// Public methods for external control
 const updatePosition = (newPosition) => {
   internalPosition.value = { ...newPosition };
   emit('position-updated', { id: props.id, position: newPosition });
 };
 
-const show = () => {
-  internalVisible.value = true;
-};
+const show = () => { internalVisible.value = true; };
+const hide = () => { internalVisible.value = false; };
+const forceUpdate = () => { internalPosition.value = { ...internalPosition.value }; };
+const enableSmoothFollowing = () => { isSmoothFollowing.value = true; };
+const disableSmoothFollowing = () => { isSmoothFollowing.value = false; };
+const updatePositionImmediate = (newPosition) => { internalPosition.value = { ...newPosition }; };
 
-const hide = () => {
-  internalVisible.value = false;
-};
-
-const forceUpdate = () => {
-  // Force reactivity update
-  internalPosition.value = { ...internalPosition.value };
-};
-
-const enableSmoothFollowing = () => {
-  isSmoothFollowing.value = true;
-};
-
-const disableSmoothFollowing = () => {
-  isSmoothFollowing.value = false;
-};
-
-const updatePositionImmediate = (newPosition) => {
-  // For smooth following - update immediately without reactivity delays
-  internalPosition.value = { ...newPosition };
-};
-
-// Expose methods for parent components
 defineExpose({
   updatePosition,
   updatePositionImmediate,
@@ -288,14 +236,11 @@ defineExpose({
 });
 
 onMounted(() => {
-  // Initialize internal state
   internalPosition.value = { ...props.position };
   internalVisible.value = props.visible;
 });
-
-// Note: cleanup is now automatic via useResourceTracker
 </script>
 
 <style scoped>
-/* Component-specific styles that don't conflict with global styles */
+/* Component-specific styles */
 </style>

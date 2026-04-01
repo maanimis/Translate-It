@@ -3,8 +3,8 @@
     :size="size"
     :variant="variant"
     :disabled="!canCopy"
-    :title="title"
-    :aria-label="ariaLabel"
+    :title="computedTitle"
+    :aria-label="computedAriaLabel"
     :label="label"
     :show-label="showLabel"
     :custom-classes="['ti-copy-button', { 'ti-copying': isCopying }]"
@@ -20,26 +20,35 @@
     </template>
     
     <template #feedback>
-      <!-- Success feedback -->
-      <Transition name="ti-feedback">
-        <div
-          v-if="showFeedback"
-          class="ti-copy-feedback"
-        >
-          ✓ {{ feedbackText }}
-        </div>
-      </Transition>
+      <!-- Success feedback - Teleported to body to escape all clipping parents -->
+      <Teleport to="body">
+        <Transition name="ti-feedback">
+          <div
+            v-if="showFeedback"
+            class="ti-copy-feedback-global"
+            :style="feedbackPosition"
+          >
+            ✓ {{ feedbackText }}
+          </div>
+        </Transition>
+      </Teleport>
     </template>
   </BaseActionButton>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue'
+import browser from 'webextension-polyfill'
+import { useI18n } from 'vue-i18n'
 import BaseActionButton from './BaseActionButton.vue'
 import { useCopyAction } from '@/features/text-actions/composables/useCopyAction.js'
+import { SimpleMarkdown } from '@/shared/utils/text/markdown.js'
 import { getScopedLogger } from '@/shared/logging/logger.js'
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js'
 const logger = getScopedLogger(LOG_COMPONENTS.UI, 'CopyButton')
+
+// i18n
+const { t } = useI18n()
 
 // Props
 const props = defineProps({
@@ -59,11 +68,11 @@ const props = defineProps({
   },
   title: {
     type: String,
-    default: 'Copy text'
+    default: undefined
   },
   ariaLabel: {
     type: String,
-    default: 'Copy text to clipboard'
+    default: undefined
   },
   iconAlt: {
     type: String,
@@ -84,8 +93,16 @@ const props = defineProps({
   disabled: {
     type: Boolean,
     default: false
+  },
+  clean: {
+    type: Boolean,
+    default: true
   }
 })
+
+// Computed for i18n defaults
+const computedTitle = computed(() => props.title || t('action_copy_text'))
+const computedAriaLabel = computed(() => props.ariaLabel || t('action_copy_to_clipboard'))
 
 // Emits
 const emit = defineEmits(['copied', 'copy-failed'])
@@ -95,6 +112,7 @@ const { copyText, isCopying } = useCopyAction()
 
 // Local state
 const showFeedback = ref(false)
+const feedbackPosition = ref({ top: '0px', left: '0px' })
 
 // Computed
 const canCopy = computed(() => {
@@ -111,22 +129,36 @@ const iconSrc = computed(() => {
   // Use existing icon from assets
   return browser.runtime.getURL('icons/ui/copy.png')
 })
-
 // Methods
-const handleCopy = async () => {
+const handleCopy = async (event) => {
   if (!canCopy.value || !hasTextToCopy.value) return
+
+  // Calculate position for teleported feedback
+  if (event && event.currentTarget) {
+    const rect = event.currentTarget.getBoundingClientRect()
+    feedbackPosition.value = {
+      top: `${rect.top - 30}px`,
+      left: `${rect.left + rect.width / 2}px`
+    }
+  } else {
+    // Fallback if event is missing (should not happen after BaseActionButton fix)
+    feedbackPosition.value = { top: '50%', left: '50%' }
+  }
+
+  // Clean text if requested
+  const textToCopy = props.clean ? SimpleMarkdown.strip(props.text) : props.text
   
   // Log click event
-  const safeText = props.text || ''
   logger.debug('📋 Copy button clicked!', {
-    text: safeText.slice(0, 20) + (safeText.length > 20 ? '...' : ''),
-    source: 'Vue CopyButton'
+    text: textToCopy.slice(0, 20) + (textToCopy.length > 20 ? '...' : ''),
+    source: 'Vue CopyButton',
+    cleaned: props.clean
   })
 
   try {
-    logger.debug('[CopyButton] Copying text:', safeText.substring(0, 50) + '...')
+    logger.debug('[CopyButton] Copying text:', textToCopy.substring(0, 50) + '...')
     
-    const success = await copyText(safeText)
+    const success = await copyText(textToCopy)
     
     if (success) {
       // Show feedback
@@ -161,30 +193,30 @@ const handleCopy = async () => {
   filter: var(--icon-filter);
 }
 
-/* Feedback animation */
-.ti-copy-feedback {
-  position: absolute;
-  top: -30px;
-  left: 50%;
+/* Feedback animation - Fixed positioning for Teleport */
+.ti-copy-feedback-global {
+  position: fixed; /* نمایش به صورت فیکس در کل صفحه */
   transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 0.9);
   color: white;
-  padding: 4px 8px;
+  padding: 4px 10px;
   border-radius: 4px;
   font-size: 11px;
   white-space: nowrap;
-  z-index: 1000;
+  z-index: 2147483647; /* حداکثر مقدار ممکن برای نمایش روی همه چیز */
+  pointer-events: none;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.3);
 }
 
 .ti-feedback-enter-active,
 .ti-feedback-leave-active {
-  transition: all 0.3s ease;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .ti-feedback-enter-from,
 .ti-feedback-leave-to {
   opacity: 0;
-  transform: translateX(-50%) translateY(-10px);
+  transform: translateX(-50%) translateY(8px);
 }
 
 /* Dark mode support */

@@ -1,0 +1,294 @@
+/* src/apps/content/components/mobile/views/PageTranslationView.scss */
+
+.ti-m-page-translation-view {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  font-family: sans-serif !important;
+  gap: 15px !important;
+  background-color: inherit !important;
+  padding: 0 15px !important; /* پدینگ سراسری */
+}
+
+.ti-m-view-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 10px 0 !important;
+  border-bottom: 1px solid var(--ti-mobile-header-border) !important;
+  margin: 0 -15px 15px !important;
+  padding-left: 10px !important;
+  padding-right: 15px !important;
+  position: relative !important;
+}
+
+.ti-m-header-left-section {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important; // Increased gap to prevent pulse overlap
+  flex-shrink: 0 !important;
+  max-width: 35% !important;
+}
+
+.ti-m-back-btn {
+  background: none !important;
+  border: none !important;
+  width: 36px !important;
+  height: 36px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  border-radius: 50% !important;
+  color: var(--ti-mobile-text) !important;
+  -webkit-tap-highlight-color: transparent !important;
+  transition: background-color 0.2s ease !important;
+
+  &:active {
+    background-color: var(--ti-mobile-header-border) !important;
+  }
+
+  svg {
+    display: block !important;
+    width: 18px !important;
+    height: 18px !important;
+    flex-shrink: 0 !important;
+    transform: rotate(90deg) !important;
+    stroke: currentColor !important;
+    stroke-width: 1.2px !important;
+  }
+}
+
+.ti-m-header-status-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  cursor: pointer !important;
+  // removed overflow: hidden to allow pulse animation
+}
+
+.ti-m-header-title {
+  font-weight: 700 !important;
+  font-size: 10px !important;
+  color: var(--ti-mobile-text-muted) !important;
+  white-space: nowrap !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.2px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.ti-m-header-primary-btn {
+  position: absolute !important;
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  height: 34px !important;
+  border-radius: 12px !important;
+  font-size: 12px !important;
+  font-weight: 800 !important;
+  padding: 0 10px !important;
+  margin: 0 !important;
+  white-space: nowrap !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+  outline: none !important;
+  -webkit-tap-highlight-color: transparent !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+  width: 45% !important; /* اختصاص ۳۵ درصد از عرض هدر به دکمه */
+  min-width: 110px !important; /* حداقل عرض برای جا شدن متن در گوشی‌های کوچک */
+  max-width: 150px !important; /* حداکثر عرض برای جلوگیری از کشیده شدن در گوشی‌های بزرگ */
+  flex-shrink: 0 !important;
+  border: none !important;
+  z-index: 2 !important;
+
+  span {
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    flex: 1 !important;
+    text-align: center !important;
+  }
+
+  img {
+    width: 10px !important;
+    height: 10px !important;
+    object-fit: contain !important;
+  }
+
+  &:active {
+    transform: translate(-50%, -50%) scale(0.96) !important; /* حفظ مرکزیت در هنگام انیمیشن */
+    opacity: 0.9 !important;
+  }
+}
+
+.ti-m-header-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important; /* فاصله کمتر */
+}
+
+.ti-m-auto-close-btn {
+  padding: 0 10px !important;
+  height: 28px !important;
+  border-radius: 8px !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  white-space: nowrap !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.3px !important;
+  transition: all 0.2s ease !important;
+  outline: none !important;
+  -webkit-tap-highlight-color: transparent !important;
+  background-color: var(--ti-mobile-btn-bg) !important;
+  color: var(--ti-mobile-text-secondary) !important;
+  border: 1px solid var(--ti-mobile-border) !important;
+
+  &.is-active {
+    background-color: var(--ti-mobile-accent) !important;
+    color: #ffffff !important;
+    border-color: var(--ti-mobile-accent) !important;
+    box-shadow: 0 2px 6px rgba(51, 154, 240, 0.3) !important;
+  }
+}
+
+.ti-m-close-btn {
+  background: none !important;
+  border: none !important;
+  padding: 4px !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+
+  .ti-m-icon-img-close {
+    width: 22px !important;
+    height: 22px !important;
+    opacity: 0.4 !important;
+    filter: var(--ti-mobile-icon-filter) !important;
+    transition: opacity 0.2s ease !important;
+  }
+}
+
+/* Dark Mode Overrides */
+.ti-m-page-translation-view.is-dark {
+  .ti-m-icon-img-close {
+    filter: invert(1) !important;
+    opacity: 0.8 !important;
+  }
+}
+
+.ti-m-progress-card {
+  border-radius: 14px !important;
+  padding: 12px 15px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  transition: all 0.3s ease !important;
+  background: var(--ti-mobile-card-bg) !important;
+  border: 1px solid var(--ti-mobile-border) !important;
+
+  &.has-error {
+    background: var(--ti-mobile-error-bg) !important;
+    border-color: var(--ti-mobile-error) !important;
+  }
+}
+
+.ti-m-progress-label-row {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: flex-end !important;
+}
+
+.ti-m-progress-info {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+}
+
+.ti-m-progress-subtitle {
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  color: var(--ti-mobile-text-muted) !important;
+
+  .has-error & {
+    color: var(--ti-mobile-error) !important;
+  }
+}
+
+.ti-m-progress-value {
+  font-size: 20px !important;
+  font-weight: 800 !important;
+  color: var(--ti-mobile-accent) !important;
+
+  .has-error & {
+    color: var(--ti-mobile-error) !important;
+  }
+}
+
+.ti-m-progress-counter {
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  padding: 4px 10px !important;
+  border-radius: 10px !important;
+  background: var(--ti-mobile-bg) !important;
+  border: 1px solid var(--ti-mobile-header-border) !important;
+  color: var(--ti-mobile-text-muted) !important;
+}
+
+.ti-m-error-message {
+  font-size: 13px !important;
+  color: var(--ti-mobile-error) !important;
+  font-weight: 600 !important;
+  line-height: 1.4 !important;
+}
+
+.ti-m-progress-bar-container {
+  height: 10px !important;
+  border-radius: 5px !important;
+  overflow: hidden !important;
+  position: relative !important;
+  background: var(--ti-mobile-header-border) !important;
+
+  .has-error & {
+    background: var(--ti-mobile-error-bg) !important;
+  }
+}
+
+.ti-m-progress-bar-fill {
+  height: 100% !important;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  box-shadow: 0 0 10px rgba(51, 154, 240, 0.3) !important;
+  background: linear-gradient(90deg, var(--ti-mobile-accent), var(--ti-mobile-accent-hover)) !important;
+
+  .has-error & {
+    background: var(--ti-mobile-error) !important;
+    width: 100% !important;
+  }
+
+  &.indeterminate { 
+    animation: indeterminate-mobile 2s infinite linear !important; 
+    transform-origin: 0% 50% !important; 
+  }
+}
+
+@keyframes pulse-mobile { 
+  0% { transform: scale(0.95); opacity: 1; } 
+  50% { transform: scale(1.1); opacity: 0.7; } 
+  100% { transform: scale(0.95); opacity: 1; } 
+}
+
+@keyframes indeterminate-mobile { 
+  0% { transform: translateX(-100%) scaleX(0.2); } 
+  50% { transform: translateX(0%) scaleX(0.5); } 
+  100% { transform: translateX(100%) scaleX(0.2); } 
+}

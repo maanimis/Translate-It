@@ -4,6 +4,11 @@ import { WindowsConfig } from "@/features/windows/managers/core/WindowsConfig.js
 import { ExtensionContextManager } from "@/core/extensionContext.js";
 import ResourceTracker from '@/core/memory/ResourceTracker.js';
 import { utilsFactory } from '@/utils/UtilsFactory.js';
+import { UI_HOST_IDS } from '@/shared/config/constants.js';
+import { pageEventBus } from '@/core/PageEventBus.js';
+import { SELECTION_EVENTS } from '@/features/text-selection/events/SelectionEvents.js';
+import settingsManager from '@/shared/managers/SettingsManager.js';
+import { SelectionTranslationMode } from '@/shared/config/config.js';
 
 /**
  * SelectionManager - Simplified text selection management
@@ -84,46 +89,76 @@ export class SelectionManager extends ResourceTracker {
   /**
    * Process text selection and show translation UI
    */
-  async processSelection(selectedText, selection) {
+  async processSelection(selectedText, selection, options = {}) {
     if (!ExtensionContextManager.isValidSync()) {
       this.logger.debug('Extension context invalid, skipping selection processing');
       return;
     }
 
+    // Calculate position for the translation UI
+    const position = this.calculateSelectionPosition(selection);
+    
+    // CRITICAL: If we can't calculate a valid position, it's almost certainly 
+    // a selection inside a Shadow DOM (our own UI) or an invalid range.
+    // In this case, we MUST NOT emit events or show any UI.
+    if (!position) {
+      this.logger.debug('Skipping selection: Invalid position (likely inside Shadow DOM)');
+      return;
+    }
+
+    // 1. Emit global selection event (Coordinator Pattern)
+    // This allows any module (like FAB or TTS) to react independently
+    const selectionTranslationMode = settingsManager.get('selectionTranslationMode', SelectionTranslationMode.ON_CLICK);
+    pageEventBus.emit(SELECTION_EVENTS.GLOBAL_SELECTION_CHANGE, {
+      text: selectedText,
+      position: position,
+      mode: selectionTranslationMode,
+      context: {
+        frameId: this.frameId,
+        isIframe: window !== window.top
+      }
+    });
+
+    // 2. Check if we should skip showing our own UI (WindowsManager)
+    const isTextSelectionEnabled = settingsManager.get('TRANSLATE_ON_TEXT_SELECTION', true);
+    if (!isTextSelectionEnabled) {
+      return;
+    }
+
+    // Check for Ctrl requirement if in IMMEDIATE mode
+    if (selectionTranslationMode === SelectionTranslationMode.IMMEDIATE) {
+      const requireCtrl = settingsManager.get('REQUIRE_CTRL_FOR_TEXT_SELECTION', false);
+      if (requireCtrl) {
+        // If required but not pressed, skip. 
+        // Note: we check if ctrlPressed is explicitly TRUE.
+        if (!options || options.ctrlPressed !== true) {
+          this.logger.debug('Ctrl requirement not met for immediate translation, skipping UI display');
+          return;
+        }
+      }
+    }
+
     if (await this.checkExclusion()) {
-      this.logger.debug('URL excluded, skipping selection processing');
+      this.logger.debug('URL excluded, skipping translation UI display');
       return;
     }
 
     const currentTime = Date.now();
 
-    // Prevent duplicate processing of same text
+    // Prevent duplicate processing of same text for the UI display part
     if (this.isDuplicateSelection(selectedText, currentTime)) {
-      this.logger.debug('Skipping duplicate selection', {
+      this.logger.debug('Skipping duplicate selection UI display', {
         text: selectedText.substring(0, 30) + '...'
       });
       return;
     }
 
-    this.logger.debug('Processing new selection', {
+    this.logger.debug('Processing new selection for UI', {
       text: selectedText.substring(0, 30) + '...',
       length: selectedText.length
     });
 
-    // Calculate position for the translation UI
-    const position = this.calculateSelectionPosition(selection);
-    if (!position) {
-      this.logger.debug('Could not calculate position for selection', {
-        text: selectedText.substring(0, 30) + '...',
-        selectionType: selection?.type,
-        rangeCount: selection?.rangeCount,
-        anchorNode: selection?.anchorNode?.nodeName,
-        focusNode: selection?.focusNode?.nodeName
-      });
-      return;
-    }
-
-    // Show translation UI
+    // Show translation UI (This part is still dependent on WindowsManager being allowed)
     await this.showTranslationUI(selectedText, position);
 
     // Track this selection
@@ -135,9 +170,20 @@ export class SelectionManager extends ResourceTracker {
    * Check if this is a duplicate selection
    */
   isDuplicateSelection(selectedText, currentTime) {
-    return selectedText === this.lastProcessedText &&
-           (currentTime - this.lastProcessedTime) < this.processingCooldown &&
-           this.isWindowVisible();
+    if (!selectedText || !this.lastProcessedText) return false;
+
+    const isSameText = selectedText === this.lastProcessedText;
+    const withinCooldown = (currentTime - this.lastProcessedTime) < this.processingCooldown;
+    const uiVisible = this.isWindowVisible();
+
+    // If UI is already visible and text is same, it's ALWAYS a duplicate regardless of time
+    // This prevents re-triggering when user is interacting with the sheet/window
+    if (uiVisible && isSameText) {
+      return true;
+    }
+
+    // Otherwise use the standard cooldown logic
+    return isSameText && withinCooldown;
   }
 
   /**
@@ -194,92 +240,36 @@ export class SelectionManager extends ResourceTracker {
   }
 
   /**
-   * Check if windowsManager should be allowed to operate
-   */
-  async shouldProcessWindowsManager() {
-    if (!this.featureManager) {
-      this.logger.debug('FeatureManager not available for WindowsManager check');
-      return false;
-    }
-
-    try {
-      const exclusionChecker = this.featureManager.exclusionChecker;
-      if (!exclusionChecker) {
-        this.logger.debug('ExclusionChecker not available');
-        return false;
-      }
-
-      const allowed = await exclusionChecker.isFeatureAllowed('windowsManager');
-      this.logger.debug(`WindowsManager check: ${allowed ? 'ALLOWED' : 'BLOCKED'}`);
-      return allowed;
-    } catch (error) {
-      this.logger.error('Error checking WindowsManager permission:', error);
-      return false;
-    }
-  }
-
-  /**
    * Show translation UI (icon or window based on settings)
    */
-  async showTranslationUI(selectedText, position) {
-    // Check if WindowsManager should be allowed
-    if (!(await this.shouldProcessWindowsManager())) {
-      this.logger.info('WindowsManager is blocked by exclusion, skipping translation UI');
-      return;
-    }
+  async showTranslationUI(selectedText, position, options = {}) {
+    // Note: We no longer call WindowsManager.show() directly here.
+    // The GLOBAL_SELECTION_CHANGE event emitted in processSelection() 
+    // triggers all UI managers independently (Decoupled Architecture).
 
-    const windowsManager = this.getWindowsManager();
-
-    if (windowsManager) {
-      // Main frame - use WindowsManager directly
-      this.logger.debug('Showing translation UI via WindowsManager', {
-        text: selectedText.substring(0, 30) + '...',
-        position,
-        windowsManagerType: typeof windowsManager,
-        hasShowMethod: typeof windowsManager.show === 'function'
-      });
-
-      // Show translation UI
-      this.logger.info('Translation UI requested', {
-        textLength: selectedText.length,
-        position: {
-          x: Math.round(position.x),
-          y: Math.round(position.y)
-        },
-        context: windowsManager ? 'main-frame' : 'iframe'
-      });
-
-      await windowsManager.show(selectedText, position);
-      this.logger.debug('WindowsManager.show() completed');
-
-    } else if (window !== window.top) {
-      // Iframe - request window creation in main frame
-      this.logger.info('Requesting translation window from iframe', {
+    // Only handle cross-frame relaying if we are in an iframe
+    // because the local PageEventBus won't reach the main frame's WindowsManager.
+    if (window !== window.top) {
+      this.logger.info('Relaying translation window request from iframe to parent', {
         frameId: this.frameId,
-        textLength: selectedText.length,
-        position: {
-          x: Math.round(position.x),
-          y: Math.round(position.y)
-        }
+        textLength: selectedText.length
       });
 
-      this.requestWindowCreationInMainFrame(selectedText, position);
-
-    } else {
-      this.logger.warn('WindowsManager not available and not in iframe context');
+      this.requestWindowCreationInMainFrame(selectedText, position, options);
     }
   }
 
   /**
    * Request window creation in main frame (for iframe context)
    */
-  requestWindowCreationInMainFrame(selectedText, position) {
+  requestWindowCreationInMainFrame(selectedText, position, options = {}) {
     try {
       const message = {
         type: WindowsConfig.CROSS_FRAME.TEXT_SELECTION_WINDOW_REQUEST,
         frameId: this.frameId,
         selectedText: selectedText,
         position: position,
+        options: options, // Pass keyboard state
         timestamp: Date.now()
       };
 
@@ -297,11 +287,11 @@ export class SelectionManager extends ResourceTracker {
    * Dismiss any visible translation windows
    */
   dismissWindow() {
-    const windowsManager = this.getWindowsManager();
-    if (windowsManager) {
-      this.logger.debug('Translation window dismissed');
-      windowsManager.dismiss();
-    }
+    // 1. Emit global clear event (Coordinator Pattern)
+    // This allows any module (WindowsManager, FAB, etc.) to clear its state
+    pageEventBus.emit(SELECTION_EVENTS.GLOBAL_SELECTION_CLEAR, {
+      reason: 'selection_cleared'
+    });
 
     // Clear tracking
     this.lastProcessedText = null;
@@ -309,22 +299,18 @@ export class SelectionManager extends ResourceTracker {
   }
 
   /**
-   * Check if translation window is visible
+   * Check if translation UI is visible on screen
+   * Uses Shadow DOM check as the final source of truth (Decoupled)
    */
   isWindowVisible() {
-    const windowsManager = this.getWindowsManager();
-    if (windowsManager) {
-      return windowsManager.state.isVisible || windowsManager.state.isIconMode;
-    }
-
-    // Fallback: check shadow DOM
-    const shadowHost = document.getElementById('translate-it-host-main') ||
-                      document.getElementById('translate-it-host-iframe');
+    const shadowHost = document.getElementById(UI_HOST_IDS.MAIN) ||
+                      document.getElementById(UI_HOST_IDS.IFRAME);
 
     if (shadowHost && shadowHost.shadowRoot) {
       const activeWindows = shadowHost.shadowRoot.querySelectorAll('.translation-window');
       const activeIcons = shadowHost.shadowRoot.querySelectorAll('.translation-icon');
-      return activeWindows.length > 0 || activeIcons.length > 0;
+      const activeFabBadges = shadowHost.shadowRoot.querySelectorAll('.fab-translate-badge');
+      return activeWindows.length > 0 || activeIcons.length > 0 || activeFabBadges.length > 0;
     }
 
     return false;
@@ -349,7 +335,7 @@ export class SelectionManager extends ResourceTracker {
   getInfo() {
     return {
       initialized: true,
-      hasWindowsManager: !!this.getWindowsManager(),
+      uiVisible: this.isWindowVisible(),
       isExcluded: this.isExcluded,
       frameId: this.frameId,
       lastProcessedText: this.lastProcessedText ? this.lastProcessedText.substring(0, 50) + '...' : null,

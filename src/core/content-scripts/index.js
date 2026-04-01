@@ -2,6 +2,8 @@
 // Minimal footprint with intelligent, interaction-based loading
 
 // Early Trusted Types setup - must run BEFORE any Vue code
+import browser from 'webextension-polyfill';
+window.browser = browser;
 import { setupTrustedTypesCompatibility } from '@/shared/vue/vue-utils.js';
 setupTrustedTypesCompatibility();
 
@@ -33,7 +35,7 @@ const LOAD_STRATEGIES = {
 const FEATURE_CATEGORIES = {
   CRITICAL: ['messaging', 'extensionContext'], // Core infrastructure
   ESSENTIAL: ['textSelection', 'windowsManager', 'vue', 'contentMessageHandler', 'selectElement'], // Core translation features
-  INTERACTIVE: [], // UI interaction features
+  INTERACTIVE: ['pageTranslation'], // UI interaction features
   ON_DEMAND: ['shortcut', 'textFieldIcon'] // Optional features
 };
 

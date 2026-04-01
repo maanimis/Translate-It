@@ -21,14 +21,16 @@ async function loadDependencies() {
     tabPermissionsModule,
     extensionContextModule,
     messageHandlerModule,
-    errorHandlerModule
+    errorHandlerModule,
+    windowErrorHandlersModule
   ] = await Promise.all([
     import("@/shared/logging/logger.js"),
     import("@/shared/logging/logConstants.js"),
     import("@/core/tabPermissions.js"),
     import('@/core/extensionContext.js'),
     import('@/shared/messaging/core/MessageHandler.js'),
-    import('@/shared/error-management/ErrorHandler.js')
+    import('@/shared/error-management/ErrorHandler.js'),
+    import('@/shared/error-management/windowErrorHandlers.js')
   ]);
 
   getScopedLogger = loggerModule.getScopedLogger;
@@ -37,6 +39,11 @@ async function loadDependencies() {
   ExtensionContextManager = extensionContextModule.default;
   createMessageHandler = messageHandlerModule.createMessageHandler;
   ErrorHandler = errorHandlerModule.ErrorHandler;
+  
+  // Setup window-level error handlers for content script
+  if (windowErrorHandlersModule && windowErrorHandlersModule.setupWindowErrorHandlers) {
+    windowErrorHandlersModule.setupWindowErrorHandlers('content');
+  }
 
   // Define CSS directly as a string to avoid import issues
   mainDomCss = `html[data-translate-it-select-mode="true"]{cursor:crosshair!important}html[data-translate-it-select-mode="true"] *{cursor:crosshair!important}html[data-translate-it-select-mode="true"] body{cursor:crosshair!important}html[data-translate-it-select-mode="true"] body *{cursor:crosshair!important}html[data-translate-it-select-mode="true"] a:not([data-sonner-toast]):not([data-sonner-toaster]):not([data-translate-ui]),html[data-translate-it-select-mode="true"] button:not([data-sonner-toast]):not([data-sonner-toaster]):not([data-translate-ui]),html[data-translate-it-select-mode="true"] [onclick]:not([data-sonner-toast]):not([data-sonner-toaster]):not([data-translate-ui]),html[data-translate-it-select-mode="true"] [role="link"]:not([data-sonner-toast]):not([data-sonner-toaster]):not([data-translate-ui]),html[data-translate-it-select-mode="true"] div[role="link"]:not([data-sonner-toast]):not([data-sonner-toaster]):not([data-translate-ui]),html[data-translate-it-select-mode="true"] input[type="submit"]:not([data-sonner-toast]):not([data-sonner-toaster]):not([data-translate-ui]),html[data-translate-it-select-mode="true"] input[type="button"]:not([data-sonner-toast]):not([data-sonner-toaster]):not([data-translate-ui]),html[data-translate-it-select-mode="true"] [href]:not([data-sonner-toast]):not([data-sonner-toaster]):not([data-translate-ui]){pointer-events:none!important;color:inherit!important;text-decoration:none!important}:root{--translate-highlight-color:#ff8800;--translate-highlight-width:3px;--translate-highlight-offset:2px;--translate-highlight-z-index:1040}html body [data-translate-highlighted="true"][data-translate-highlighted="true"],html body .translate-it-element-highlighted.translate-it-element-highlighted{outline:var(--translate-highlight-width) solid var(--translate-highlight-color)!important;outline-offset:var(--translate-highlight-offset)!important;z-index:var(--translate-highlight-z-index)!important;position:relative!important;box-shadow:0 0 0 var(--translate-highlight-width) var(--translate-highlight-color)!important}html body [data-translate-highlighted="true"][data-translate-highlighted="true"] *,html body .translate-it-element-highlighted.translate-it-element-highlighted *{outline:none!important}`;
@@ -85,6 +92,15 @@ export function ContentScriptCore() {
       // Initialize core infrastructure
       await this.initializeCore();
 
+      // Pre-warm settings cache early to eliminate latency during feature usage
+      try {
+        const { default: SettingsManager } = await import('@/shared/managers/SettingsManager.js');
+        // Initializing and warming up in parallel with other tasks
+        void SettingsManager.initialize().then(() => SettingsManager.warmup());
+      } catch {
+        // Non-critical error
+      }
+
       // Initialize DebugModeBridge for content script
       try {
         const { debugModeBridge } = await import('@/shared/logging/DebugModeBridge.js');
@@ -123,6 +139,19 @@ export function ContentScriptCore() {
     }
 
     try {
+      // IMPORTANT: Initialize ContentScriptIntegration BEFORE MessageHandler
+      // This ensures streaming messages are properly routed
+      try {
+        console.log('[ContentScriptCore] About to initialize ContentScriptIntegration...');
+        const { initializeContentScriptIntegration } = await import('@/shared/messaging/core/ContentScriptIntegration.js');
+        await initializeContentScriptIntegration();
+        console.log('[ContentScriptCore] ContentScriptIntegration initialized successfully');
+      } catch (error) {
+        console.error('[ContentScriptCore] Failed to initialize ContentScriptIntegration:', error);
+        logger.warn('Failed to initialize ContentScriptIntegration:', error);
+        // Don't throw - streaming is optional for basic functionality
+      }
+
       this.messageHandler = createMessageHandler();
       await this.registerCoreHandlers();
 

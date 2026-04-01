@@ -9,39 +9,31 @@
  * @returns {boolean} true if in development mode
  */
 export function isDevelopmentMode() {
-  // Try different methods to detect development mode
-  
-  // Method 1: Check for Vite dev mode indicators
-  if (typeof globalThis !== 'undefined' && globalThis.__VITE_DEV__) {
-    return true;
+  // Method 1: Check for global defined constants (most reliable across all contexts)
+  if (typeof __IS_DEVELOPMENT__ !== 'undefined') {
+    return !!__IS_DEVELOPMENT__;
   }
-  
-  // Method 2: Check for development-specific global flags
-  if (typeof globalThis !== 'undefined' && globalThis.__DEV__) {
-    return true;
-  }
-  
-  // Method 3: Check Chrome extension development mode
+
+  // Method 2: Check for standard Vite development flag
   try {
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) {
-      const manifest = chrome.runtime.getManifest();
-      // Development extensions often have 'unpacked' in the ID or specific flags
-      if (manifest.update_url === undefined) {
-        return true; // Unpacked extensions don't have update_url
-      }
-    }
-  } catch {
-    // Ignore errors - might not be available in all contexts
-  }
-  
-  // Method 4: Check user agent for development indicators
-  if (typeof navigator !== 'undefined' && navigator.userAgent) {
-    if (navigator.userAgent.includes('Development')) {
+    if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
       return true;
     }
+  } catch { /* Safe fallback */ }
+  
+  // Method 3: Check Extension development mode (Unpacked)
+  try {
+    // Works for both Chrome (chrome) and Firefox (browser) namespaces
+    const manifest = (globalThis.chrome || globalThis.browser)?.runtime?.getManifest?.();
+
+    // Unpacked extensions usually don't have update_url
+    if (manifest && !manifest.update_url) {
+      return true; 
+    }
+  } catch {
+    // Safe fallback for non-extension environments
   }
   
-  // Default to production mode for safety
   return false;
 }
 

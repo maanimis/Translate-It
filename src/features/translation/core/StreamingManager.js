@@ -45,7 +45,7 @@ export class StreamingManager extends ResourceTracker {
    */
   initializeStream(messageId, sender, provider, segments) {
     if (this.activeStreams.has(messageId)) {
-      logger.warn(`[StreamingManager] Stream already exists for messageId: ${messageId}`);
+      logger.debug(`[StreamingManager] Stream already exists for messageId: ${messageId}`);
       return this.activeStreams.get(messageId);
     }
 
@@ -110,8 +110,10 @@ export class StreamingManager extends ResourceTracker {
    * @param {string[]} batchResults - Results for this batch
    * @param {string[]} originalBatch - Original texts for this batch
    * @param {number} batchIndex - Index of this batch
+   * @param {string} sourceLanguage - Actual source language
+   * @param {string} targetLanguage - Actual target language
    */
-  async streamBatchResults(messageId, batchResults, originalBatch, batchIndex) {
+  async streamBatchResults(messageId, batchResults, originalBatch, batchIndex, sourceLanguage = null, targetLanguage = null) {
     const streamInfo = this.activeStreams.get(messageId);
     const senderInfo = this.senderInfo.get(messageId);
 
@@ -145,11 +147,22 @@ export class StreamingManager extends ResourceTracker {
           provider: streamInfo.providerName,
           processedSegments: streamInfo.processedSegments,
           totalSegments: streamInfo.totalSegments,
+          sourceLanguage,
+          targetLanguage,
           timestamp: Date.now()
         },
         'background-streaming',
-        { messageId }
+        messageId
       );
+
+      console.log('[StreamingManager.streamStreamUpdate] Sending stream update:', {
+        messageId,
+        batchIndex,
+        batchResultsLength: batchResults?.length,
+        messageDataKeys: streamMessage.data ? Object.keys(streamMessage.data) : 'no data',
+        hasDataData: !!streamMessage.data?.data,
+        hasBatchResults: !!batchResults
+      });
 
       // Send to content script
       if (senderInfo.tab?.id) {
@@ -159,6 +172,7 @@ export class StreamingManager extends ResourceTracker {
         logger.warn(`[StreamingManager] No tab ID for streaming messageId: ${messageId}`);
       }
     } catch (error) {
+      console.error('[StreamingManager.streamStreamUpdate] Failed to stream batch:', error);
       logger.error(`[StreamingManager] Failed to stream batch ${batchIndex}:`, error);
     }
   }
@@ -186,14 +200,14 @@ export class StreamingManager extends ResourceTracker {
           success: false,
           error: {
             message: error.message || 'Translation failed',
-            type: error.type || 'TRANSLATION_ERROR'
+            type: error.type || matchErrorToType(error) || 'TRANSLATION_ERROR'
           },
           batchIndex: batchIndex,
           provider: streamInfo.providerName,
           timestamp: Date.now()
         },
         'background-streaming',
-        { messageId }
+        messageId
       );
 
       // Send to content script
@@ -251,7 +265,7 @@ export class StreamingManager extends ResourceTracker {
           ...additionalData
         },
         'background-streaming',
-        { messageId }
+        messageId
       );
 
       if (senderInfo && senderInfo.tab?.id) {
@@ -290,7 +304,7 @@ export class StreamingManager extends ResourceTracker {
     await this.completeStream(messageId, false, {
       error: {
         message: error.message,
-        type: error.type || 'STREAMING_ERROR',
+        type: error.type || errorType || 'STREAMING_ERROR',
         timestamp: Date.now()
       }
     });

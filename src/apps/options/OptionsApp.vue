@@ -19,9 +19,9 @@
       <div class="error-icon">
         ⚠️
       </div>
-      <h2>Failed to Load Options</h2>
+      <h2>{{ t('options_load_error_title') || 'Failed to Load Options' }}</h2>
       <p class="error-message">
-        {{ errorMessage }}
+        {{ displayErrorMessage }}
       </p>
       <button
         class="retry-button"
@@ -66,6 +66,15 @@ watch(() => locale.value, () => {
 })
 const hasError = ref(false)
 const errorMessage = ref('')
+const errorType = ref(null)
+
+// Reactive error message display with i18n support
+const displayErrorMessage = computed(() => {
+  if (!errorType.value) return errorMessage.value;
+  const key = errorType.value.startsWith('ERRORS_') ? errorType.value : `ERRORS_${errorType.value}`;
+  const translated = t(key);
+  return (translated && translated !== key) ? translated : errorMessage.value;
+})
 
 // RTL detection using unified i18n (reactive to language changes)
 const isRTL = computed(() => {
@@ -79,7 +88,7 @@ const isRTL = computed(() => {
 })
 
 const initialize = async () => {
-  logger.debug('🚀 OptionsApp mounting...')
+  logger.debug('🗳️ OptionsApp mounting...')
   
   try {
   // Step 1: Set loading text
@@ -106,8 +115,15 @@ const initialize = async () => {
   logger.error('❌ Failed to initialize options:', error)
     hasError.value = true
     errorMessage.value = error.message || 'Unknown error occurred'
+    // Extract error type for reactive translation
+    try {
+      const { matchErrorToType } = await import('@/shared/error-management/ErrorMatcher.js')
+      errorType.value = matchErrorToType(error)
+    } catch {
+      logger.warn('Failed to load ErrorMatcher during initialization failure');
+    }
   } finally {
-  logger.debug('✨ OptionsApp initialization complete')
+  logger.debug('✅ OptionsApp initialization complete')
     isLoading.value = false
   }
 };
@@ -142,21 +158,18 @@ const retryLoading = () => {
 
 <style scoped>
 .extension-options {
-  /* انتقال استایل‌های عمومی به اینجا */
   width: 100vw;
   min-height: 100vh;
   display: flex;
   justify-content: center;
-  align-items: center;
+  align-items: flex-start !important; /* This was the key fix */
   background-color: var(--color-background) !important;
   box-sizing: border-box;
-  padding: 20px;
+  padding: 10px; /* Restored small padding for better aesthetics */
 }
 
 .extension-options.rtl {
   direction: rtl;
-  margin-top: 10px;
-  margin-bottom: 10px !important;
   
   .loading-container {
     text-align: right;

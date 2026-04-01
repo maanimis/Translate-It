@@ -4,24 +4,16 @@
 import { computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/features/settings/stores/settings.js'
+import { settingsManager } from '@/shared/managers/SettingsManager.js'
 import { utilsFactory } from '@/utils/UtilsFactory.js'
 import { getScopedLogger } from '@/shared/logging/logger.js'
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js'
 import { MessageActions } from '@/shared/messaging/core/MessageActions.js'
 import browser from 'webextension-polyfill'
 
-const logger = getScopedLogger(LOG_COMPONENTS.UI, 'useUnifiedI18n')
+import { UI_LOCALE_TO_CODE_MAP } from '@/shared/config/languageConstants.js'
 
-/**
- * Map language names to locale codes
- */
-const LANGUAGE_MAP = {
-  'English': 'en',
-  'Farsi': 'fa',
-  'فارسی': 'fa',
-  'en': 'en',
-  'fa': 'fa'
-}
+const logger = getScopedLogger(LOG_COMPONENTS.UI, 'useUnifiedI18n')
 
 /**
  * Convert language name to locale code
@@ -29,7 +21,8 @@ const LANGUAGE_MAP = {
  * @returns {string} Locale code
  */
 function normalizeLocale(lang) {
-  return LANGUAGE_MAP[lang] || lang || 'en'
+  if (!lang) return 'en'
+  return UI_LOCALE_TO_CODE_MAP[lang] || lang.toLowerCase() || 'en'
 }
 
 /**
@@ -132,9 +125,20 @@ export function useUnifiedI18n() {
    * Get current locale
    */
   const currentLocale = computed(() => {
+    // 1. Primary source: settingsManager (most reliable in content scripts)
+    const directStored = settingsManager.get('APPLICATION_LOCALIZE')
+    if (directStored) {
+      return normalizeLocale(directStored)
+    }
+
+    // 2. Fallback: store settings
     const storedLang = settingsStore.settings?.APPLICATION_LOCALIZE
-    const normalizedStored = normalizeLocale(storedLang)
-    return locale.value || normalizedStored || 'en'
+    if (storedLang) {
+      return normalizeLocale(storedLang)
+    }
+    
+    // 3. Last resort: vue-i18n locale
+    return locale.value || 'en'
   })
 
   /**
@@ -144,16 +148,17 @@ export function useUnifiedI18n() {
     return !!locale.value
   })
 
-  // Watch for settings store changes to sync with vue-i18n
+  // Watch for settings changes to sync with vue-i18n
+  // Use settingsManager's reactive cache for immediate updates in all contexts
   watch(
-    () => settingsStore.settings?.APPLICATION_LOCALIZE,
+    () => settingsManager.get('APPLICATION_LOCALIZE'),
     async (newLang) => {
       if (newLang) {
         const normalizedLang = normalizeLocale(newLang)
         if (normalizedLang !== locale.value) {
           const { setI18nLocale } = await utilsFactory.getI18nUtils()
           setI18nLocale(normalizedLang).catch(err =>
-            logger.warn('Failed to sync locale from settings:', err)
+            logger.warn('Failed to sync locale from settings change:', err)
           )
         }
       }

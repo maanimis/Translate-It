@@ -6,6 +6,7 @@ export class MessageActions {
   static PING = 'ping';
   static GET_INFO = 'getInfo';
   static HANDLE_ERROR = 'handleError';
+  static OPEN_OPTIONS_PAGE = 'openOptionsPage';
   
   // Translation actions
   static TRANSLATE = 'TRANSLATE';
@@ -21,12 +22,28 @@ export class MessageActions {
   static TRANSLATE_TEXT = 'TRANSLATE_TEXT';
   static TRANSLATE_IMAGE = 'TRANSLATE_IMAGE';
   static CANCEL_TRANSLATION = 'CANCEL_TRANSLATION';
+  static CANCEL_SESSION = 'CANCEL_SESSION';
 
   // Select Element
   static GET_SELECT_ELEMENT_STATE = 'getSelectElementState';
   static SET_SELECT_ELEMENT_STATE = 'setSelectElementState';
   static SELECT_ELEMENT_STATE_CHANGED = 'selectElementStateChanged';
   static PROCESS_SELECTED_ELEMENT = 'PROCESS_SELECTED_ELEMENT';
+
+  // Whole Page Translation (NEW)
+  static PAGE_TRANSLATE = 'page-translate';
+  static PAGE_TRANSLATE_BATCH = 'page-translate-batch'; // For actual translation request
+  static PAGE_TRANSLATE_START = 'page-translate-start';
+  static PAGE_TRANSLATE_PROGRESS = 'page-translate-progress';
+  static PAGE_TRANSLATE_COMPLETE = 'page-translate-complete';
+  static PAGE_TRANSLATE_ERROR = 'page-translate-error';
+  static PAGE_RESTORE = 'page-restore';
+  static PAGE_RESTORE_COMPLETE = 'page-restore-complete';
+  static PAGE_RESTORE_ERROR = 'page-restore-error';
+  static PAGE_TRANSLATE_CANCELLED = 'page-translate-cancelled';
+  static PAGE_TRANSLATE_GET_STATUS = 'page-translate-get-status';
+  static PAGE_TRANSLATE_STOP_AUTO = 'page-translate-stop-auto'; // Stop auto-translation (NEW)
+  static PAGE_AUTO_RESTORE_COMPLETE = 'page-auto-restore-complete'; // Auto-restore complete (NEW)
 
   // IFrame Support actions
   static IFRAME_ACTIVATE_SELECT_ELEMENT = 'IFRAME_ACTIVATE_SELECT_ELEMENT';

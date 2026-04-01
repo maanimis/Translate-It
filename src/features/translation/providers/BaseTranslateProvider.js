@@ -23,7 +23,7 @@ export class BaseTranslateProvider extends BaseProvider {
   static supportsStreaming = true;
   static chunkingStrategy = 'character_limit'; // 'character_limit', 'segment_count'
   static characterLimit = 5000;
-  static maxChunksPerBatch = 10;
+  static maxChunksPerBatch = 150;
 
   constructor(providerName) {
     super(providerName);
@@ -40,67 +40,122 @@ export class BaseTranslateProvider extends BaseProvider {
       originalTargetLang,
       messageId,
       engine,
+      priority
     } = typeof options === 'object' && options !== null ? options : { mode: options };
 
     const abortController = (messageId && engine) ? engine.activeTranslations.get(messageId) : null;
 
-    logger.debug(`[${this.providerName}] Traditional provider translate call - bypassing JSON mode`);
+    logger.debug(`[${this.providerName}] Traditional provider translate call - Mode: ${translateMode}`);
 
-    // Language swapping and normalization
+    // 1. Language swapping and normalization
+    if (translateMode === TranslationMode.Field || translateMode === TranslationMode.Subtitle) {
+      sourceLang = AUTO_DETECT_VALUE;
+    }
+
     [sourceLang, targetLang] = await LanguageSwappingService.applyLanguageSwapping(
       text, sourceLang, targetLang, originalSourceLang, originalTargetLang,
       { providerName: this.providerName, useRegexFallback: true }
     );
 
-    // Field and subtitle modes
-    if (translateMode === TranslationMode.Field || translateMode === TranslationMode.Subtitle) {
-      sourceLang = AUTO_DETECT_VALUE;
-    }
-
-    // Convert to provider-specific language codes
     const sl = this._getLangCode(sourceLang);
     const tl = this._getLangCode(targetLang);
 
     if (sl === tl) return text;
 
-    // For traditional providers, always treat as plain text array (no JSON mode)
+    // 2. Handle input format
     let textsToTranslate;
+    let isJson = false;
+    let parsedJson = null;
+
     try {
       const parsed = JSON.parse(text);
       if (this._isSpecificTextJsonFormat(parsed)) {
-        // Extract texts from JSON structure
+        isJson = true;
+        parsedJson = parsed;
         textsToTranslate = parsed.map((item) => item.text || '');
-        logger.debug(`[${this.providerName}] Extracted ${textsToTranslate.length} texts from JSON input for traditional processing`);
-        
-        // Perform batch translation
-        const translatedSegments = await this._batchTranslate(textsToTranslate, sl, tl, translateMode, engine, messageId, abortController);
-        
-        // Reconstruct JSON structure
-        if (translatedSegments.length !== parsed.length) {
-          logger.error(`[${this.providerName}] JSON reconstruction failed due to segment mismatch.`);
-          return translatedSegments.join('\n');
-        }
-        
-        const translatedJson = parsed.map((item, index) => ({
-          ...item,
-          text: translatedSegments[index] || "",
-        }));
-        
-        return JSON.stringify(translatedJson, null, 2);
       } else {
-        // Single text
         textsToTranslate = [text];
       }
     } catch {
-      // Not valid JSON, treat as single text
       textsToTranslate = [text];
     }
 
-    // Perform batch translation  
-    const translatedSegments = await this._batchTranslate(textsToTranslate, sl, tl, translateMode, engine, messageId, abortController);
-    
-    // Return single result for plain text
+    // 3. Perform batch translation
+    const translatedSegments = await this._batchTranslate(
+      textsToTranslate, 
+      sl, 
+      tl, 
+      translateMode, 
+      engine, 
+      messageId, 
+      abortController,
+      priority
+    );
+
+    // 4. Reconstruct output
+    if (isJson && Array.isArray(translatedSegments)) {
+      // If mismatch, try to fix by padding or truncating to match original length
+      let finalSegments = translatedSegments;
+      if (translatedSegments.length !== parsedJson.length) {
+        logger.debug(`[${this.providerName}] JSON segment mismatch: expected ${parsedJson.length}, got ${translatedSegments.length}`);
+        if (translatedSegments.length > parsedJson.length) {
+          finalSegments = translatedSegments.slice(0, parsedJson.length);
+        } else {
+          // Pad with original text if translation failed for some segments
+          finalSegments = [
+            ...translatedSegments,
+            ...parsedJson.slice(translatedSegments.length).map(item => item.text || '')
+          ];
+        }
+      }
+
+      const translatedJson = parsedJson.map((item, index) => ({
+        ...item,
+        text: finalSegments[index] || "",
+      }));
+      return JSON.stringify(translatedJson, null, 2);
+    }
+
     return translatedSegments[0];
+  }
+
+  /**
+   * Robustly splits translated text into segments by using TranslationSegmentMapper.
+   * Ensures the returned array matches the expected count by padding or truncating.
+   * @param {string} translatedText - The full translated text string
+   * @param {string[]} originalSegments - Original segments for pattern reference
+   * @returns {string[]} - Array of translated segments matching original count
+   */
+  async _robustSplit(translatedText, originalSegments) {
+    const expectedCount = originalSegments.length;
+    if (expectedCount <= 1) return [translatedText];
+    
+    const { TranslationSegmentMapper } = await import("@/utils/translation/TranslationSegmentMapper.js");
+    const { TRANSLATION_CONSTANTS } = await import("@/shared/config/translationConstants.js");
+    
+    // Use the advanced mapper to recover segments
+    let segments = TranslationSegmentMapper.mapTranslationToOriginalSegments(
+      translatedText,
+      originalSegments,
+      TRANSLATION_CONSTANTS.TEXT_DELIMITER,
+      this.providerName
+    );
+    
+    // Final validation and normalization to ensure exactly expectedCount segments
+    if (segments.length !== expectedCount) {
+      logger.debug(`[${this.providerName}] Segment count mismatch after advanced mapping: expected ${expectedCount}, got ${segments.length}`);
+      
+      if (segments.length > expectedCount) {
+        segments = segments.slice(0, expectedCount);
+      } else {
+        // Pad with empty strings if we still have a mismatch
+        while (segments.length < expectedCount) {
+          segments.push("");
+        }
+      }
+    }
+    
+    return segments.map(s => s ? s.trim() : "");
   }
 
   /**
@@ -114,14 +169,14 @@ export class BaseTranslateProvider extends BaseProvider {
    * @param {AbortController} abortController - Cancellation controller
    * @returns {Promise<string[]>} - Translated texts
    */
-  async _batchTranslate(texts, sourceLang, targetLang, translateMode, engine, messageId, abortController) {
+  async _batchTranslate(texts, sourceLang, targetLang, translateMode, engine, messageId, abortController, priority) {
     // Check if streaming is supported and beneficial
-    if (this.constructor.supportsStreaming && this._shouldUseStreaming(texts, messageId, engine)) {
-      return this._streamingBatchTranslate(texts, sourceLang, targetLang, translateMode, engine, messageId, abortController);
+    if (this.constructor.supportsStreaming && this._shouldUseStreaming(texts, messageId, engine, translateMode)) {
+      return this._streamingBatchTranslate(texts, sourceLang, targetLang, translateMode, engine, messageId, abortController, priority);
     }
 
     // Fall back to traditional translation (original implementation)
-    return this._traditionalBatchTranslate(texts, sourceLang, targetLang, translateMode, engine, messageId, abortController);
+    return this._traditionalBatchTranslate(texts, sourceLang, targetLang, translateMode, engine, messageId, abortController, priority);
   }
 
   /**
@@ -131,16 +186,17 @@ export class BaseTranslateProvider extends BaseProvider {
    * @param {object} engine - Translation engine
    * @returns {boolean} - Whether to use streaming
    */
-  _shouldUseStreaming(texts, messageId, engine) {
-    // Only use streaming if:
-    // 1. Provider supports it
-    // 2. We have a valid messageId for streaming
-    // 3. Engine is available for streaming notifications
-    // 4. There are multiple texts or chunking is needed
-    return this.constructor.supportsStreaming && 
-           messageId && 
-           engine && 
-           (texts.length > 1 || this._needsChunking(texts));
+  _shouldUseStreaming(texts, messageId, engine, translateMode = null) {
+    // 1. Provider must support streaming
+    if (!this.constructor.supportsStreaming || !messageId || !engine) return false;
+
+    // 2. CRITICAL: Never use internal streaming for WHOLE PAGE translation
+    // Page translation is already batched by PageTranslationBatcher and handled by processPageTranslation.
+    // Double streaming causes context mismatches and result rejection.
+    if (translateMode === TranslationMode.Page) return false;
+
+    // 3. Use streaming for multiple texts (like Select Element) or if chunking is needed
+    return texts.length > 1 || this._needsChunking(texts);
   }
 
   /**
@@ -167,7 +223,7 @@ export class BaseTranslateProvider extends BaseProvider {
    * @param {AbortController} abortController - Cancellation controller
    * @returns {Promise<string[]>} - All translated texts
    */
-  async _streamingBatchTranslate(texts, sourceLang, targetLang, translateMode, engine, messageId, abortController) {
+  async _streamingBatchTranslate(texts, sourceLang, targetLang, translateMode, engine, messageId, abortController, priority) {
     logger.debug(`[${this.providerName}] Starting streaming translation for ${texts.length} texts`);
     
     // Initialize streaming session if messageId is available
@@ -210,7 +266,7 @@ export class BaseTranslateProvider extends BaseProvider {
           this.providerName,
           () => this._translateChunk(chunk.texts, sourceLang, targetLang, translateMode, abortController, 0, chunk.texts.length, chunkIndex, chunks.length),
           `streaming-chunk-${chunkIndex + 1}/${chunks.length}`,
-          translateMode
+          priority
         );
 
         // Add results to collection
@@ -221,33 +277,41 @@ export class BaseTranslateProvider extends BaseProvider {
           chunkResults,
           chunk.texts,
           chunkIndex,
-          messageId
+          messageId,
+          sourceLang,
+          targetLang
         );
 
         // Streamed chunk progress
 
       } catch (error) {
         // Log cancellation as debug instead of error using proper error management
-        const errorType = matchErrorToType(error);
+        const errorType = error.type || matchErrorToType(error);
+
         if (errorType === ErrorTypes.USER_CANCELLED) {
           logger.debug(`[${this.providerName}] Streaming chunk ${chunkIndex + 1} cancelled:`, error);
         } else {
           logger.error(`[${this.providerName}] Streaming chunk ${chunkIndex + 1} failed:`, error);
         }
-        
+
         // Send error stream message to content script
         await this._streamChunkError(error, chunkIndex, messageId, engine);
-        
-        // Send streaming end notification with error status
-        await this._sendStreamEnd(messageId, { error: true });
-        
+
+        // Send streaming end notification with error details
+        await this._sendStreamEnd(messageId, {
+          error: {
+            message: error.message,
+            type: error.type || errorType
+          }
+        });
+
         // Stop streaming on error - don't continue with other chunks
         throw error;
       }
     }
 
     // Send streaming end notification
-    await this._sendStreamEnd(messageId);
+    await this._sendStreamEnd(messageId, { sourceLanguage: sourceLang, targetLanguage: targetLang });
     
     // Streaming translation completed
     return allResults;
@@ -260,15 +324,19 @@ export class BaseTranslateProvider extends BaseProvider {
    */
   _createChunks(texts) {
     const chunks = [];
-    
+
     if (this.constructor.chunkingStrategy === 'character_limit') {
-      // Character-based chunking (like Google Translate)
+      // Character-based chunking with segment limit (like Google Translate, DeepL)
       let currentChunk = [];
       let currentCharCount = 0;
-      
+
       for (const text of texts) {
-        if (currentChunk.length > 0 && 
-            currentCharCount + text.length > this.constructor.characterLimit) {
+        // Check if adding this text would exceed character limit OR segment limit
+        const wouldExceedCharLimit = currentChunk.length > 0 &&
+            currentCharCount + text.length > this.constructor.characterLimit;
+        const wouldExceedSegmentLimit = currentChunk.length >= this.constructor.maxChunksPerBatch;
+
+        if (wouldExceedCharLimit || wouldExceedSegmentLimit) {
           chunks.push({
             texts: currentChunk,
             charCount: currentCharCount
@@ -279,7 +347,7 @@ export class BaseTranslateProvider extends BaseProvider {
         currentChunk.push(text);
         currentCharCount += text.length;
       }
-      
+
       if (currentChunk.length > 0) {
         chunks.push({
           texts: currentChunk,
@@ -321,15 +389,19 @@ export class BaseTranslateProvider extends BaseProvider {
    * @param {string[]} originalChunkTexts - Original texts for this chunk
    * @param {number} chunkIndex - Index of this chunk
    * @param {string} messageId - Message ID
+   * @param {string} sourceLanguage - Actual source language
+   * @param {string} targetLanguage - Actual target language
    */
-  async _streamChunkResults(chunkResults, originalChunkTexts, chunkIndex, messageId) {
+  async _streamChunkResults(chunkResults, originalChunkTexts, chunkIndex, messageId, sourceLanguage = null, targetLanguage = null) {
     try {
       // Stream the results
       await streamingManager.streamBatchResults(
         messageId,
         chunkResults,
         originalChunkTexts,
-        chunkIndex
+        chunkIndex,
+        sourceLanguage,
+        targetLanguage
       );
       
       logger.debug(`[${this.providerName}] Successfully streamed chunk ${chunkIndex + 1} results`);
@@ -381,7 +453,7 @@ export class BaseTranslateProvider extends BaseProvider {
    * @param {AbortController} abortController - Cancellation controller
    * @returns {Promise<string[]>} - Translated texts
    */
-  async _traditionalBatchTranslate(texts, sourceLang, targetLang, translateMode, engine, messageId, abortController) {
+  async _traditionalBatchTranslate(texts, sourceLang, targetLang, translateMode, engine, messageId, abortController, priority) {
     // Default implementation with chunking and rate limiting
     const context = `${this.providerName.toLowerCase()}-traditional-batch`;
     const chunks = this._createChunks(texts);
@@ -409,7 +481,7 @@ export class BaseTranslateProvider extends BaseProvider {
           this.providerName,
           () => this._translateChunk(chunk.texts, sourceLang, targetLang, translateMode, abortController, 0, chunk.texts.length, i, chunks.length),
           chunkContext,
-          translateMode
+          priority
         );
 
         allResults.push(...(result || chunk.texts.map(() => '')));
@@ -421,39 +493,5 @@ export class BaseTranslateProvider extends BaseProvider {
     }
 
     return allResults;
-  }
-
-  /**
-   * Execute API call with enhanced error handling (similar to BaseAIProvider)
-   * @param {Object} params - Parameters for API call
-   * @returns {Promise<any>} - API response
-   */
-  async _executeWithErrorHandling(params) {
-    try {
-      return await this._executeApiCall(params);
-    } catch (error) {
-      // Check if this is a user cancellation (should be handled silently)
-      const errorType = matchErrorToType(error);
-      if (errorType === ErrorTypes.USER_CANCELLED || errorType === ErrorTypes.TRANSLATION_CANCELLED) {
-        // Log user cancellation at debug level only
-        logger.debug(`[${this.providerName}] Operation cancelled by user`);
-        throw error; // Re-throw without ErrorHandler processing
-      }
-
-      // Import ErrorHandler for centralized error management
-      const { ErrorHandler } = await import("@/shared/error-management/ErrorHandler.js");
-
-      // Let the centralized error handler manage the error
-      const errorHandler = ErrorHandler.getInstance();
-      await errorHandler.handle(error, {
-        context: params.context,
-        provider: this.providerName,
-        maxRetries: 2
-      });
-
-      // If ErrorHandler returns, it means the error was handled (e.g., retried successfully)
-      // Otherwise, it would have thrown the error
-      throw error;
-    }
   }
 }

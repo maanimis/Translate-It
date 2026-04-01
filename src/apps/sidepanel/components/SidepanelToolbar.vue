@@ -2,6 +2,7 @@
   <div class="side-toolbar">
     <div class="toolbar-group">
       <button
+        v-if="isSelectElementEnabled"
         id="selectElementBtn"
         class="toolbar-button"
         :title="t('SIDEPANEL_SELECT_ELEMENT_TOOLTIP')"
@@ -18,6 +19,7 @@
         >
       </button>
       <button
+        v-if="isSelectElementEnabled"
         id="revertActionBtn"
         class="toolbar-button"
         :title="t('SIDEPANEL_REVERT_TOOLTIP')"
@@ -31,25 +33,24 @@
           class="toolbar-icon"
         >
       </button>
-      <button
-        id="clearFieldsBtn"
-        class="toolbar-button"
-        :title="t('SIDEPANEL_CLEAR_STORAGE_TITLE_ICON')"
-        @click="handleClearFields"
-        @keydown.enter.prevent="handleClearFields"
-        @keydown.space.prevent="handleClearFields"
+
+      <!-- Page Translation Button -->
+      <div 
+        v-if="isWholePageEnabled"
+        class="toolbar-page-translation"
       >
-        <img
-          :src="clearIcon"
-          alt="Clear Fields"
-          class="toolbar-icon"
-        >
-      </button>
+        <PageTranslationButton 
+          compact 
+          :target-language="translationStore.uiTargetLanguage"
+        />
+      </div>
 
       <div class="toolbar-separator" />
 
       <ProviderSelector 
+        v-model="currentProviderLocal"
         mode="icon-only"
+        :is-global="true"
         @provider-change="handleProviderChange"
       />
       <button
@@ -89,10 +90,14 @@
 
 <script setup>
 
+import { computed } from 'vue';
 import { useSelectElementTranslation, useSidepanelActions } from '@/features/translation/composables/useTranslationModes.js';
+import { useTranslationStore } from '@/features/translation/stores/translation.js';
 import { useUI } from '@/composables/ui/useUI.js';
 import { useErrorHandler } from '@/composables/shared/useErrorHandler.js';
 import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js';
+import { useSettingsStore } from '@/features/settings/stores/settings.js';
+import { TranslationMode } from '@/shared/config/config.js';
 import browser from 'webextension-polyfill';
 
 // Icon URLs will be loaded at runtime
@@ -107,21 +112,35 @@ const getLogger = () => {
 };
 
 import ProviderSelector from '@/components/shared/ProviderSelector.vue';
+import PageTranslationButton from '@/features/page-translation/components/PageTranslationButton.vue';
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
-
 
 const props = defineProps({
   isHistoryVisible: {
     type: Boolean,
     default: false
+  },
+  currentProvider: {
+    type: String,
+    default: ''
   }
 })
 
 // Emits
-const emit = defineEmits(['historyToggle', 'clear-fields'])
+const emit = defineEmits(['historyToggle', 'update:currentProvider'])
+
+// State
+const currentProviderLocal = computed({
+  get: () => props.currentProvider,
+  set: (value) => emit('update:currentProvider', value)
+})
 
 // Resource tracker for automatic cleanup
+
+// Stores
+const settingsStore = useSettingsStore();
+const translationStore = useTranslationStore();
 
 // Composables
 const { t } = useUnifiedI18n()
@@ -130,10 +149,22 @@ const { isSelectModeActive, activateSelectMode, deactivateSelectMode, isActivati
 const { revertTranslation } = useSidepanelActions()
 const { handleError } = useErrorHandler()
 
+// Computed
+const isExtensionEnabledGlobal = computed(() => {
+  return settingsStore.settings?.EXTENSION_ENABLED ?? true
+})
+
+const isSelectElementEnabled = computed(() => {
+  return isExtensionEnabledGlobal.value && (settingsStore.settings?.TRANSLATE_WITH_SELECT_ELEMENT ?? true)
+})
+
+const isWholePageEnabled = computed(() => {
+  return isExtensionEnabledGlobal.value && (settingsStore.settings?.WHOLE_PAGE_TRANSLATION_ENABLED ?? true)
+})
+
 // Icon URLs using runtime.getURL
 const selectIcon = browser.runtime.getURL('icons/ui/select.png')
 const revertIcon = browser.runtime.getURL('icons/ui/revert.png')
-const clearIcon = browser.runtime.getURL('icons/ui/clear.png')
 const settingsIcon = browser.runtime.getURL('icons/ui/settings.png')
 
 const handleSelectElement = async () => {
@@ -154,9 +185,26 @@ const handleSelectElement = async () => {
       }
     } else {
       getLogger().debug('Activating select element mode...')
-      const result = await activateSelectMode()
+      
+      // Resolve provider based on hierarchy:
+      // 1. If Sync is ON, use UI's active provider
+      // 2. If Sync is OFF, use setting from MODE_PROVIDERS (if not null)
+      // 3. Fallback to UI's active provider (legacy behavior)
+      let effectiveProvider;
+      if (translationStore.ephemeralSync.element && translationStore.selectedProvider) {
+        effectiveProvider = translationStore.selectedProvider;
+      } else {
+        const modeKey = TranslationMode.Select_Element;
+        const settingProvider = settingsStore.settings?.MODE_PROVIDERS?.[modeKey];
+        effectiveProvider = settingProvider || props.currentProvider;
+      }
+
+      const result = await activateSelectMode({ 
+        targetLanguage: translationStore.uiTargetLanguage,
+        provider: effectiveProvider
+      })
       if (result) {
-        getLogger().debug('Select element mode activated successfully')
+        getLogger().debug('Select element mode activated successfully', { provider: effectiveProvider })
         // composable will update shared state; UI follows isSelectModeActive
         showVisualFeedback(document.getElementById('selectElementBtn'), 'success')
       } else {
@@ -194,12 +242,6 @@ const handleRevertAction = async () => {
   }
 }
 
-const handleClearFields = () => {
-  getLogger().debug('🧹 Clear Fields button clicked!')
-  emit('clear-fields')
-  showVisualFeedback(document.getElementById('clearFieldsBtn'), 'success')
-}
-
 const handleProviderChange = (provider) => {
   getLogger().debug('🔧 Provider changed in sidepanel toolbar to:', provider)
 }
@@ -224,7 +266,7 @@ const handleSettingsClick = async () => {
 </script>
 
 <style lang="scss" scoped>
-@use "@/assets/styles/base/variables" as *;
+@use "@/assets/styles/base/mixins" as *;
 
 .side-toolbar {
   width: 38px;
@@ -256,46 +298,15 @@ const handleSettingsClick = async () => {
 }
 
 .toolbar-button {
-  background: none;
-  border: none;
-  padding: 4px;
-  cursor: pointer;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
-  transition: background-color 0.2s ease;
-
-  &:hover {
-    background-color: var(--color-background);
-  }
-
-  &.ti-active,
-  &.ti-active:focus,
-  &.ti-active:focus:not(:active) {
-    background-color: var(--color-primary) !important;
-  }
-
-  &:not(.ti-active):focus:not(:active) {
-    background-color: transparent;
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-
-    &:hover {
-      background-color: transparent;
-    }
-  }
+  @include toolbar-button-minimal;
 }
+
 /* Scoped styles for toolbar icons */
 .toolbar-icon {
   width: 20px;
   height: 20px;
   object-fit: contain;
+  transition: filter 0.2s ease;
 }
 
 .toolbar-separator {
@@ -303,6 +314,14 @@ const handleSettingsClick = async () => {
   height: 1px;
   background-color: var(--color-border);
   margin: $spacing-xs 0;
+}
+
+.toolbar-page-translation {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 28px;
+  height: 28px;
 }
 </style>
 

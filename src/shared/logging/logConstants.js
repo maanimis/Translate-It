@@ -21,6 +21,7 @@ export const LOG_COMPONENTS = {
 
   // Features
   TRANSLATION: 'Translation',     // src/features/translation/
+  PAGE_TRANSLATION: 'PageTranslation', // src/features/page-translation/
   TTS: 'TTS',                     // src/features/tts/
   SCREEN_CAPTURE: 'ScreenCapture', // src/features/screen-capture/
   ELEMENT_SELECTION: 'ElementSelection', // src/features/element-selection/
@@ -36,8 +37,12 @@ export const LOG_COMPONENTS = {
   SETTINGS: 'Settings',           // src/features/settings/
   WINDOWS: 'Windows',             // src/features/windows/
 
+  // Mobile
+  MOBILE: 'Mobile',               // src/features/mobile/
+  DESKTOP_FAB: 'DesktopFab',      // src/apps/content/components/desktop/
+
   // Content Applications
-  CONTENT_APP: 'ContentApp',       // src/apps/content/
+  CONTENT_APP: 'ContentApp',      // src/apps/content/
   
   // سیستم‌های مشترک
   PROXY: 'Proxy',                 // src/shared/proxy/

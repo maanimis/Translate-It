@@ -58,7 +58,8 @@ const CORE_FEATURES = new Set([
   'textSelection',
   'windowsManager',
   'shortcut',
-  'textFieldIcon'
+  'textFieldIcon',
+  'pageTranslation'
 ]);
 
 // On-demand features
@@ -116,6 +117,10 @@ export async function loadFeature(featureName) {
         loadingPromise = loadShortcutFeature();
         break;
 
+      case 'pageTranslation':
+        loadingPromise = loadPageTranslationFeature();
+        break;
+
       default:
         throw new Error(`Unknown feature: ${featureName}`);
     }
@@ -162,12 +167,15 @@ async function loadTextSelectionFeature() {
 
     // Check if feature should be activated first
     const shouldActivate = await featureManager.shouldActivateFeature('textSelection');
+    logger.debug(`TextSelection shouldActivate evaluation: ${shouldActivate}`);
 
     if (shouldActivate) {
       // Load and activate text selection through FeatureManager
+      logger.debug('Activating textSelection feature via FeatureManager...');
       await featureManager.activateFeature('textSelection');
+      logger.debug('textSelection feature activation command sent');
     } else {
-      logger.debug('TextSelection is blocked by exclusion, skipping activation');
+      logger.debug('TextSelection is blocked by exclusion (via FeatureManager), skipping activation');
       return null;
     }
 
@@ -380,6 +388,35 @@ async function loadShortcutFeature() {
   }
 }
 
+async function loadPageTranslationFeature() {
+  const logger = getLogger();
+  try {
+    // Import PageTranslationManager
+    const { pageTranslationManager } = await import('@/features/page-translation/PageTranslationManager.js');
+
+    // Activate if not already active
+    if (!pageTranslationManager.isActive) {
+      await pageTranslationManager.activate();
+    }
+
+    logger.info('PageTranslationManager loaded and initialized');
+    return pageTranslationManager;
+  } catch (error) {
+    try {
+      const handler = await getErrorHandler();
+      if (handler) {
+        throw handler.handle(error, {
+          type: 'FEATURE',
+          context: 'loadPageTranslationFeature'
+        });
+      }
+    } catch {
+      logger.error('Failed to load page translation feature:', error);
+    }
+    throw error;
+  }
+}
+
 // Smart feature loading handlers
 function handleTextSelection() {
   // Load text selection feature on demand when user selects text
@@ -412,7 +449,8 @@ export async function loadCoreFeatures() {
     logger.debug('Initializing SettingsManager...');
     const { default: SettingsManager } = await import('@/shared/managers/SettingsManager.js');
     await SettingsManager.initialize();
-    logger.debug('SettingsManager initialized successfully');
+    await SettingsManager.warmup(); // Warm up cache for all features
+    logger.debug('SettingsManager initialized and warmed up successfully');
   } catch (error) {
     logger.warn('[FeatureManager] ⚠️ Failed to initialize SettingsManager:', error);
     // Don't fail feature loading if SettingsManager fails
@@ -553,6 +591,7 @@ const FEATURE_MAPPING = {
   // Interactive features
   windowsManager: async () => await loadFeature('windowsManager'),
   selectElement: async () => await loadFeature('selectElement'),
+  pageTranslation: async () => await loadFeature('pageTranslation'),
 
   // On-demand features
   shortcut: async () => await loadFeature('shortcut'),
@@ -589,7 +628,7 @@ export async function loadFeatureOnDemand(featureName) {
 const FEATURE_CATEGORIES = {
   CRITICAL: ['messaging', 'extensionContext'],
   ESSENTIAL: ['textSelection', 'windowsManager', 'vue', 'contentMessageHandler', 'selectElement'],
-  INTERACTIVE: [],
+  INTERACTIVE: ['pageTranslation'],
   ON_DEMAND: ['shortcut', 'textFieldIcon']
 };
 

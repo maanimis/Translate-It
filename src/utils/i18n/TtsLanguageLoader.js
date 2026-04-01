@@ -4,7 +4,7 @@
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 
-const logger = getScopedLogger(LOG_COMPONENTS.TEXT, 'TtsLanguageLoader');
+const logger = getScopedLogger(LOG_COMPONENTS.I18N, 'TtsLanguageLoader');
 
 // Cache for loaded TTS language packs
 const ttsLanguageCache = new Map();
@@ -99,6 +99,7 @@ export async function loadTtsLanguagePack(langCode) {
     }
 
     // Dynamically import the language chunk
+    // eslint-disable-next-line noUnsanitized/method -- Safe: normalizedCode is validated against TTS_LANGUAGE_CHUNKS
     const langModule = await import(
       /* webpackChunkName: "locales/[request]" */
       /* webpackMode: "lazy-once" */

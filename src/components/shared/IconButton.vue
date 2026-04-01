@@ -1,5 +1,25 @@
 <template>
+  <button
+    v-if="isToolbarIcon"
+    class="ti-toolbar-button"
+    :class="{ 'ti-active': active }"
+    :title="title"
+    @click="$emit('click')"
+  >
+    <img
+      :src="iconSrc"
+      :alt="alt"
+      :class="[
+        'ti-icon-button',
+        'ti-toolbar-icon',
+        {
+          'ti-revert-icon': isRevertIcon,
+        }
+      ]"
+    >
+  </button>
   <img
+    v-else
     :src="iconSrc"
     :alt="alt"
     :title="title"
@@ -7,7 +27,6 @@
       'ti-icon-button',
       {
         'ti-revert-icon': isRevertIcon,
-        'ti-toolbar-icon': isToolbarIcon,
         'ti-inline-icon': isInlineIcon,
         'ti-paste-icon-separate': isPasteIconSeparate,
         'ti-voice-target-icon': isVoiceTargetIcon,
@@ -47,6 +66,10 @@ const props = defineProps({
     validator: (value) => ['default', 'revert'].includes(value)
   },
   hiddenByClipboard: {
+    type: Boolean,
+    default: false
+  },
+  active: {
     type: Boolean,
     default: false
   }
@@ -92,7 +115,9 @@ const isPasteIconSeparate = computed(() => props.type === 'paste-separate')
 const isVoiceTargetIcon = computed(() => props.type === 'voice-target')
 </script>
 
-<style scoped>
+<style lang="scss" scoped>
+@use "@/assets/styles/base/mixins" as *;
+
 .ti-icon-button {
   cursor: pointer;
   transition: opacity 0.2s ease-in-out, filter 0.2s ease-in-out;
@@ -101,6 +126,11 @@ const isVoiceTargetIcon = computed(() => props.type === 'voice-target')
 
 .ti-icon-button:hover {
   opacity: var(--icon-hover-opacity);
+}
+
+/* Toolbar Button Specific Styles */
+.ti-toolbar-button {
+  @include toolbar-button-minimal;
 }
 
 

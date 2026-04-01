@@ -4,6 +4,8 @@ import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { ErrorHandler } from '@/shared/error-management/ErrorHandler.js';
 import { ErrorTypes } from '@/shared/error-management/ErrorTypes.js';
+import { deviceDetector } from '@/utils/browser/compatibility.js';
+import { MOBILE_CONSTANTS } from '@/shared/config/constants.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.EXCLUSION, 'ExclusionChecker');
 
@@ -109,7 +111,8 @@ export class ExclusionChecker {
         'TRANSLATE_WITH_SELECT_ELEMENT',
         'TRANSLATE_ON_TEXT_SELECTION',
         'TRANSLATE_ON_TEXT_FIELDS',
-        'ENABLE_SHORTCUT_FOR_TEXT_FIELDS'
+        'ENABLE_SHORTCUT_FOR_TEXT_FIELDS',
+        'SHOW_DESKTOP_FAB'
       ];
 
       featureSettings.forEach(setting => {
@@ -192,36 +195,44 @@ export class ExclusionChecker {
   }
 
   isFeatureEnabled(featureName) {
-    const featureSettingsMap = {
-      'selectElement': 'TRANSLATE_WITH_SELECT_ELEMENT',
-      'textSelection': 'TRANSLATE_ON_TEXT_SELECTION',
-      'textFieldIcon': 'TRANSLATE_ON_TEXT_SELECTION', // Changed from TRANSLATE_ON_TEXT_FIELDS since it's under On-Page Selection
-      'shortcut': 'ENABLE_SHORTCUT_FOR_TEXT_FIELDS',
-      'windowsManager': 'TRANSLATE_ON_TEXT_SELECTION'
-    };
-
-    // Default values for each feature
-    const featureDefaults = {
-      'selectElement': true,
-      'textSelection': true,
-      'textFieldIcon': false,
-      'shortcut': true,
-      'windowsManager': true
-    };
-
+    // Core features that are always enabled
     if (featureName === 'contentMessageHandler') {
-      return true; // Core feature, always enabled
+      return true;
     }
 
-    const settingKey = featureSettingsMap[featureName];
-    if (!settingKey) {
-      // Unknown feature - logged at TRACE level for detailed debugging
-      // logger.warn(`Unknown feature name: ${featureName}`);
-      return false;
-    }
+    const isFabEnabled = settingsManager.get('SHOW_DESKTOP_FAB', true);
+    const isTextSelectionEnabled = settingsManager.get('TRANSLATE_ON_TEXT_SELECTION', true);
+    
+    // Check if we are in mobile mode (manually forced or auto-detected)
+    const mobileMode = settingsManager.get('MOBILE_UI_MODE', MOBILE_CONSTANTS.UI_MODE.AUTO);
+    const isMobileUI = mobileMode === MOBILE_CONSTANTS.UI_MODE.MOBILE || 
+                      (mobileMode === MOBILE_CONSTANTS.UI_MODE.AUTO && deviceDetector.shouldEnableMobileUI());
 
-    const defaultValue = featureDefaults[featureName] ?? false;
-    return settingsManager.get(settingKey, defaultValue);
+    // Feature-specific activation logic
+    switch (featureName) {
+      case 'textSelection':
+      case 'windowsManager':
+        // These features are required if:
+        // 1. Automatic translation is on
+        // 2. OR the Desktop FAB is active
+        // 3. OR we are in Mobile mode (where FAB is always active for interaction)
+        return isTextSelectionEnabled || isFabEnabled || isMobileUI;
+
+      case 'selectElement':
+        return settingsManager.get('TRANSLATE_WITH_SELECT_ELEMENT', true);
+
+      case 'textFieldIcon':
+        return isTextSelectionEnabled;
+
+      case 'shortcut':
+        return settingsManager.get('ENABLE_SHORTCUT_FOR_TEXT_FIELDS', true);
+
+      case 'pageTranslation':
+        return settingsManager.get('WHOLE_PAGE_TRANSLATION_ENABLED', true);
+
+      default:
+        return false;
+    }
   }
 
   async isUrlExcludedForFeature(featureName) {

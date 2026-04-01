@@ -4,6 +4,8 @@
 import ResourceTracker from '@/core/memory/ResourceTracker.js';
 import { pageEventBus } from '@/core/PageEventBus.js';
 import { utilsFactory } from '@/utils/UtilsFactory.js';
+import { deviceDetector } from '@/utils/browser/compatibility.js';
+import { TRANSLATION_STATUS } from '@/shared/config/constants.js';
 import { getScopedLogger } from '../../shared/logging/logger.js';
 import { LOG_COMPONENTS } from '../../shared/logging/logConstants';
 
@@ -44,6 +46,9 @@ class SelectElementNotificationManager extends ResourceTracker {
       } finally {
         SelectElementNotificationManager.initializing = false;
       }
+    } else if (notificationManager) {
+      // Update the reference to the notification manager in case the old one is stale
+      SelectElementNotificationManager.instance.notificationManager = notificationManager;
     }
     return SelectElementNotificationManager.instance;
   }
@@ -105,22 +110,16 @@ class SelectElementNotificationManager extends ResourceTracker {
       return null;
     }
 
-    // Check if we already have an active notification
-    if (this.currentNotification && this.currentNotification.isActive) {
-      this.logger.debug('Select Element notification already exists, returning existing ID:', this.currentNotification.id);
-      return this.currentNotification.id;
-    }
-
-    // Clean up any existing notification first
+    // Force clean up any existing notification state before showing a new one
+    // This fixed the issue where subsequent activations wouldn't show the notification
     if (this.currentNotification) {
-      this.dismissNotification();
+      this.logger.debug('Cleaning up stale notification state before showing new one');
+      this.dismissNotification({ isCancelAction: true });
     }
 
     try {
       // Only show notifications in the main frame (top window)
-      // This prevents duplicate notifications in iframes
       if (window !== window.top) {
-        this.logger.debug('Select Element notification requested from iframe, ignoring (will be handled by main frame)');
         return 'iframe-notification-skipped';
       }
 
@@ -155,6 +154,7 @@ class SelectElementNotificationManager extends ResourceTracker {
 
     } catch (error) {
       this.logger.error('Error showing Select Element notification:', error);
+      this.currentNotification = null; // Ensure state is cleared on error
       return null;
     }
   }
@@ -173,7 +173,7 @@ class SelectElementNotificationManager extends ResourceTracker {
 
     try {
       // Update notification based on status
-      if (data.status === 'translating') {
+      if (data.status === TRANSLATION_STATUS.TRANSLATING) {
         const { getTranslationString } = await utilsFactory.getI18nUtils();
         // Update the current notification with translation status but keep cancel button
         const cancelLabel = await getTranslationString('SELECT_ELEMENT_CANCEL') || 'Cancel';
@@ -185,7 +185,7 @@ class SelectElementNotificationManager extends ResourceTracker {
           handler: () => {
             // Emit cancel event through pageEventBus
             pageEventBus.emit('cancel-select-element-mode', {
-              managerId: this.currentNotification?.data?.managerId
+              managerId: this.currentNotification?.managerId
             });
           }
         };
@@ -225,7 +225,7 @@ class SelectElementNotificationManager extends ResourceTracker {
         }
         
         this.logger.debug('Select Element notification updated for translation', {
-          oldNotificationId: this.currentNotification.id,
+          oldNotificationId: oldNotificationId,
           newNotificationId: updatedNotificationId,
           hasCancelAction: true
         });
@@ -265,7 +265,6 @@ class SelectElementNotificationManager extends ResourceTracker {
     }
 
     // Only dismiss notifications in the main frame
-    // Skip if this is an iframe or if the notification was skipped (iframe notification)
     if (window !== window.top || notificationId === 'iframe-notification-skipped') {
       this.logger.debug('Notification dismissal requested from iframe or for skipped notification, ignoring');
       this.currentNotification = null;
@@ -303,7 +302,15 @@ class SelectElementNotificationManager extends ResourceTracker {
     // Get localized strings
     const cancelLabel = await getTranslationString('SELECT_ELEMENT_CANCEL') || 'Cancel';
     const revertLabel = await getTranslationString('SELECT_ELEMENT_REVERT') || 'Revert';
-    const message = await getTranslationString('SELECT_ELEMENT_MODE_ACTIVATED') || 'Element selection mode activated. Click on any text element to translate.';
+    
+    // Select appropriate message based on device type
+    const isMobile = deviceDetector.isMobile();
+    const messageKey = isMobile ? 'SELECT_ELEMENT_MODE_ACTIVATED_MOBILE' : 'SELECT_ELEMENT_MODE_ACTIVATED';
+    const defaultMessage = isMobile 
+      ? 'Drag your finger over any text to translate.' 
+      : 'Click on any text element to translate.';
+    
+    const message = await getTranslationString(messageKey) || defaultMessage;
 
     const baseActions = [
       {

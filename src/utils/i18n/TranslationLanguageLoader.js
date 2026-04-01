@@ -4,7 +4,7 @@
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 
-const logger = getScopedLogger(LOG_COMPONENTS.TEXT, 'TranslationLanguageLoader');
+const logger = getScopedLogger(LOG_COMPONENTS.I18N, 'TranslationLanguageLoader');
 
 // Cache for loaded translation language packs
 const translationLanguageCache = new Map();
@@ -99,6 +99,7 @@ export async function loadTranslationLanguagePack(langCode) {
     }
 
     // Dynamically import the language chunk
+    // eslint-disable-next-line noUnsanitized/method -- Safe: normalizedCode is validated against TRANSLATION_LANGUAGE_CHUNKS
     const langModule = await import(
       /* webpackChunkName: "locales/[request]" */
       /* webpackMode: "lazy-once" */

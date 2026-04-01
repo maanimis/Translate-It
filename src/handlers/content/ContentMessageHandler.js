@@ -30,6 +30,7 @@ export class ContentMessageHandler extends ResourceTracker {
     this.logger = getScopedLogger(LOG_COMPONENTS.MESSAGING, 'MessageHandler');
     this.selectElementManager = null;
     this.iFrameManager = null;
+    this.pageTranslationManager = null;
 
     // Initialize error handler lazily when needed
     this._errorHandler = null;
@@ -77,6 +78,10 @@ export class ContentMessageHandler extends ResourceTracker {
 
   setIFrameManager(manager) {
     this.iFrameManager = manager;
+  }
+
+  setPageTranslationManager(manager) {
+    this.pageTranslationManager = manager;
   }
 
   /**
@@ -212,9 +217,11 @@ export class ContentMessageHandler extends ResourceTracker {
     this.registerHandler(MessageActions.DEACTIVATE_SELECT_ELEMENT_MODE, this.handleDeactivateSelectElementMode.bind(this));
     this.registerHandler(MessageActions.TRANSLATION_RESULT_UPDATE, this.handleTranslationResult.bind(this));
     this.registerHandler(MessageActions.REVERT_SELECT_ELEMENT_MODE, this.handleRevertTranslation.bind(this));
+
+    // Streaming translation handlers - delegate to ContentScriptIntegration
     this.registerHandler(MessageActions.TRANSLATION_STREAM_UPDATE, this.handleStreamUpdate.bind(this));
     this.registerHandler(MessageActions.TRANSLATION_STREAM_END, this.handleStreamEnd.bind(this));
-    
+
     // IFrame support handlers
     this.registerHandler(MessageActions.IFRAME_ACTIVATE_SELECT_ELEMENT, this.handleIFrameActivateSelectElement.bind(this));
     this.registerHandler(MessageActions.IFRAME_TRANSLATE_SELECTION, this.handleIFrameTranslateSelection.bind(this));
@@ -224,6 +231,12 @@ export class ContentMessageHandler extends ResourceTracker {
     this.registerHandler(MessageActions.IFRAME_INSERT_TEXT, this.handleIFrameInsertText.bind(this));
     this.registerHandler(MessageActions.IFRAME_SYNC_REQUEST, this.handleIFrameSyncRequest.bind(this));
     this.registerHandler(MessageActions.IFRAME_SYNC_RESPONSE, this.handleIFrameSyncResponse.bind(this));
+
+    // Page translation handlers
+    this.registerHandler(MessageActions.PAGE_TRANSLATE, this.handlePageTranslate.bind(this));
+    this.registerHandler(MessageActions.PAGE_RESTORE, this.handlePageRestore.bind(this));
+    this.registerHandler(MessageActions.PAGE_TRANSLATE_GET_STATUS, this.handlePageGetStatus.bind(this));
+    this.registerHandler(MessageActions.PAGE_TRANSLATE_STOP_AUTO, this.handlePageStopAuto.bind(this));
   }
 
   registerHandler(action, handler) {
@@ -274,7 +287,7 @@ export class ContentMessageHandler extends ResourceTracker {
     return false; // Message not handled
   }
 
-  async handleActivateSelectElementMode(/* message */) {
+  async handleActivateSelectElementMode(message) {
     // logger.trace(`[ContentMessageHandler] handleActivateSelectElementMode called for tab: ${message.data?.tabId || 'current'}`);
     this.logger.info("ContentMessageHandler: ACTIVATE_SELECT_ELEMENT_MODE received!");
 
@@ -304,7 +317,7 @@ export class ContentMessageHandler extends ResourceTracker {
       }
 
       // Activate Select Element mode
-      const result = await this.selectElementManager.activateSelectElementMode();
+      const result = await this.selectElementManager.activateSelectElementMode(message.data || {});
       this.logger.info("SelectElementManager activated successfully");
 
       // Return success result
@@ -384,24 +397,24 @@ export class ContentMessageHandler extends ResourceTracker {
   }
 
   async handleStreamUpdate(message) {
-    // logger.trace('[ContentMessageHandler] Received TRANSLATION_STREAM_UPDATE:', {
-    //   messageId: message.messageId,
-    //   success: message.data?.success,
-    //   batchIndex: message.data?.batchIndex,
-    //   hasSelectElementManager: !!this.selectElementManager,
-    //   isActive: this.selectElementManager?.isSelectElementActive()
-    // });
-
-    if (this.selectElementManager && this.selectElementManager.translationOrchestrator) {
-      return this.selectElementManager.translationOrchestrator.handleStreamUpdate(message);
-    } else {
-      this.logger.warn('[ContentMessageHandler] SelectElementManager not available for stream update');
+    // Delegate to ContentScriptIntegration's streaming handler
+    try {
+      const { contentScriptIntegration } = await import('@/shared/messaging/core/ContentScriptIntegration.js');
+      return contentScriptIntegration.streamingHandler.handleMessage(message);
+    } catch (error) {
+      this.logger.error('Failed to delegate stream update to ContentScriptIntegration:', error);
+      return false;
     }
   }
 
   async handleStreamEnd(message) {
-    if (this.selectElementManager && this.selectElementManager.translationOrchestrator) {
-      return this.selectElementManager.translationOrchestrator.handleStreamEnd(message);
+    // Delegate to ContentScriptIntegration's streaming handler
+    try {
+      const { contentScriptIntegration } = await import('@/shared/messaging/core/ContentScriptIntegration.js');
+      return contentScriptIntegration.streamingHandler.handleMessage(message);
+    } catch (error) {
+      this.logger.error('Failed to delegate stream end to ContentScriptIntegration:', error);
+      return false;
     }
   }
 
@@ -418,15 +431,18 @@ export class ContentMessageHandler extends ResourceTracker {
 
     switch (translationMode) {
       case TranslationMode.Select_Element:
-      case 'SelectElement': // Handle both enum and hardcoded string for robustness
-        if (this.selectElementManager) {
-          this.logger.info('Forwarding to SelectElementHandler');
-          return this.selectElementManager.handleTranslationResult(message);
+      case TranslationMode.LEGACY_SELECT_ELEMENT: // Handle both enum and legacy string for robustness
+        this.logger.info('Forwarding to StreamingHandler via ContentScriptIntegration');
+        try {
+          const { contentScriptIntegration } = await import('@/shared/messaging/core/ContentScriptIntegration.js');
+          return contentScriptIntegration.streamingHandler.handleMessage(message);
+        } catch (error) {
+          this.logger.error('Failed to delegate translation result to ContentScriptIntegration:', error);
+          return false;
         }
-        break;
 
       case TranslationMode.Field:
-      case 'field': // Handle both enum and string for robustness
+      case TranslationMode.LEGACY_FIELD: // Handle both enum and legacy string for robustness
         this.logger.info('Processing Text Field translation result');
         
         // Check if translation failed at background level
@@ -505,14 +521,16 @@ export class ContentMessageHandler extends ResourceTracker {
         this.logger.info(`Displaying result for ${translationMode} mode in notification.`);
         return true;
 
+      case TranslationMode.Page:
+        // Page translation results are handled directly by PageTranslationBatcher
+        // as a direct response to the batch message. We ignore broadcasts here.
+        this.logger.debug('Ignoring broadcasted page translation result (already handled by Batcher)');
+        return true;
+
       default:
         this.logger.warn(`No handler for translation result mode: ${translationMode}`);
         return false;
     }
-
-    // This part is reached if the 'SelectElement' case is hit but selectElementManager is null
-    this.logger.warn(`Handler for ${translationMode} was not properly configured.`);
-    return false;
   }
 
   async handleRevertTranslation() {
@@ -565,7 +583,7 @@ export class ContentMessageHandler extends ResourceTracker {
   async handleIFrameCoordinateOperation(data) {
     this.logger.info('IFrame coordinate operation request');
     // Delegate to appropriate manager based on operation type
-    if (data.operation === 'select-element' && this.selectElementManager) {
+    if (data.operation === TranslationMode.Select_Element && this.selectElementManager) {
       return await this.handleIFrameActivateSelectElement(data);
     }
     return { success: false, error: 'Unsupported operation or manager not available' };
@@ -616,10 +634,144 @@ export class ContentMessageHandler extends ResourceTracker {
     return { success: true };
   }
 
+  async handlePageTranslate(message) {
+    this.logger.info('Page translation request received');
+
+    // Check for cancel flag
+    if (message.data?.cancel) {
+      if (this.pageTranslationManager) {
+        this.pageTranslationManager.cancelTranslation();
+        return { success: true, cancelled: true };
+      }
+      return { success: false, error: 'PageTranslationManager not available' };
+    }
+
+    try {
+      // If PageTranslationManager is not available, try to load the feature on-demand
+      if (!this.pageTranslationManager) {
+        try {
+          const { loadFeature } = await import('@/core/content-scripts/chunks/lazy-features.js');
+          const manager = await loadFeature('pageTranslation');
+
+          if (manager) {
+            this.setPageTranslationManager(manager);
+          } else {
+            throw new Error('pageTranslation feature failed to load');
+          }
+        } catch (loadError) {
+          throw new Error(`PageTranslationManager not available: ${loadError.message}`);
+        }
+      }
+
+      // Ensure manager is initialized
+      if (!this.pageTranslationManager.isActive) {
+        await this.pageTranslationManager.activate();
+      }
+
+      // Execute page translation - PASS message.data to support options like { isAuto: true }
+      const result = await this.pageTranslationManager.translatePage(message.data || {});
+
+      this.logger.info('Page translation completed', {
+        translatedCount: result.translatedCount,
+        totalNodes: result.totalNodes
+      });
+
+      return result;
+
+    } catch (error) {
+      this.logger.error('Page translation failed:', error);
+
+      // Use centralized error handling
+      const errorHandler = await this.errorHandler;
+      await errorHandler.handle(error, {
+        type: ErrorTypes.TRANSLATION_FAILED,
+        context: 'page-translation',
+        showToast: true
+      });
+
+      return { success: false, error: error.message };
+    }
+  }
+
+  async handlePageRestore() {
+    this.logger.info('Page restore request received');
+
+    if (!this.pageTranslationManager) {
+      return { success: false, error: 'PageTranslationManager not available' };
+    }
+
+    try {
+      const result = await this.pageTranslationManager.restorePage();
+
+      this.logger.info('Page restore completed', {
+        restoredCount: result.restoredCount
+      });
+
+      return result;
+
+    } catch (error) {
+      this.logger.error('Page restore failed:', error);
+
+      // Use centralized error handling
+      const errorHandler = await this.errorHandler;
+      await errorHandler.handle(error, {
+        type: ErrorTypes.TRANSLATION_FAILED,
+        context: 'page-restore',
+        showToast: true
+      });
+
+      return { success: false, error: error.message };
+    }
+  }
+
+  async handlePageGetStatus() {
+    this.logger.debug('Page translation status request received');
+
+    if (!this.pageTranslationManager) {
+      try {
+        const { loadFeature } = await import('@/core/content-scripts/chunks/lazy-features.js');
+        const manager = await loadFeature('pageTranslation');
+        if (manager) this.setPageTranslationManager(manager);
+      } catch { /* ignore and return inactive status */ }
+    }
+
+    if (!this.pageTranslationManager) {
+      return { 
+        success: true, 
+        isActive: false, 
+        isTranslating: false, 
+        isTranslated: false,
+        isAutoTranslating: false
+      };
+    }
+
+    return {
+      success: true,
+      ...this.pageTranslationManager.getStatus()
+    };
+  }
+
+  async handlePageStopAuto() {
+    this.logger.info('Page stop auto-translation request received');
+
+    if (!this.pageTranslationManager) {
+      return { success: false, error: 'PageTranslationManager not available' };
+    }
+
+    try {
+      const result = await this.pageTranslationManager.stopAutoTranslation();
+      return result;
+    } catch (error) {
+      this.logger.error('Page stop auto failed:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
   async cleanup() {
     this.handlers.clear();
     this.selectElementManager = null;
     this.iFrameManager = null;
+    this.pageTranslationManager = null;
 
     // Use ResourceTracker cleanup for automatic resource management
     super.cleanup();

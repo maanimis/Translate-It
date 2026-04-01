@@ -8,6 +8,7 @@ import { useTranslationError } from "@/features/translation/composables/useTrans
 import { generateMessageId } from "@/utils/messaging/messageId.js";
 import { isSingleWordOrShortPhrase } from "@/shared/utils/text/textAnalysis.js";
 import { TranslationMode } from "@/shared/config/config.js";
+import { ProviderRegistryIds } from "@/features/translation/providers/ProviderConstants.js";
 import { MessageActions } from "@/shared/messaging/core/MessageActions.js";
 import { MessagingContexts } from "@/shared/messaging/core/MessagingCore.js";
 import { getScopedLogger } from '@/shared/logging/logger.js';
@@ -87,15 +88,36 @@ export function useUnifiedTranslation(context = 'popup') {
         getTargetLanguageAsync()
       ]);
       sourceLanguage.value = await findLanguageCode(savedSource) || AUTO_DETECT_VALUE;
-      targetLanguage.value = await findLanguageCode(savedTarget) || DEFAULT_TARGET_LANGUAGE;
+      
+      const targetLang = await findLanguageCode(savedTarget) || DEFAULT_TARGET_LANGUAGE;
+      targetLanguage.value = targetLang;
+      // Also sync store if it's the first time
+      if (!translationStore.uiTargetLanguage) {
+        translationStore.uiTargetLanguage = targetLang;
+      }
+      
       getLogger().debug(`[${context}] Languages (re)set to defaults:`, { source: sourceLanguage.value, target: targetLanguage.value });
     } catch (error) {
-      getLogger().error(`[${context}] Failed to reset languages:`, error);
+      getLogger().info(`[${context}] Failed to reset languages:`, error);
       // Fallback to hardcoded defaults in case of storage error
       sourceLanguage.value = AUTO_DETECT_VALUE;
       targetLanguage.value = DEFAULT_TARGET_LANGUAGE;
     }
   };
+
+  // Watch for local targetLanguage changes to update store
+  watch(targetLanguage, (newVal) => {
+    if (newVal) {
+      translationStore.uiTargetLanguage = newVal;
+    }
+  });
+
+  // Watch for store changes to update local targetLanguage (for cross-component sync)
+  watch(() => translationStore.uiTargetLanguage, (newVal) => {
+    if (newVal && newVal !== targetLanguage.value) {
+      targetLanguage.value = newVal;
+    }
+  });
 
   // --- Translation Logic ---
   const getTranslationMode = (text) => {
@@ -109,8 +131,8 @@ export function useUnifiedTranslation(context = 'popup') {
     return baseMode;
   };
 
-  const createTranslationRequest = (sourceLang, targetLang, messageId) => {
-    const currentProvider = settingsStore.settings.TRANSLATION_API || (context === 'popup' ? 'google-translate' : 'google');
+  const createTranslationRequest = (sourceLang, targetLang, messageId, overrideProvider = null) => {
+    const currentProvider = overrideProvider || settingsStore.settings.TRANSLATION_API || ProviderRegistryIds.GOOGLE_V2;
     const mode = getTranslationMode(sourceText.value);
 
     return {
@@ -161,7 +183,7 @@ export function useUnifiedTranslation(context = 'popup') {
       pendingRequests.value.delete(messageId);
     }
     
-    getLogger().error(`[${context}] Translation error:`, errorMessage);
+    getLogger().info(`[${context}] Translation error:`, errorMessage);
   };
 
   const ensureMinimumLoadingDuration = async () => {
@@ -175,7 +197,7 @@ export function useUnifiedTranslation(context = 'popup') {
     }
   };
 
-  const triggerTranslation = async (sourceLang = null, targetLang = null) => {
+  const triggerTranslation = async (sourceLang = null, targetLang = null, overrideProvider = null) => {
     if (!canTranslate.value) return false;
 
     isTranslating.value = true;
@@ -189,7 +211,7 @@ export function useUnifiedTranslation(context = 'popup') {
 
     try {
       const messageId = generateMessageId(context);
-      const requestData = createTranslationRequest(sourceLang, targetLang, messageId);
+      const requestData = createTranslationRequest(sourceLang, targetLang, messageId, overrideProvider);
       
       getLogger().debug(`[${context}] Translation request:`, requestData.data);
 
@@ -348,6 +370,7 @@ export function useUnifiedTranslation(context = 'popup') {
     lastTranslation,
     // Error management
     translationError: errorManager.errorMessage,
+    errorType: errorManager.errorType,
     hasError: errorManager.hasError,
     canRetry: errorManager.canRetry,
     canOpenSettings: errorManager.canOpenSettings,

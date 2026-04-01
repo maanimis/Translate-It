@@ -11,6 +11,7 @@ import { setupWindowErrorHandlers, setupBrowserAPIGlobals } from '@/shared/error
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { configureVueForCSP } from '@/shared/vue/vue-utils.js';
+import { UI_LOCALE_TO_CODE_MAP } from '@/shared/config/languageConstants.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.UI, 'options');
 
@@ -19,7 +20,6 @@ const LanguagesTab = () => import('@/apps/options/tabs/LanguagesTab.vue')
 const AppearanceTab = () => import('@/apps/options/tabs/AppearanceTab.vue')
 const ActivationTab = () => import('@/apps/options/tabs/ActivationTab.vue')
 const PromptTab = () => import('@/apps/options/tabs/PromptTab.vue')
-const ApiTab = () => import('@/apps/options/tabs/ApiTab.vue')
 const ImportExportTab = () => import('@/apps/options/tabs/ImportExportTab.vue')
 const AdvanceTab = () => import('@/apps/options/tabs/AdvanceTab.vue')
 const HelpTab = () => import('@/apps/options/tabs/HelpTab.vue')
@@ -28,19 +28,19 @@ const About = () => import('@/apps/options/About.vue')
 // Initialize and mount Vue app after browser API is ready
 async function initializeApp() {
   try {
-    logger.debug('üö Starting options app initialization...')
+    logger.debug('ÔøΩ Starting options app initialization...')
     
     // Add options context class to body
     document.body.classList.add('options-context')
-    logger.debug('‚ú Added options-context class to body')
+    logger.debug('ÔøΩ Added options-context class to body')
     
     // Setup global error handlers before anything else
     setupWindowErrorHandlers('options')
     
     // Wait for browser API to be ready
-    logger.debug('‚≥ Waiting for browser API to be ready...')
+    logger.debug('ÔøΩ Waiting for browser API to be ready...')
     
-    logger.debug('‚ú browser API is ready')
+    logger.debug('ÔøΩ browser API is ready')
 
     // Setup browser API globals
     setupBrowserAPIGlobals()
@@ -53,21 +53,14 @@ async function initializeApp() {
     try {
       const settings = await browser.storage.local.get('APPLICATION_LOCALIZE');
       if (settings && settings.APPLICATION_LOCALIZE) {
-        // Normalize locale code
-        const LANGUAGE_MAP = {
-          'English': 'en',
-          'Farsi': 'fa',
-          'ŸÅÿßÿ±ÿ≥€å': 'fa',
-          'en': 'en',
-          'fa': 'fa'
-        }
-        userLocale = LANGUAGE_MAP[settings.APPLICATION_LOCALIZE] || settings.APPLICATION_LOCALIZE || 'en';
+        // Normalize locale code using centralized mapping
+        userLocale = UI_LOCALE_TO_CODE_MAP[settings.APPLICATION_LOCALIZE] || settings.APPLICATION_LOCALIZE || 'en';
       }
     } catch (e) {
       logger.warn('Failed to get APPLICATION_LOCALIZE from storage:', e);
     }
     await setI18nLocale(userLocale);
-    logger.debug('‚ú vue-i18n plugin locale set:', userLocale)
+    logger.debug('ÔøΩ vue-i18n plugin locale set:', userLocale)
 
     // Check for tab query parameter for Firefox shortcuts navigation and hash URLs
     let initialRoute = '/languages'; // Default to languages tab
@@ -95,7 +88,7 @@ async function initializeApp() {
           logger.debug(`Detected hash #${hash}, redirecting to help tab`);
         } else if (hash && hash !== '') {
           // Use the hash path if it's valid
-          const validRoutes = ['languages', 'appearance', 'activation', 'prompt', 'api', 'import-export', 'advance', 'about', 'help'];
+          const validRoutes = ['languages', 'appearance', 'activation', 'prompt', 'import-export', 'advance', 'about', 'help'];
           if (validRoutes.includes(hash)) {
             initialRoute = `/${hash}`;
             logger.debug(`Detected hash #${hash}, redirecting to ${initialRoute} tab`);
@@ -108,7 +101,7 @@ async function initializeApp() {
     }
 
     // Create router
-    logger.debug('üõ£Ô∏ Creating Vue router...')
+    logger.debug('üõ£ÔøΩ Creating Vue router...')
     const router = createRouter({
       history: createWebHashHistory(),
       routes: [
@@ -120,7 +113,7 @@ async function initializeApp() {
             return initialRoute;
           }
           // If current hash matches a valid route, use it instead
-          const validRoutes = ['languages', 'appearance', 'activation', 'prompt', 'api', 'import-export', 'advance', 'about', 'help'];
+          const validRoutes = ['languages', 'appearance', 'activation', 'prompt', 'import-export', 'advance', 'about', 'help'];
           if (validRoutes.includes(currentHash)) {
             logger.debug(`Root redirect: current hash #${currentHash} is valid, using it`);
             return `/${currentHash}`;
@@ -129,29 +122,28 @@ async function initializeApp() {
           return initialRoute;
         }},
         { path: '/languages', component: LanguagesTab, name: 'languages' },
-        { path: '/appearance', component: AppearanceTab, name: 'appearance' },
         { path: '/activation', component: ActivationTab, name: 'activation' },
         { path: '/prompt', component: PromptTab, name: 'prompt' },
-        { path: '/api', component: ApiTab, name: 'api' },
-        { path: '/import-export', component: ImportExportTab, name: 'import-export' },
+        { path: '/appearance', component: AppearanceTab, name: 'appearance' },
         { path: '/advance', component: AdvanceTab, name: 'advance' },
+        { path: '/import-export', component: ImportExportTab, name: 'import-export' },
         { path: '/help', component: HelpTab, name: 'help' },
         { path: '/about', component: About, name: 'about' }
       ]
     })
-    logger.debug('‚ú Router created successfully')
+    logger.debug('ÔøΩ Router created successfully')
 
     // Handle Firefox shortcuts navigation after router is ready
     router.isReady().then(() => {
       if (shouldNavigateToHelp) {
-        logger.debug('üî Navigating to help tab for Firefox shortcuts');
+        logger.debug('ÔøΩ Navigating to help tab for Firefox shortcuts');
         // Use replace to avoid adding to history
         router.replace('/help');
 
         // Additional fallback: manually set hash after a delay
         setTimeout(() => {
           if (window.location.hash !== '#/help') {
-            logger.debug('üî Setting hash manually as fallback');
+            logger.debug('ÔøΩ Setting hash manually as fallback');
             window.location.hash = '#/help';
           }
         }, 100);
@@ -161,7 +153,7 @@ async function initializeApp() {
 
       // Fallback navigation if router fails
       if (shouldNavigateToHelp) {
-        logger.debug('üî Using fallback navigation to help tab');
+        logger.debug('ÔøΩ Using fallback navigation to help tab');
         setTimeout(() => {
           window.location.hash = '#/help';
         }, 500);
@@ -169,43 +161,43 @@ async function initializeApp() {
     });
 
     // Create Vue app
-    logger.debug('üé Creating Vue app...')
+    logger.debug('ÔøΩ Creating Vue app...')
     const app = configureVueForCSP(createApp(OptionsApp))
-    logger.debug('‚ú Vue app created successfully')
+    logger.debug('ÔøΩ Vue app created successfully')
     
     // Add detailed debugging
     app.config.performance = true
-    logger.debug('üç Vue performance tracking enabled')
+    logger.debug('ÔøΩ Vue performance tracking enabled')
 
     // Use plugins (order matters: i18n before router)
-    logger.debug('üî Installing Pinia...')
+    logger.debug('ÔøΩ Installing Pinia...')
     app.use(pinia)
-    logger.debug('‚ú Pinia installed')
+    logger.debug('ÔøΩ Pinia installed')
     
-    logger.debug('üî Installing i18n...')
+    logger.debug('ÔøΩ Installing i18n...')
     app.use(i18nPlugin)
-    logger.debug('‚ú i18n installed')
+    logger.debug('ÔøΩ i18n installed')
     
-    logger.debug('üî Installing Router...')
+    logger.debug('ÔøΩ Installing Router...')
     app.use(router)
-    logger.debug('‚ú Router installed')
+    logger.debug('ÔøΩ Router installed')
 
     // Global properties for extension context
-    logger.debug('‚öôÔ∏ Setting global properties...')
+    logger.debug('‚öôÔøΩ Setting global properties...')
     app.config.globalProperties.$isExtension = true
     app.config.globalProperties.$context = 'options'
     
     // i18n is now provided by the unified vue-i18n plugin
-    logger.debug('‚ú i18n global property will be available after plugin installation')
+    logger.debug('ÔøΩ i18n global property will be available after plugin installation')
 
     // Setup unified error handling
-    logger.debug('üõ°Ô∏ Setting up unified error handler...')
+    logger.debug('üõ°ÔøΩ Setting up unified error handler...')
     setupGlobalErrorHandler(app, 'options')
 
     // Mount the app
-    logger.debug('üé Mounting Vue app to #app...')
+    logger.debug('ÔøΩ Mounting Vue app to #app...')
     app.mount('#app')
-    logger.debug('üé Options app mounted successfully!')
+    logger.debug('ÔøΩ Options app mounted successfully!')
   } catch (error) {
     logger.error('Failed to initialize options app:', error)
     logger.error('Error stack:', error.stack)
@@ -255,17 +247,17 @@ initializeApp()
 setTimeout(() => {
   const appElement = document.getElementById('app')
   if (appElement && appElement.innerHTML.includes('Failed to load extension options')) {
-    logger.debug('‚ö†Ô∏ App failed to initialize, checking potential issues...')
+    logger.debug('‚ö†ÔøΩ App failed to initialize, checking potential issues...')
     
     // Check if required APIs are available
-    logger.debug('üç browser API check:')
+    logger.debug('ÔøΩ browser API check:')
     logger.debug('- typeof chrome:', typeof chrome)
     logger.debug('- typeof browser:', typeof browser)
     logger.debug('- chrome.runtime:', chrome?.runtime)
     logger.debug('- chrome.storage:', chrome?.storage)
     
     // Check if DOM is ready
-    logger.debug('üç DOM check:')
+    logger.debug('ÔøΩ DOM check:')
     logger.debug('- document.readyState:', document.readyState)
     logger.debug('- #app element:', document.getElementById('app'))
     

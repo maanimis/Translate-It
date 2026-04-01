@@ -18,16 +18,18 @@ export const TRANSLATION_CONSTANTS = {
 
   // Provider-specific character limits
   CHARACTER_LIMITS: {
-    GOOGLE: 3900,
-    BING: 800,
-    YANDEX: 5000,
+    GOOGLE: 5000,
+    BING: 1000,
+    YANDEX: 10000,
+    DEEPL: 10000,
   },
 
-  // Provider-specific batch sizes
+  // Provider-specific batch sizes (max segments per request)
   MAX_CHUNKS_PER_BATCH: {
-    GOOGLE: 10,
-    BING: 15,
-    YANDEX: 25,
+    GOOGLE: 150,
+    BING: 10,
+    YANDEX: 100,
+    DEEPL: 150, 
   },
 
   // Dictionary support flags
@@ -35,6 +37,7 @@ export const TRANSLATION_CONSTANTS = {
     GOOGLE: true,
     BING: false,
     YANDEX: true,
+    DEEPL: false,
   },
 
   // Reliable mode flags
@@ -42,6 +45,7 @@ export const TRANSLATION_CONSTANTS = {
     GOOGLE: false,
     BING: false,
     YANDEX: false,
+    DEEPL: false,
   },
 
   // Streaming support flags
@@ -49,12 +53,14 @@ export const TRANSLATION_CONSTANTS = {
     GOOGLE: true,
     BING: true,
     YANDEX: true,
+    DEEPL: true,
   },
 
   // Chunking strategies
   CHUNKING_STRATEGIES: {
     GOOGLE: 'character_limit',
     BING: 'character_limit',
-    YANDEX: 'segment_count',
+    YANDEX: 'character_limit',
+    DEEPL: 'character_limit',
   },
 };

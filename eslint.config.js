@@ -3,6 +3,7 @@ import vuePlugin from "eslint-plugin-vue";
 import babelParser from "@babel/eslint-parser";
 import vueParser from "vue-eslint-parser";
 import globals from "globals";
+import noUnsanitized from "eslint-plugin-no-unsanitized";
 
 export default [
   // Global ignores
@@ -46,6 +47,7 @@ export default [
         __IS_DEVELOPMENT__: "readonly",
         __IS_PRODUCTION__: "readonly",
         __BROWSER__: "readonly",
+        __BUILD_YEAR__: "readonly",
       },
     },
     plugins: {
@@ -68,6 +70,9 @@ export default [
   // Configuration for JS files in src/
   {
     files: ["src/**/*.js"],
+    plugins: {
+      noUnsanitized,
+    },
     languageOptions: {
       parser: babelParser,
       parserOptions: {
@@ -87,6 +92,7 @@ export default [
         __IS_DEVELOPMENT__: "readonly",
         __IS_PRODUCTION__: "readonly",
         __BROWSER__: "readonly",
+        __BUILD_YEAR__: "readonly",
       },
     },
     rules: {
@@ -98,7 +104,10 @@ export default [
           importNames: ['createLogger'],
           message: 'Use getScopedLogger instead of createLogger outside logger infrastructure.'
         }
-      ]
+      ],
+      // Enable no-unsanitized rules for security
+      "noUnsanitized/property": "error",
+      "noUnsanitized/method": "error",
     },
   },
 

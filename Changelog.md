@@ -1,3 +1,83 @@
+#### v1.10.0 – Released on April XX, 2026
+
+##### Added
+
+- Added a persistent, vertically draggable **Desktop FAB (Floating Action Button)** for quick access to `Select Element` and `Page Translation` with smart-fading and real-time status tracking
+- Added comprehensive **Mobile & Touchscreen Support** featuring a native-like **In-Page Bottom Sheet** architecture with smooth gesture controls (swipe-to-expand/dismiss) for mobile browsers (Firefox Android, Kiwi, Lemur)
+
+---
+
+#### v1.9.0 – Released on March 20, 2026
+
+##### Added
+
+- Added Full `Page Translation` engine for real-time translation of entire web pages
+- Added [Provider Management](#/activation) settings to toggle and prioritize translation engines
+- Added **Microsoft Translator** and **Lingva Translate** as new translation providers
+- Added `Sync Page Translation` and `Sync Select Element` toggles to the provider dropdown for ephemeral synchronization
+- Added `History Export` feature to the side panel (anki, csv, json)
+- Added a `Provider Selector` to floating translation windows for switching providers
+- Added Japanese UI support (thanks to [@monta-gh](https://github.com/monta-gh))
+
+##### Fixed
+
+- Fixed stability and detection accuracy issues in `Select Element` mode
+- Fixed phonetic issues in **Google TTS** for Japanese, Chinese, Korean, Russian, Hebrew, and European languages
+- Fixed UI regressions and improved cross-browser stability
+
+##### Changed
+
+- Improved `Select Element` logic for better DOM context preservation and reduced API token usage
+- Modernized UI/UX layout for a more streamlined workflow
+- Updated the copy button to perform a clean text copy without Markdown formatting
+
+---
+
+#### v1.8.0 – Released on Janurary 06, 2026
+
+##### Added
+
+- Added [Multiple API Keys Support](#/languages) for all API-based providers. You can now enter multiple API keys per provider (one per line), and the extension will automatically failover to the next key if one reaches its quota limit or becomes invalid. Working keys are automatically promoted to the top for better performance. Use the "Test Keys" button to validate all keys at once.
+
+##### Fixed
+
+- Fixed several minor issues
+
+---
+
+#### v1.7.0 – Released on Janurary 03, 2026
+
+##### Added
+
+- Added `DeepL` translation provider with support for Free/Pro API tiers
+- Updated providers for new models (Gemini 3, Gemini 2.5)
+
+##### Fixed
+
+- Fixed the `Revert` issue after using `Select Element`
+
+
+##### Changed
+
+- Merged `API Settings` tab into [Languages](#/languages) tab for better UX
+
+---
+
+#### v1.6.0 – Released on December 31, 2025
+
+##### Fixed
+
+- Fixed Select Element display direction for RTL languages such as Persian, Arabic, Hebrew, and others
+- Improved Select Element for CJK languages (Chinese, Japanese, Korean)
+- Improved Select Element for Eastern European languages like Russian
+- Fixed various minor issues
+
+##### Changed
+
+- **[#88](https://github.com/iSegaro/Translate-It/issues/88)**: Changed default macOS shortcut for Select Element to `Option+Shift+S`
+
+---
+
 #### v1.5.1 – Released on December 12, 2025
 
 ##### Fixed
@@ -64,7 +144,7 @@
 
 ##### Added
 
-- Added example URL text below the API URL field in [Options page > Custom API](#/api) settings for better user guidance
+- Added example URL text below the API URL field in [Options page > Custom API](#/languages) settings for better user guidance
 
 ---
 

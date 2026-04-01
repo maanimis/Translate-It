@@ -6,9 +6,13 @@
  */
 
 import { getScopedLogger } from '@/shared/logging/logger.js'
+import browser from 'webextension-polyfill'
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js'
 import { storageManager } from '@/shared/storage/core/StorageCore.js'
 import { useSettingsStore } from '@/features/settings/stores/settings.js'
+import { ProviderRegistryIds } from '@/features/translation/providers/ProviderConstants.js'
+import { MOBILE_CONSTANTS } from '@/shared/config/constants.js'
+import { SelectionTranslationMode } from '@/shared/config/config.js'
 import { ref, computed, watchEffect } from 'vue'
 
 // Lazy logger initialization to avoid TDZ issues
@@ -63,17 +67,42 @@ class SettingsManager {
 
     // Default settings from CONFIG (will be overridden by loaded settings)
     this._defaults = {
+      APPLICATION_LOCALIZE: 'en',
       EXTENSION_ENABLED: true,
       TRANSLATE_ON_TEXT_FIELDS: false,
       TRANSLATE_ON_TEXT_SELECTION: true,
       REQUIRE_CTRL_FOR_TEXT_SELECTION: false,
-      selectionTranslationMode: 'onClick',
+      selectionTranslationMode: SelectionTranslationMode.ON_CLICK,
       ENABLE_SHORTCUT_FOR_TEXT_FIELDS: true,
       SOURCE_LANGUAGE: 'auto',
       TARGET_LANGUAGE: 'fa',
-      TRANSLATION_API: 'google',
+      TRANSLATION_API: ProviderRegistryIds.GOOGLE_V2,
+      MODE_PROVIDERS: {},
+      ENABLE_DICTIONARY: true,
       EXCLUDED_SITES: [],
-      ENHANCED_TRIPLE_CLICK_DRAG: false
+      ENHANCED_TRIPLE_CLICK_DRAG: false,
+      MOBILE_UI_MODE: MOBILE_CONSTANTS.UI_MODE.AUTO,
+      SHOW_DESKTOP_FAB: true,
+      DESKTOP_FAB_POSITION: { side: 'right', y: -1 },
+      MOBILE_FAB_POSITION: { 
+        side: MOBILE_CONSTANTS.FAB.SIDE.RIGHT, 
+        y: MOBILE_CONSTANTS.FAB.DEFAULT_Y 
+      },
+      // Whole Page Translation Defaults
+      WHOLE_PAGE_TRANSLATION_ENABLED: true,
+      WHOLE_PAGE_LAZY_LOADING: true,
+      WHOLE_PAGE_AUTO_TRANSLATE_ON_DOM_CHANGES: true,
+      WHOLE_PAGE_EXCLUDED_SELECTORS: [],
+      WHOLE_PAGE_ATTRIBUTES_TO_TRANSLATE: ["title", "alt", "placeholder", "label", "value"],
+      WHOLE_PAGE_MAX_ELEMENTS: 10000,
+      WHOLE_PAGE_CHUNK_SIZE: 250,
+      WHOLE_PAGE_MAX_CHARS: 5000,
+      WHOLE_PAGE_AI_MAX_CHARS: 15000,
+      WHOLE_PAGE_DEBOUNCE_DELAY: 500,
+      WHOLE_PAGE_ROOT_MARGIN: '10px',
+      WHOLE_PAGE_MAX_CONCURRENT_REQUESTS: 1,
+      WHOLE_PAGE_PROGRESS_UPDATE_INTERVAL: 100,
+      WHOLE_PAGE_SHOW_ORIGINAL_ON_HOVER: false
     }
 
     // Lazy debug call to avoid TDZ
@@ -171,6 +200,22 @@ class SettingsManager {
 
       this._initialized = true
       return this
+    }
+  }
+
+  /**
+   * Warm up the cache by loading all settings at once
+   * This is recommended to be called early in the lifecycle
+   */
+  async warmup() {
+    try {
+      const keys = Object.keys(this._defaults);
+      await storageManager.get(keys);
+      getLogger().debug(`Cache warmed up with ${keys.length} keys`);
+      return this;
+    } catch (error) {
+      getLogger().error('Failed to warmup SettingsManager:', error);
+      return this;
     }
   }
 
@@ -432,6 +477,7 @@ class SettingsManager {
    */
   _initializeReactiveCache() {
     const frequentlyAccessed = [
+      'APPLICATION_LOCALIZE',
       'EXTENSION_ENABLED',
       'TRANSLATE_ON_TEXT_FIELDS',
       'ENABLE_SHORTCUT_FOR_TEXT_FIELDS',
@@ -440,7 +486,9 @@ class SettingsManager {
       'TRANSLATE_WITH_SELECT_ELEMENT',
       'ACTIVE_SELECTION_ICON_ON_TEXTFIELDS',
       'ENABLE_DICTIONARY',
-      'ENHANCED_TRIPLE_CLICK_DRAG'
+      'ENHANCED_TRIPLE_CLICK_DRAG',
+      'SHOW_DESKTOP_FAB',
+      'MOBILE_UI_MODE'
     ]
 
     for (const key of frequentlyAccessed) {

@@ -28,7 +28,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useSettingsStore } from '@/features/settings/stores/settings.js'
 import { getScopedLogger } from '@/shared/logging/logger.js'
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js'
@@ -46,12 +46,11 @@ const settingsStore = useSettingsStore()
 // Navigation items, labels are reactive to language changes
 const navigationItems = ref([
   { name: 'languages', labelKey: 'languages_tab_title' },
-  { name: 'appearance', labelKey: 'appearance_tab_title' },
   { name: 'activation', labelKey: 'activation_tab_title' },
   { name: 'prompt', labelKey: 'prompt_tab_title' },
-  { name: 'api', labelKey: 'api_tab_title' },
-  { name: 'import-export', labelKey: 'import_export_tab_title' },
+  { name: 'appearance', labelKey: 'appearance_tab_title' },
   { name: 'advance', labelKey: 'advance_tab_title' },
+  { name: 'import-export', labelKey: 'import_export_tab_title' },
   { name: 'help', labelKey: 'help_tab_title' },
   { name: 'about', labelKey: 'about_tab_title' }
 ])
@@ -108,15 +107,6 @@ const saveAllSettings = async () => {
     isSaving.value = false
   }
 }
-
-// Disable prompt tab based on selected API (like original logic)
-const shouldDisablePromptTab = computed(() => {
-  const provider = settingsStore.selectedProvider
-  return ['google', 'bing', 'browserapi', 'yandex'].includes(provider)
-})
-
-// Apply disabled state to prompt tab
-navigationItems.value.find(item => item.name === 'prompt').disabled = shouldDisablePromptTab
 </script>
 
 <style lang="scss" scoped>
@@ -125,7 +115,7 @@ navigationItems.value.find(item => item.name === 'prompt').disabled = shouldDisa
 .vertical-tabs {
   flex: 0 0 200px;
   border-right: $border-width $border-style var(--color-border);
-  padding: $spacing-md 0;
+  padding: $spacing-sm 0 0 0; /* Restored to 10px (spacing-sm) */
   display: flex;
   flex-direction: column;
   background-color: var(--color-surface);
@@ -133,10 +123,13 @@ navigationItems.value.find(item => item.name === 'prompt').disabled = shouldDisa
   box-sizing: border-box;
   max-width: 200px;
   width: 200px;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
   
   // Custom scrollbar
   &::-webkit-scrollbar {
-    width: 6px;
+    width: 4px;
   }
   
   &::-webkit-scrollbar-track {
@@ -145,7 +138,7 @@ navigationItems.value.find(item => item.name === 'prompt').disabled = shouldDisa
   
   &::-webkit-scrollbar-thumb {
     background-color: var(--color-border);
-    border-radius: 3px;
+    border-radius: 2px;
     
     &:hover {
       background-color: var(--color-text-secondary);
@@ -205,16 +198,22 @@ navigationItems.value.find(item => item.name === 'prompt').disabled = shouldDisa
 
 .tabs-action-area {
   margin-top: auto;
-  padding: $spacing-md;
+  position: sticky;
+  bottom: 0;
+  background-color: var(--color-surface);
+  padding: $spacing-md $spacing-md calc($spacing-md + 45px) $spacing-md;
   border-top: $border-width $border-style var(--color-border);
   display: flex;
   flex-direction: column;
   gap: $spacing-base;
   align-items: center;
+  z-index: 5;
 }
 
 .save-button {
   width: auto;
+  min-width: max-content;
+  white-space: nowrap;
   padding: $spacing-sm $spacing-lg;
   font-size: $font-size-sm;
   font-weight: $font-weight-medium;
@@ -261,20 +260,40 @@ navigationItems.value.find(item => item.name === 'prompt').disabled = shouldDisa
     border-bottom: $border-width $border-style var(--color-border);
     flex-direction: row;
     overflow-x: auto;
-    padding: $spacing-sm 0;
+    padding: $spacing-xs 0;
     width: 100%;
     max-width: none;
+    height: auto; /* Reset desktop height */
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: var(--color-surface);
     
     .tab-button {
       border-left: none;
-      border-bottom: 4px solid transparent;
+      border-bottom: 3px solid transparent;
       white-space: nowrap;
-      min-width: 120px;
+      padding: $spacing-sm $spacing-md;
+      min-width: auto;
       
       &.active {
         border-left: none;
         border-bottom-color: var(--color-primary);
+        
+        &::before {
+          display: none;
+        }
       }
+    }
+
+    .tabs-action-area {
+      display: flex;
+      flex-direction: row;
+      margin-top: 0;
+      border-top: none;
+      padding: 0 $spacing-md;
+      border-left: $border-width $border-style var(--color-border);
+      flex-shrink: 0;
     }
   }
 }
@@ -287,16 +306,21 @@ navigationItems.value.find(item => item.name === 'prompt').disabled = shouldDisa
     border-bottom: $border-width $border-style var(--color-border);
     flex-direction: row;
     overflow-x: auto;
-    padding: $spacing-sm 0;
+    padding: 0;
     width: 100%;
     max-width: none;
+    height: auto; /* Reset desktop height */
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: var(--color-surface);
     
     .tab-button {
       flex-shrink: 0;
       border-left: none;
-      border-bottom: 4px solid transparent;
-      padding: $spacing-sm $spacing-md;
-      white-space: nowrap;
+      border-bottom: 3px solid transparent;
+      padding: $spacing-md $spacing-md;
+      font-size: $font-size-xs;
       
       &.active {
         border-left-color: transparent;
@@ -305,7 +329,39 @@ navigationItems.value.find(item => item.name === 'prompt').disabled = shouldDisa
     }
     
     .tabs-action-area {
-      display: none;
+      position: fixed;
+      bottom: 20px; /* Elevated from 0 to clear most nav bars */
+      left: 10px;
+      right: 10px;
+      height: 60px; 
+      background: var(--color-surface);
+      border: $border-width $border-style var(--color-border); /* Full border since it's floating now */
+      border-radius: $border-radius-lg; /* Rounded corners for modern look */
+      padding: 0 $spacing-md; 
+      z-index: 100;
+      flex-direction: row;
+      align-items: center; 
+      justify-content: space-between;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+      margin: 0;
+      width: calc(100% - 20px);
+      box-sizing: border-box;
+
+      .save-button {
+        width: auto;
+        min-width: max-content;
+        white-space: nowrap;
+        padding: $spacing-xs $spacing-lg;
+        margin-bottom: 0; 
+      }
+
+      #status {
+        width: auto;
+        order: 0;
+        font-size: $font-size-xs;
+        margin: 0;
+        padding-inline-end: $spacing-sm;
+      }
     }
   }
 }

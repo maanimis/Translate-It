@@ -7,16 +7,16 @@ import {
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { TranslationMode } from "@/shared/config/config.js";
-import { TranslationSegmentMapper } from "@/utils/translation/TranslationSegmentMapper.js";
 import { TRANSLATION_CONSTANTS } from "@/shared/config/translationConstants.js";
 import { LANGUAGE_NAME_TO_CODE_MAP } from "@/shared/config/languageConstants.js";
+import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
 
 const logger = getScopedLogger(LOG_COMPONENTS.PROVIDERS, 'GoogleTranslate');
 
 export class GoogleTranslateProvider extends BaseTranslateProvider {
   static type = "translate";
   static description = "Free Google Translate service";
-  static displayName = "Google Translate";
+  static displayName = "Google Translate (Classic)";
   static reliableJsonMode = false;
   static supportsDictionary = true;
   static CHAR_LIMIT = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.GOOGLE;
@@ -28,7 +28,7 @@ export class GoogleTranslateProvider extends BaseTranslateProvider {
   static maxChunksPerBatch = TRANSLATION_CONSTANTS.MAX_CHUNKS_PER_BATCH.GOOGLE;
 
   constructor() {
-    super("GoogleTranslate");
+    super(ProviderNames.GOOGLE_TRANSLATE);
   }
 
   _getLangCode(lang) {
@@ -52,14 +52,24 @@ export class GoogleTranslateProvider extends BaseTranslateProvider {
 
     // Add key info log for translation start
     logger.info(`[Google] Starting translation: ${chunkTexts.join(TRANSLATION_CONSTANTS.TEXT_DELIMITER).length} chars`);
-    // Dictionary should only be enabled for single-segment translations and NOT in Field mode.
-    const shouldIncludeDictionary = isDictionaryEnabled && chunkTexts.length === 1 && translateMode !== TranslationMode.Field;
+    // Dictionary should only be enabled for single-segment translations and NOT in Field, Select Element or Page mode.
+    const isExcludedMode = translateMode === TranslationMode.Field || 
+                          translateMode === TranslationMode.Page || 
+                          translateMode === TranslationMode.Select_Element;
+
+    const shouldIncludeDictionary = isDictionaryEnabled && 
+                                    chunkTexts.length === 1 && 
+                                    !isExcludedMode;
 
     const apiUrl = await getGoogleTranslateUrlAsync();
+    
+    const sl = this._getLangCode(sourceLang);
+    const tl = this._getLangCode(targetLang);
+
     const queryParams = new URLSearchParams({
       client: 'gtx',
-      sl: sourceLang,
-      tl: targetLang,
+      sl: sl,
+      tl: tl,
       dt: 't',
     });
 
@@ -70,7 +80,7 @@ export class GoogleTranslateProvider extends BaseTranslateProvider {
     const textToTranslate = chunkTexts.join(TRANSLATION_CONSTANTS.TEXT_DELIMITER);
     const requestBody = `q=${encodeURIComponent(textToTranslate)}`;
 
-    const result = await this._executeWithErrorHandling({
+    const result = await this._executeRequest({
       url: `${apiUrl}?${queryParams.toString()}`,
       fetchOptions: {
         method: "POST",
@@ -81,35 +91,11 @@ export class GoogleTranslateProvider extends BaseTranslateProvider {
       },
       extractResponse: (data) => {
         if (!data?.[0]?.[0]?.[0]) {
-          return { translatedSegments: chunkTexts.map(() => ''), candidateText: '' };
+          return { translatedText: "", candidateText: "" };
         }
 
         const translatedText = data[0].map(segment => segment[0]).join('');
-        const translatedSegments = translatedText.split(TRANSLATION_CONSTANTS.TEXT_DELIMITER);
-
-        if (translatedSegments.length !== chunkTexts.length) {
-          logger.debug("[Google] Translated segment count mismatch after splitting.", {
-            expected: chunkTexts.length,
-            got: translatedSegments.length
-          });
-
-          // Enhanced fallback: try to map back to original segments
-          const fallbackSegments = TranslationSegmentMapper.mapTranslationToOriginalSegments(
-            translatedText,
-            chunkTexts,
-            TRANSLATION_CONSTANTS.TEXT_DELIMITER,
-            'GoogleTranslate'
-          );
-
-          if (fallbackSegments.length === chunkTexts.length) {
-            logger.info("[Google] Successfully mapped translation to original segments using fallback logic");
-            return { translatedSegments: fallbackSegments, candidateText: '' };
-          } else {
-            logger.debug("[Google] Fallback mapping also failed, using single segment");
-            return { translatedSegments: [translatedText], candidateText: '' };
-          }
-        }
-
+        
         let candidateText = "";
         if (shouldIncludeDictionary && data[1]) {
           candidateText = data[1].map((dict) => {
@@ -120,7 +106,7 @@ export class GoogleTranslateProvider extends BaseTranslateProvider {
         }
 
         return {
-          translatedSegments,
+          translatedText,
           candidateText: candidateText.trim(),
         };
       },
@@ -128,13 +114,16 @@ export class GoogleTranslateProvider extends BaseTranslateProvider {
       abortController,
     });
 
+    // Use robust split logic from base class OUTSIDE extractResponse
+    const translatedSegments = await this._robustSplit(result?.translatedText || "", chunkTexts);
+
     // Handle dictionary formatting for single segment
     if (chunkTexts.length === 1 && result?.candidateText) {
       const formattedDictionary = this._formatDictionaryAsMarkdown(result.candidateText);
-      return [`${result.translatedSegments[0]}\n\n${formattedDictionary}`];
+      return [`${translatedSegments[0]}\n\n${formattedDictionary}`];
     }
 
-    const finalResult = result?.translatedSegments || chunkTexts;
+    const finalResult = translatedSegments || chunkTexts;
 
     // Add completion log for successful translation
     if (finalResult.length > 0) {

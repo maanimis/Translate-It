@@ -4,7 +4,7 @@
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 
-const logger = getScopedLogger(LOG_COMPONENTS.TEXT, 'InterfaceLanguageLoader');
+const logger = getScopedLogger(LOG_COMPONENTS.I18N, 'InterfaceLanguageLoader');
 
 // Cache for loaded interface language packs
 const interfaceLanguageCache = new Map();
@@ -41,6 +41,7 @@ export async function loadInterfaceLanguagePack(langCode) {
     }
 
     // Dynamically import the language chunk
+    // eslint-disable-next-line noUnsanitized/method -- Safe: normalizedCode is validated against INTERFACE_LANGUAGE_CHUNKS
     const langModule = await import(
       /* webpackChunkName: "locales/[request]" */
       /* webpackMode: "lazy-once" */

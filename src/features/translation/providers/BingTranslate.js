@@ -5,9 +5,10 @@ import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { LanguageSwappingService } from "@/features/translation/providers/LanguageSwappingService.js";
 import { AUTO_DETECT_VALUE } from "@/shared/config/constants.js";
 import { ErrorTypes } from "@/shared/error-management/ErrorTypes.js";
-import { TranslationSegmentMapper } from "@/utils/translation/TranslationSegmentMapper.js";
+import { matchErrorToType, isFatalError } from '@/shared/error-management/ErrorMatcher.js';
 import { TRANSLATION_CONSTANTS } from "@/shared/config/translationConstants.js";
 import { PROVIDER_LANGUAGE_MAPPINGS, getProviderLanguageCode } from "@/shared/config/languageConstants.js";
+import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
 
 const logger = getScopedLogger(LOG_COMPONENTS.PROVIDERS, 'BingTranslate');
 
@@ -21,7 +22,7 @@ export class BingTranslateProvider extends BaseTranslateProvider {
   static bingTokenUrl = "https://www.bing.com/translator";
   static bingAccessToken = null;
   static CHAR_LIMIT = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.BING;
-  static CHUNK_SIZE = 15; // Reduced from 25 to avoid API limits
+  static CHUNK_SIZE = TRANSLATION_CONSTANTS.MAX_CHUNKS_PER_BATCH.BING; 
 
   // BaseTranslateProvider capabilities
   static supportsStreaming = TRANSLATION_CONSTANTS.SUPPORTS_STREAMING.BING;
@@ -30,7 +31,7 @@ export class BingTranslateProvider extends BaseTranslateProvider {
   static maxChunksPerBatch = TRANSLATION_CONSTANTS.MAX_CHUNKS_PER_BATCH.BING; // Bing's chunk size - reduced for reliability
 
   constructor() {
-    super("BingTranslate");
+    super(ProviderNames.BING_TRANSLATE);
   }
 
   _getLangCode(lang) {
@@ -97,26 +98,44 @@ export class BingTranslateProvider extends BaseTranslateProvider {
 
       const textToTranslate = chunkTexts.join(TRANSLATION_CONSTANTS.TEXT_DELIMITER);
       
-      // Additional size validation
-      if (textToTranslate.length > this.constructor.characterLimit * 2) {
-        logger.info(`[Bing] Text too long (${textToTranslate.length} chars), may cause API error`);
-        // Try to split by reducing chunk size
+      const sl = this._getLangCode(sourceLang);
+      const tl = this._getLangCode(targetLang);
+
+      // Additional size validation - be more strict with Bing's limits
+      if (textToTranslate.length > this.constructor.characterLimit) {
+        logger.info(`[Bing] Text too long (${textToTranslate.length} chars, limit is ${this.constructor.characterLimit}), splitting`);
+
+        // Scenario A: Multiple chunks - split the array
         if (chunkTexts.length > 1) {
           const midPoint = Math.ceil(chunkTexts.length / 2);
           const firstHalf = chunkTexts.slice(0, midPoint);
           const secondHalf = chunkTexts.slice(midPoint);
-          
+
           const firstResults = await this._translateChunk(firstHalf, sourceLang, targetLang, translateMode, abortController);
           const secondResults = await this._translateChunk(secondHalf, sourceLang, targetLang, translateMode, abortController);
-          
+
           return [...firstResults, ...secondResults];
+        } 
+        // Scenario B: Single chunk but too long - split the string itself
+        else if (chunkTexts.length === 1) {
+          const singleText = chunkTexts[0];
+          const parts = this._splitSingleLongString(singleText, this.constructor.characterLimit);
+
+          logger.info(`[Bing] Single long node split into ${parts.length} parts`);
+
+          const translatedParts = [];
+          for (const part of parts) {
+            const res = await this._translateChunk([part], sourceLang, targetLang, translateMode, abortController);
+            translatedParts.push(res[0]);
+          }
+
+          return [translatedParts.join(' ')];
         }
       }
-      
-      const formData = new URLSearchParams({
-        text: textToTranslate, 
-        fromLang: sourceLang, 
-        to: targetLang, 
+
+      const formData = new URLSearchParams({        text: textToTranslate, 
+        fromLang: sl, 
+        to: tl, 
         token: tokenData.token, 
         key: tokenData.key,
       });
@@ -191,51 +210,7 @@ export class BingTranslateProvider extends BaseTranslateProvider {
             return chunkTexts.map(() => "");
           }
           
-          let translatedSegments = targetText.split(TRANSLATION_CONSTANTS.TEXT_DELIMITER).map(t => t.trim());
-          
-          // Validate segment count match
-          if (translatedSegments.length !== chunkTexts.length) {
-            logger.debug("[Bing] Translated segment count mismatch after splitting.", { 
-              expected: chunkTexts.length, 
-              got: translatedSegments.length 
-            });
-            
-            // Try alternative splitting strategies
-            if (translatedSegments.length === 1 && chunkTexts.length > 1) {
-              // If we got one big translation but expected multiple, try enhanced mapping
-              const text = translatedSegments[0];
-
-              // Use enhanced mapping similar to GoogleTranslate
-              const mappedSegments = TranslationSegmentMapper.mapTranslationToOriginalSegments(
-                text,
-                chunkTexts,
-                TRANSLATION_CONSTANTS.TEXT_DELIMITER,
-                'BingTranslate'
-              );
-
-              if (mappedSegments.length === chunkTexts.length) {
-                translatedSegments = mappedSegments;
-                logger.info("[Bing] Successfully mapped translation to original segments");
-              } else {
-                // Use the utility's fallback method
-                translatedSegments = TranslationSegmentMapper.createAlternativeFallback(
-                  text,
-                  chunkTexts,
-                  'BingTranslate'
-                );
-              }
-            } else if (translatedSegments.length > chunkTexts.length) {
-              // If we got too many segments, take only what we need
-              translatedSegments = translatedSegments.slice(0, chunkTexts.length);
-            } else {
-              // If we got fewer segments than expected, pad with empty strings
-              while (translatedSegments.length < chunkTexts.length) {
-                translatedSegments.push("");
-              }
-            }
-          }
-          
-          return translatedSegments;
+          return await this._robustSplit(targetText, chunkTexts);
         },
         context,
         abortController,
@@ -251,15 +226,24 @@ export class BingTranslateProvider extends BaseTranslateProvider {
       return finalResult;
 
     } catch (error) {
-      // Handle HTML response and JSON parsing errors with retry
-      if (error.name === 'BingHtmlResponseError' || error.name === 'BingJsonParseError') {
+      const errorType = error.type || matchErrorToType(error);
+      const isFatal = isFatalError(error) || isFatalError(errorType);
+
+      // CRITICAL: If it's a fatal error, don't attempt any retries
+      if (isFatal) {
+        if (!error.type) error.type = errorType;
+        throw error;
+      }
+
+      // Handle HTML response, JSON parsing errors, and Status 400 with retry
+      if (error.name === 'BingHtmlResponseError' || error.name === 'BingJsonParseError' || error.name === 'BingApiError') {
         const maxRetries = providerConfig?.batching?.maxRetries || 3;
         const minChunkSize = providerConfig?.batching?.minChunkSize || 100;
         const adaptiveChunking = providerConfig?.batching?.adaptiveChunking || true;
 
-        logger.debug(`[Bing] ${error.name} on attempt ${retryAttempt + 1}/${maxRetries + 1}. Chunk size: ${error.chunkSize || chunkTexts.length}`);
+        logger.debug(`[Bing] ${error.name} on attempt ${retryAttempt + 1}/${maxRetries + 1}. Chunk size: ${chunkTexts.length}`);
 
-        // Check if we should retry with smaller chunks
+        // For BingApiError (Status 400), we MUST reduce chunk size as it often means the request was too large or complex
         if (adaptiveChunking && retryAttempt < maxRetries && chunkTexts.length > 1) {
           // Calculate new chunk size with exponential backoff
           const reductionFactor = Math.pow(2, retryAttempt + 1);
@@ -329,22 +313,14 @@ export class BingTranslateProvider extends BaseTranslateProvider {
 
       if (error.name === 'BingApiError' || error instanceof SyntaxError) {
         logger.debug(`[Bing] Chunk translation failed, will be handled by fallback. Chunk size: ${chunkTexts.length}`);
+        // Ensure type is set
+        if (!error.type) error.type = errorType;
         // Let BaseTranslateProvider handle the error and fallback
         throw error;
       }
 
-      // Handle token-related errors and other errors with proper typing
-      if (!error.type) {
-        if (error.message?.includes("token")) {
-          error.type = ErrorTypes.API_KEY_MISSING;
-        } else if (error.message?.includes("rate limit") || error.message?.includes("quota")) {
-          error.type = ErrorTypes.API_QUOTA_EXCEEDED;
-        } else {
-          error.type = ErrorTypes.API;
-        }
-      }
-
       error.context = context;
+      if (!error.type) error.type = errorType;
       throw error;
     }
   }
@@ -410,6 +386,55 @@ export class BingTranslateProvider extends BaseTranslateProvider {
 
   static cleanup() {
     BingTranslateProvider.bingAccessToken = null;
+  }
+
+  /**
+   * Split a single long string into multiple parts that don't exceed limit
+   * This is used when a single node is too long for the provider
+   * @param {string} text - String to split
+   * @param {number} limit - Maximum length for each part
+   * @returns {string[]} - Array of smaller strings
+   */
+  _splitSingleLongString(text, limit) {
+    if (!text || text.length <= limit) return [text];
+    
+    const parts = [];
+    let remaining = text;
+    
+    while (remaining.length > limit) {
+      // Try to split by sentence markers first (ordered by semantic strength)
+      // Including East Asian markers: 。(Japanese/Chinese period), ！(East Asian exclamation), ？(East Asian question), 、(East Asian comma)
+      const sentenceMarkers = ['\n', '. ', '! ', '? ', '。', '！', '？', '، ', '؛ ', '、', '; '];
+      let splitIdx = -1;
+      
+      for (const marker of sentenceMarkers) {
+        const idx = remaining.lastIndexOf(marker, limit);
+        // We want the furthest possible marker that's still within the limit
+        if (idx > splitIdx) {
+          // For markers with space, include the space. For single char markers, include the char.
+          splitIdx = idx + marker.length;
+        }
+      }
+      
+      // Fallback to space
+      if (splitIdx <= 0) {
+        splitIdx = remaining.lastIndexOf(' ', limit);
+      }
+      
+      // Fallback to hard cut
+      if (splitIdx <= 0) {
+        splitIdx = limit;
+      }
+      
+      parts.push(remaining.substring(0, splitIdx).trim());
+      remaining = remaining.substring(splitIdx).trim();
+    }
+    
+    if (remaining.length > 0) {
+      parts.push(remaining);
+    }
+    
+    return parts;
   }
 
   resetSessionContext() {

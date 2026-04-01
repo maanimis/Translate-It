@@ -247,21 +247,25 @@ class UtilsFactory {
     getLogger().debug('Loading browser utils lazily');
 
     const [
-      platformUtils,
       eventsUtils,
       compatibilityUtils,
       iconManagerModule
     ] = await Promise.all([
-      import('./browser/platform.js'),
       import('./browser/events.js'),
       import('./browser/compatibility.js'),
       import('./browser/ActionbarIconManager.js')
     ]);
 
-    return {
-      ...platformUtils,
-      ...eventsUtils,
+    // Map new names to old names for backward compatibility within the factory's returned object
+    const legacyCompatibility = {
       ...compatibilityUtils,
+      detectPlatform: compatibilityUtils.detectOS,
+      Platform: compatibilityUtils.OS_PLATFORMS
+    };
+
+    return {
+      ...eventsUtils,
+      ...legacyCompatibility,
       ActionbarIconManager: iconManagerModule.default || iconManagerModule.ActionbarIconManager,
       getActionbarIconManager: iconManagerModule.getActionbarIconManager
     };
@@ -378,42 +382,6 @@ class UtilsFactory {
 
     return {
       ...secureStorageModule
-    };
-  }
-
-  /**
-   * Load provider utilities lazily
-   */
-  async getProviderUtils() {
-    if (this.loadedModules.has('provider')) {
-      return this.loadedModules.get('provider');
-    }
-
-    if (this.loadingPromises.has('provider')) {
-      return await this.loadingPromises.get('provider');
-    }
-
-    const loadingPromise = this._loadProviderUtils();
-    this.loadingPromises.set('provider', loadingPromise);
-
-    const utils = await loadingPromise;
-    this.loadedModules.set('provider', utils);
-    this.loadingPromises.delete('provider');
-
-    return utils;
-  }
-
-  async _loadProviderUtils() {
-    getLogger().debug('Loading provider utils lazily');
-
-    const [
-      providerHtmlModule
-    ] = await Promise.all([
-      import('./providerHtmlGenerator.js')
-    ]);
-
-    return {
-      ...providerHtmlModule
     };
   }
 

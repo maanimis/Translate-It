@@ -12,8 +12,15 @@
       class="sidebar-content"
     >
       <div class="sidebar-header">
-        <h1>{{ t('name') }}</h1>
-        <span>{{ manifestVersion }}</span>
+        <a
+          :href="REPO_URLS.GITHUB_MAIN"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="header-logo-link"
+        >
+          <h1>{{ t('name') }}</h1>
+          <span>{{ manifestVersion }}</span>
+        </a>
         <p>{{ t('description') }}</p>
       </div>
       <div class="sidebar-section theme-controls">
@@ -21,26 +28,20 @@
       </div>
       <div class="sidebar-section localization-controls">
         <h2>{{ t('localization_section_title') }}</h2>
-        <ul :class="['language-list', { 'rtl': selectedLanguage === 'fa' }]">
-          <li
-            v-for="lang in interfaceLanguages"
-            :key="lang.code"
-            class="language-list-item"
-            :class="{ selected: selectedLanguage === lang.code }"
-            @click="selectedLanguage = lang.code"
-          >
-            <img
-              :src="getFlagUrl(lang.code)"
-              class="language-flag-image"
-              :alt="lang.name"
-            >
-            <span>{{ lang.name }}</span>
-          </li>
-        </ul>
+        
+        <!-- Desktop Language List -->
+        <div class="desktop-only">
+          <InterfaceLocaleSelector mode="list" />
+        </div>
+
+        <!-- Mobile Language Dropdown -->
+        <div class="mobile-only">
+          <InterfaceLocaleSelector mode="dropdown" />
+        </div>
       </div>
       <div class="sidebar-footer">
         <a
-          href="https://github.com/iSegaro/Translate-It"
+          :href="REPO_URLS.GITHUB_MAIN"
           target="_blank"
           rel="noopener noreferrer"
           :title="t('github_link_title') || 'GitHub'"
@@ -67,7 +68,7 @@
             target="_blank"
             rel="noopener noreferrer"
           >iSegar0</a>
-          <span>&copy; 2025</span>
+          <span>&copy; {{ copyrightYear }}</span>
         </p>
       </div>
     </div>
@@ -77,50 +78,25 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js'
-import { useSettingsStore } from '@/features/settings/stores/settings.js'
 import ThemeSelector from './components/ThemeSelector.vue'
-import { useLanguages } from '@/composables/shared/useLanguages.js'
+import InterfaceLocaleSelector from './components/InterfaceLocaleSelector.vue'
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
+import { REPO_URLS } from '@/shared/config/constants.js'
 import browser from 'webextension-polyfill'
 
 const sidebarError = ref('')
 const logger = getScopedLogger(LOG_COMPONENTS.UI, 'OptionsSidebar');
-const { t, changeLanguage } = useUnifiedI18n()
-const settingsStore = useSettingsStore()
-const { getInterfaceLanguages } = useLanguages()
+const { t } = useUnifiedI18n()
 const manifestVersion = ref('v0.0.0')
 
-const getFlagUrl = (code) => {
-  const flagMap = {
-    en: 'gb',
-    fa: 'ir'
-  };
-  const flag = flagMap[code] || code;
-  try {
-    return browser.runtime.getURL(`icons/flags/${flag}.svg`)
-  } catch (error) {
-    logger.error(`Failed to load flag for ${code}:`, error);
-    return '';
-  }
-};
-const interfaceLanguages = computed(() => getInterfaceLanguages())
-// Use reactive reference that stays in sync with settings
-const selectedLanguage = computed({
-  get: () => settingsStore.settings?.APPLICATION_LOCALIZE || 'en',
-  set: async (value) => {
-    try {
-      await changeLanguage(value)
-      browser.runtime.sendMessage({
-        action: 'LANGUAGE_CHANGED',
-        payload: { lang: value }
-      }).catch(error => {
-        logger.debug('Could not send LANGUAGE_CHANGED message, probably sidepanel is closed:', error.message);
-      });
-    } catch (error) {
-      logger.error('Failed to change language:', error)
-    }
-  }
+// Dynamic copyright year logic based on build time
+const copyrightYear = computed(() => {
+  const startYear = 2025
+  const buildYear = __BUILD_YEAR__ || startYear
+
+  // If build year is greater than start year, show range, otherwise just start year
+  return buildYear > startYear ? `${startYear}-${buildYear}` : `${startYear}`
 })
 
 onMounted(async () => {
@@ -153,9 +129,20 @@ onMounted(async () => {
   position: relative;
   z-index: 1;
   box-sizing: border-box;
-
-  /* Better visual hierarchy */
   box-shadow: inset -1px 0 0 var(--color-border);
+  
+  /* Add scroll support for the entire sidebar if content is too tall */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Custom scrollbar for sidebar */
+.options-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+.options-sidebar::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 2px;
 }
 
 .sidebar-content {
@@ -163,12 +150,21 @@ onMounted(async () => {
   flex-direction: column;
   gap: var(--spacing-md);
   flex-grow: 1;
+  min-height: min-content; /* Ensure items don't squash */
 }
 
 .sidebar-header {
-  padding: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
   text-align: center;
-  margin-bottom: var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+
+  .header-logo-link {
+    text-decoration: none;
+    color: inherit;
+    display: block;
+    cursor: default;
+    pointer-events: none; /* Disabled by default on desktop */
+  }
 
   h1 {
     font-size: var(--font-size-xxl);
@@ -191,16 +187,16 @@ onMounted(async () => {
 
 .sidebar-section {
   border: var(--border-width) var(--border-style) var(--color-border);
-  border-radius: var(--border-radius-lg); /* Add rounded corners */
+  border-radius: var(--border-radius-lg);
   padding: var(--spacing-md);
   background: var(--color-background);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Add subtle shadow for better appearance */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   transition: border-color var(--transition-base), box-shadow var(--transition-base);
-  margin: 10px; /* Add space between sections */
+  margin: 10px;
 
   &:hover {
     border-color: var(--color-primary);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15); /* Enhance shadow on hover */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
   }
 
   h2 {
@@ -242,92 +238,157 @@ onMounted(async () => {
   }
 }
 
+.desktop-only {
+  display: block;
+}
+
+.mobile-only {
+  display: none;
+}
+
 /* Tablet responsive */
-@media (max-width: var(--breakpoint-lg)) {
+@media (max-width: #{$breakpoint-lg}) {
+  .desktop-only {
+    display: none;
+  }
+
+  .mobile-only {
+    display: block;
+    width: auto;
+    min-width: 140px;
+  }
+
   .options-sidebar {
     flex: none;
+    width: 100%;
     border-right: none;
     border-bottom: var(--border-width) var(--border-style) var(--color-border);
+    flex-direction: row;
+    align-items: center;
+    padding: 6px var(--spacing-md);
+    min-height: 50px;
+    position: relative; /* Ensure it stays in flow */
+    overflow: visible !important; /* Allow dropdowns to show outside the header */
+    z-index: 100; /* Ensure header is above main content */
+    
+    /* Force LTR for the header on mobile/tablet to keep it consistent */
+    direction: ltr !important;
+    text-align: left !important;
+  }
+
+  .sidebar-content {
+    flex-direction: row;
+    align-items: center;
+    width: 100%;
+    gap: var(--spacing-sm);
+    justify-content: space-between; /* Spread items across the header */
+  }
+
+  .sidebar-header {
+    margin-bottom: 0;
+    text-align: left;
+    flex: 0 1 auto;
+    display: flex; /* Align H1 and Span in a row */
+    align-items: baseline;
+    gap: 8px;
+
+    .header-logo-link {
+      pointer-events: auto; /* Enable link only in header mode */
+      cursor: pointer;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      transition: transform var(--transition-base);
+
+      &:hover {
+        transform: scale(1.02);
+        h1 { color: var(--color-primary); }
+      }
+    }
+
+    p { display: none; } /* Still hide description */
+    span { 
+      display: inline-block; /* Show version now */
+      font-size: var(--font-size-xs);
+      opacity: 0.7;
+    }
+
+    h1 { 
+      font-size: var(--font-size-xl); 
+      margin: 0;
+      white-space: nowrap;
+    }
+  }
+
+  .sidebar-section {
+    margin: 0;
+    padding: var(--spacing-sm);
+    box-shadow: none !important;
+    border: none !important;
+    background: transparent !important;
+    h2 { display: none; }
+    flex: 0 0 auto; /* Keep controls at their natural size */
+    
+    /* Limit list height even more in horizontal header mode */
+    .language-list {
+      max-height: 100px !important;
+    }
+    
+    /* Remove click/tap highlight effects on mobile header */
+    -webkit-tap-highlight-color: transparent !important;
+    outline: none !important;
+    
+    &:hover {
+      box-shadow: none !important;
+      border: none !important;
+    }
+
+    // Target the specific control groups within sections
+    :deep(*) {
+      outline: none !important;
+      -webkit-tap-highlight-color: transparent !important;
+    }
+  }
+
+  .sidebar-footer {
+    display: none;
   }
 }
 
 /* Mobile responsive */
-@media (max-width: var(--breakpoint-md)) {
+@media (max-width: 768px) {
   .options-sidebar {
-    flex: none;
-    padding: var(--spacing-base);
-    border-right: none;
-    border-bottom: var(--border-width) var(--border-style) var(--color-border);
+    padding: 4px var(--spacing-sm);
+    min-height: 44px;
+  }
 
-    .sidebar-header {
-      text-align: left;
+  .sidebar-content {
+    gap: var(--spacing-sm);
+    justify-content: space-between;
+  }
 
-      h1 {
-        font-size: var(--font-size-lg);
-      }
+  .sidebar-header {
+    h1 {
+      font-size: var(--font-size-lg);
     }
+  }
+  
+  .sidebar-section {
+    padding: 0;
   }
 }
 
-.language-select {
-  width: 100%;
-  padding: var(--spacing-sm);
-  border-radius: var(--border-radius-md);
-  border: 1px solid var(--color-border);
-  background-color: var(--color-background);
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
+/* Small mobile responsive */
+@media (max-width: 480px) {
+  .sidebar-header {
+    h1 {
+      font-size: var(--font-size-base);
+    }
+  }
 }
 
 .localization-controls {
-  .language-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    max-height: 200px;
-    overflow-y: auto;
-  }
-  .language-list-item {
-    cursor: pointer;
-    padding: 8px 12px;
-    border-radius: var(--border-radius-md);
-    display: flex;
-    align-items: center;
-    font-size: var(--font-size-sm);
-    transition: background-color var(--transition-fast);
-
-    &:hover {
-      background-color: var(--color-background-hover, #f0f0f0);
-    }
-
-    &.selected {
-      background-color: var(--color-active-background, #e8f0fe);
-      color: var(--color-active-text, #1967d2);
-      font-weight: var(--font-weight-medium);
-    }
-
-    /* Dark mode styling for selected item */
-    :root.theme-dark &.selected {
-      background-color: #1a365d; /* Dark navy blue */
-      color: white;
-    }
-  }
-
-  .language-flag-image {
-    width: 18px;
-    height: 14px;
-    margin-right: 12px;
-    border: 1px solid var(--color-border);
-    object-fit: cover;
-    vertical-align: middle;
-    border-radius: 2px;
-  }
-
-  /* RTL support using local class */
-  .language-list.rtl .language-flag-image {
-    margin-right: 0;
-    margin-left: 16px;
-  }
+  // Empty or minimal styles since InterfaceLocaleSelector handles it
 }
 
 .sidebar-section.theme-controls {
@@ -338,10 +399,6 @@ onMounted(async () => {
 
 :global(.options-layout.rtl) {
   .sidebar-section h2 {
-    text-align: right;
-  }
-
-  .language-list-item {
     text-align: right;
   }
 }

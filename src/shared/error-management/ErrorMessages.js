@@ -1,6 +1,7 @@
 // s../error-management/ErrorMessages.js
 
 import { ErrorTypes } from "./ErrorTypes.js";
+import { matchErrorToType } from "./ErrorMatcher.js";
 import ExtensionContextManager from '@/core/extensionContext.js';
 import { utilsFactory } from '@/utils/UtilsFactory.js';
 
@@ -12,29 +13,35 @@ export const errorMessages = {
   [ErrorTypes.TRANSLATION_NOT_FOUND]: "Translation not found",
   [ErrorTypes.TRANSLATION_FAILED]: "Translation failed",
   [ErrorTypes.TRANSLATION_TIMEOUT]: "Translation timed out",
+  [ErrorTypes.SETTINGS_LOADING_TIMEOUT]: "Settings loading timed out",
   [ErrorTypes.LANGUAGE_PAIR_NOT_SUPPORTED]:
     "Language pair not supported by the selected translation service",
+  [ErrorTypes.USER_CANCELLED]: "Translation cancelled by user",
+  [ErrorTypes.PAGE_TRANSLATION_STOPPED]: "Whole-page translation stopped: {error}",
 
   // API settings errors
-  [ErrorTypes.API]: "API error",
+  [ErrorTypes.BROWSER_API_UNAVAILABLE]: "The translation API is not available or supported in this browser",
   [ErrorTypes.API_RESPONSE_INVALID]: "Invalid API response format",
   [ErrorTypes.API_KEY_MISSING]: "API Key is missing",
   [ErrorTypes.API_KEY_INVALID]: "API Key is wrong or invalid",
-  [ErrorTypes.API_URL_MISSING]: "API URL is missing",
+  [ErrorTypes.API_URL_MISSING]: "API URL is missing. Please enter it in settings.",
+  [ErrorTypes.API_ENDPOINT_INVALID]: "API Endpoint not found (404). Please check your URL.",
   [ErrorTypes.MODEL_MISSING]: "AI Model is missing or invalid",
   [ErrorTypes.MODEL_OVERLOADED]: "The Model is overloaded",
   [ErrorTypes.QUOTA_EXCEEDED]: "You exceeded your current quota",
   [ErrorTypes.GEMINI_QUOTA_REGION]:
     "You reached the Gemini quota. (Region issue)",
-  [ErrorTypes.INVALID_REQUEST]: "Invalid request format or parameters.", // برای 400, 422
+  [ErrorTypes.INVALID_REQUEST]: "Invalid request format or parameters.",
   [ErrorTypes.INSUFFICIENT_BALANCE]:
-    "Insufficient balance or credits for the selected API.", // برای 402
+    "Insufficient balance or credits for the selected API.",
   [ErrorTypes.FORBIDDEN_ERROR]:
-    "Access denied. Check permissions or potential content moderation.", // برای 403
+    "Access denied. Check permissions or potential content moderation.",
   [ErrorTypes.RATE_LIMIT_REACHED]:
-    "Rate limit reached. Please pace your requests or try again later.", // برای 429
+    "Rate limit reached. Please try again in a few minutes.",
   [ErrorTypes.SERVER_ERROR]:
-    "The service provider's server encountered an error. Please try again later.", // برای 500, 502, 503
+    "The service provider's server encountered an error. Please try again later.",
+  [ErrorTypes.CIRCUIT_BREAKER_OPEN]:
+    "Circuit breaker is open. This provider is temporarily disabled due to too many failures.",
 
   // Import/Export password errors
   [ErrorTypes.IMPORT_PASSWORD_REQUIRED]:
@@ -70,22 +77,14 @@ export const errorMessages = {
 
 /**
  * Returns a localized message for a given error type.
- * It prefixes the type with 'ERRORS_' when looking up in translations.
- * 
- * @param {string} type - Error type
- * @param {boolean} skipI18n - Skip i18n lookup (for extension context errors)
  */
 export async function getErrorMessage(type, skipI18n = false) {
-  // Use ExtensionContextManager for context errors
   if (skipI18n || ExtensionContextManager.isContextError({ message: type })) {
     return ExtensionContextManager.getContextErrorMessage(type, errorMessages);
   }
 
   try {
-    // Use ExtensionContextManager for safe i18n operations
     const translationKey = type?.startsWith("ERRORS_") ? type : `ERRORS_${type}`;
-
-    // Get i18n utils from factory
     const { getTranslationString } = await utilsFactory.getI18nUtils();
 
     const msg = await ExtensionContextManager.safeI18nOperation(
@@ -94,21 +93,50 @@ export async function getErrorMessage(type, skipI18n = false) {
       errorMessages[type] || errorMessages[ErrorTypes.UNKNOWN]
     );
 
-    // Return the result (either translated string or fallback)
     return msg && msg.trim() ? msg : (errorMessages[type] || errorMessages[ErrorTypes.UNKNOWN]);
 
   } catch {
-    // If i18n fails (e.g., extension context invalidated), fall back to English
     return errorMessages[type] || errorMessages[ErrorTypes.UNKNOWN];
   }
 }
 
 /**
  * Retrieves a localized error message by its key.
- * @param {string} key - The error type or message key
- * @returns {string|null} - Localized message or null if not found
  */
 export function getErrorMessageByKey(key) {
   if (typeof key !== "string") return null;
   return errorMessages[key] ?? null;
 }
+
+/**
+ * Translates an error object or message to a user-friendly string.
+ * Consolidates logic from previous ErrorMessagesLocalize.js
+ * 
+ * @param {string|Error|object} error 
+ * @returns {Promise<string>}
+ */
+export async function translateErrorMessage(error) {
+  if (!error) return errorMessages[ErrorTypes.UNKNOWN];
+
+  const type = (typeof error === 'object' && error.type) ? error.type : matchErrorToType(error);
+  
+  try {
+    const translated = await getErrorMessage(type);
+    if (translated && translated !== errorMessages[ErrorTypes.UNKNOWN]) return translated;
+  } catch {
+    // Fallback if i18n fails
+  }
+
+  // If we have a known error type message, use it before falling back to raw error
+  if (type && errorMessages[type]) {
+    return errorMessages[type];
+  }
+
+  // Final fallback to raw message
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (typeof error === 'object' && error.message) return error.message;
+  
+  return errorMessages[ErrorTypes.UNKNOWN];
+}
+

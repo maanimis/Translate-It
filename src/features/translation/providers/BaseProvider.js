@@ -1,12 +1,16 @@
 // src/providers/core/BaseTranslationProvider.js
 
 import { ErrorTypes } from "@/shared/error-management/ErrorTypes.js";
+import { matchErrorToType, isFatalError } from "@/shared/error-management/ErrorMatcher.js";
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { LanguageSwappingService } from "@/features/translation/providers/LanguageSwappingService.js";
 import { AUTO_DETECT_VALUE } from "@/shared/config/constants.js";
 import { TranslationMode } from "@/shared/config/config.js";
 import { proxyManager } from "@/shared/proxy/ProxyManager.js";
+import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
+import { ApiKeyManager } from "@/features/translation/providers/ApiKeyManager.js";
+import { getBrowserInfoSync } from "@/utils/browser/compatibility.js";
 
 const logger = getScopedLogger(LOG_COMPONENTS.TRANSLATION, 'BaseProvider');
 
@@ -18,7 +22,43 @@ export class BaseProvider {
   constructor(providerName) {
     this.providerName = providerName;
     this.sessionContext = null;
+    this.providerSettingKey = null; // To be set by subclasses that use API keys
     this._initializeProxy();
+  }
+
+  /**
+   * Internal helper to adapt request headers based on the environment (Browser/Platform)
+   * This is crucial for stability in Firefox and Mobile browsers where some headers
+   * like Sec-Fetch-* or Referer might cause issues or are ignored.
+   * @protected
+   */
+  _prepareHeaders(headers = {}, providerName = "") {
+    const info = getBrowserInfoSync();
+    const finalHeaders = { ...headers };
+
+    // 1. Remove Chrome-only sensitive headers if not in a Chromium-based browser
+    // Firefox might block or fail requests if we try to set these "Forbidden Headers"
+    if (info.isFirefox || info.isMobile) {
+      delete finalHeaders['Sec-Fetch-Dest'];
+      delete finalHeaders['Sec-Fetch-Mode'];
+      delete finalHeaders['Sec-Fetch-Site'];
+      delete finalHeaders['Sec-Fetch-User'];
+      delete finalHeaders['Sec-Fetch-Storage-Access'];
+      
+      // Some providers like Google Translate V2 use a Referer that Firefox blocks 
+      // when set manually in a fetch request from an extension.
+      if (info.isFirefox) {
+        delete finalHeaders['Referer'];
+      }
+    }
+
+    // 2. Identity Spoofing for specific providers in non-native environments
+    // For Microsoft Edge provider, we MUST look like Edge/Chromium to get tokens
+    if (providerName === ProviderNames.MICROSOFT_EDGE && (info.isFirefox || info.isMobile)) {
+      finalHeaders['User-Agent'] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0";
+    }
+
+    return finalHeaders;
   }
 
   /**
@@ -77,16 +117,17 @@ export class BaseProvider {
 
     if (this._isSameLanguage(sourceLang, targetLang)) return null;
 
-    // 1. Language swapping and normalization
+    // IMPORTANT: Set Field/Subtitle mode BEFORE language swapping
+    // 1. LanguageSwappingService needs sourceLang=AUTO_DETECT_VALUE to work properly
+    if (translateMode === TranslationMode.Field || translateMode === TranslationMode.Subtitle) {
+      sourceLang = AUTO_DETECT_VALUE;
+    }
+
+    // 2. Language swapping and normalization (after Field mode is set)
     [sourceLang, targetLang] = await LanguageSwappingService.applyLanguageSwapping(
       text, sourceLang, targetLang, originalSourceLang, originalTargetLang,
       { providerName: this.providerName, useRegexFallback: true }
     );
-
-    // 2. Adjust source language for specific modes after detection
-    if (translateMode === TranslationMode.Field || translateMode === TranslationMode.Subtitle) {
-      sourceLang = AUTO_DETECT_VALUE;
-    }
 
     // 3. Convert to provider-specific language codes
     const sl = this._getLangCode(sourceLang);
@@ -112,7 +153,8 @@ export class BaseProvider {
     }
 
     // 5. Perform batch translation using the subclass implementation
-    const translatedSegments = await this._batchTranslate(textsToTranslate, sl, tl, translateMode, engine, messageId, abortController);
+    const priority = options?.priority || (await import("@/features/translation/core/RateLimitManager.js")).TranslationPriority.NORMAL;
+    const translatedSegments = await this._batchTranslate(textsToTranslate, sl, tl, translateMode, engine, messageId, abortController, priority);
 
     // 6. Reconstruct the final output
     if (isJsonMode) {
@@ -191,15 +233,113 @@ export class BaseProvider {
   }
 
   /**
-   * Executes a fetch call and normalizes HTTP, API-response-invalid, and network errors.
+   * UNIFIED API REQUEST HANDLER
+   * The primary method for all providers to execute API calls.
+   * Handles: Fetch, Proxy, Response Normalization, Failover (if keys available), and Error Reporting.
+   * 
    * @param {Object} params
-   * @param {string} params.url - The endpoint URL
-   * @param {RequestInit} params.fetchOptions - Fetch options
-   * @param {Function} params.extractResponse - Function to extract/transform JSON + status
+   * @param {string} params.url - Endpoint URL
+   * @param {Object} params.fetchOptions - Request options (headers, body, etc.)
+   * @param {Function} params.extractResponse - Function to parse valid response data
    * @param {string} params.context - Context for error reporting
-   * @param {AbortController} params.abortController - Optional abort controller for cancellation
-   * @returns {Promise<any>} - Transformed result
-   * @throws {Error} - With properties: type, statusCode (for HTTP/API), context
+   * @param {AbortController} [params.abortController] - For cancellation
+   * @param {Function} [params.updateApiKey] - Callback to update key in options for failover
+   * @param {boolean} [params.silent] - If true, don't show toast on error
+   * @returns {Promise<any>}
+   */
+  async _executeRequest({ url, fetchOptions, extractResponse, context, abortController, updateApiKey, silent = false }) {
+    // 1. Determine how many attempts we should make based on available keys
+    let availableKeysCount = 1;
+    if (this.providerSettingKey && updateApiKey) {
+      try {
+        const keys = await ApiKeyManager.getKeys(this.providerSettingKey);
+        // Try all available keys, but cap at 10 for safety
+        availableKeysCount = Math.min(Math.max(1, keys.length), 10);
+      } catch (e) {
+        logger.warn(`[${this.providerName}] Failed to count keys for failover:`, e);
+      }
+    }
+
+    let lastError = null;
+    let currentUrl = url;
+
+    for (let attempt = 0; attempt < availableKeysCount; attempt++) {
+      try {
+        // 2. Perform actual API call
+        const result = await this._executeApiCall({ 
+          url: currentUrl, 
+          fetchOptions, 
+          extractResponse, 
+          context, 
+          abortController 
+        });
+
+        // 3. Success! Promote the working key
+        if (attempt > 0 && this.providerSettingKey) {
+          const authHeader = fetchOptions.headers?.Authorization || fetchOptions.headers?.authorization;
+          const currentKey = authHeader ? authHeader.replace(/^(Bearer |DeepL-Auth-Key )/i, '') : 
+                           (new URL(currentUrl).searchParams.get('key'));
+          
+          if (currentKey) {
+            await ApiKeyManager.promoteKey(this.providerSettingKey, currentKey);
+            logger.info(`[${this.providerName}] Failover successful on attempt ${attempt + 1}, key promoted.`);
+          }
+        }
+
+        return result;
+
+      } catch (error) {
+        lastError = error;
+
+        // 4. Check for cancellation (silent)
+        const errorType = error.type || matchErrorToType(error);
+        if (errorType === ErrorTypes.USER_CANCELLED || errorType === ErrorTypes.TRANSLATION_CANCELLED) {
+          throw error;
+        }
+
+        // 5. Handle Failover if we have more keys to try
+        if (attempt < availableKeysCount - 1 && ApiKeyManager.shouldFailover(error)) {
+          const keys = await ApiKeyManager.getKeys(this.providerSettingKey);
+          if (keys.length > attempt + 1) {
+            logger.warn(`[${this.providerName}] Key error, attempting failover (${attempt + 1}/${availableKeysCount})`);
+            const nextKey = keys[attempt + 1];
+            await updateApiKey(nextKey, fetchOptions);
+            
+            // Handle Gemini specific URL update
+            if (fetchOptions.url && fetchOptions.url !== currentUrl) {
+              currentUrl = fetchOptions.url;
+            } else if (this.providerName === ProviderNames.GEMINI) {
+              const urlObj = new URL(currentUrl);
+              urlObj.searchParams.set('key', nextKey);
+              currentUrl = urlObj.toString();
+            }
+            continue; 
+          }
+        }
+
+        // 6. Final error handling via ErrorHandler (if no more keys or not a failover error)
+        const { ErrorHandler } = await import("@/shared/error-management/ErrorHandler.js");
+        const errorHandler = ErrorHandler.getInstance();
+        
+        if (!error.type) error.type = errorType;
+
+        await errorHandler.handle(error, {
+          context,
+          provider: this.providerName,
+          showToast: !silent,
+          isSilent: silent
+        });
+
+        throw error;
+      }
+    }
+    throw lastError;
+  }
+
+  /**
+   * Executes a fetch call and normalizes HTTP, API-response-invalid, and network errors.
+   * Internal helper for _executeRequest.
+   * @private
    */
   async _executeApiCall({ url, fetchOptions, extractResponse, context, abortController }) {
     logger.debug(`_executeApiCall starting for context: ${context}`);
@@ -209,6 +349,11 @@ export class BaseProvider {
       const finalFetchOptions = { ...fetchOptions };
       if (abortController) {
         finalFetchOptions.signal = abortController.signal;
+      }
+
+      // Adapt headers for the current environment
+      if (finalFetchOptions.headers) {
+        finalFetchOptions.headers = this._prepareHeaders(finalFetchOptions.headers, this.providerName);
       }
 
       // Ensure proxy is initialized with latest settings before request
@@ -226,67 +371,81 @@ export class BaseProvider {
           // Ignore if body is not JSON
         }
         const msg = body.detail || body.error?.message || response.statusText || `HTTP ${response.status}`;
-        logger.error(`[${this.providerName}] _executeApiCall HTTP error:`, {
+
+        // For DeepL, HTTP 400 is a retryable error (too many segments), use debug level
+        const isDeepL400 = this.providerName === ProviderNames.DEEPL_TRANSLATE && response.status === 400;
+        // For server errors (502, 503, 524), use warn level instead of error - these are temporary server issues
+        const isServerError = response.status >= 500 && response.status < 600;
+        const logLevel = isDeepL400 || isServerError ? 'warn' : 'error';
+        logger[logLevel](`[${this.providerName}] _executeApiCall HTTP error:`, {
           status: response.status,
           message: msg,
-          url: url
+          url: url,
+          // Log full error body for DeepL 400 errors to diagnose the issue
+          ...(isDeepL400 && { errorBody: body })
         });
 
-        // Determine error type based on status code
-        let errorType = ErrorTypes.HTTP_ERROR;
-        switch (response.status) {
-          case 401:
-            errorType = ErrorTypes.API_KEY_INVALID;
-            break;
-          case 402:
-            errorType = ErrorTypes.INSUFFICIENT_BALANCE;
-            break;
-          case 403:
-            errorType = ErrorTypes.FORBIDDEN_ERROR;
-            break;
-          case 404:
-            errorType = ErrorTypes.MODEL_MISSING;
-            break;
-          case 400:
-          case 422:
-            errorType = ErrorTypes.INVALID_REQUEST;
-            break;
-          case 429:
-            errorType = ErrorTypes.RATE_LIMIT_REACHED;
-            break;
-          case 500:
-          case 502:
-          case 503:
-          case 524:
-            errorType = ErrorTypes.SERVER_ERROR;
-            break;
-        }
+        // Determine error type centrally based on status code, message, and response body
+        // Pass providerType to differentiate between AI and traditional providers
+        const errorType = matchErrorToType({ 
+          statusCode: response.status, 
+          message: msg, 
+          providerType: this.constructor.type,
+          ...body 
+        });
 
         const err = new Error(msg);
         err.type = errorType;
         err.statusCode = response.status;
         err.context = context;
+        err.providerName = this.providerName;
         throw err;
       }
 
-      // Enhanced content type handling with support for async extractResponse
+      // Enhanced content type handling
       const contentType = response.headers.get('content-type');
 
-      // Check if extractResponse is async (new pattern for providers that need to inspect raw response)
-      if (extractResponse.constructor.name === 'AsyncFunction' || extractResponse.length > 2) {
-        // Async extractResponse - pass the full response object for detailed inspection
-        logger.debug(`[${this.providerName}] Using async extractResponse for ${contentType || 'unknown content type'}`);
-        const result = await extractResponse(response);
-        logger.debug(`[${this.providerName}] Async extractResponse result:`, result);
-        return result;
+      // Check if extractResponse is async OR expects the raw response object (length > 2)
+      // For these cases, we MUST NOT consume the body beforehand (e.g., via response.json())
+      // because the handler might want to call response.text() or handle streaming itself.
+      const isAsyncHandler = extractResponse.constructor.name === 'AsyncFunction';
+      const wantsRawResponse = extractResponse.length > 2;
+
+      if (isAsyncHandler || wantsRawResponse) {
+        logger.debug(`[${this.providerName}] Passing raw response to ${isAsyncHandler ? 'async ' : ''}extractResponse`);
+        // We still try to provide parsed data as the 3rd argument if it happens to be JSON
+        // but we don't consume the body of the 'response' object we pass as the 1st argument.
+        // Actually, consuming it once consumes it for all. So we just pass the response.
+        return await extractResponse(response, response.status, response);
       }
 
-      // Traditional JSON response handling
-      if (!contentType || !contentType.includes('application/json')) {
-        // If we got HTML or other content, log the response for debugging
-        const responseText = await response.text();
-        logger.error(`[${this.providerName}] Expected JSON but received ${contentType || 'unknown content type'}. Response:`, responseText.substring(0, 500));
+      // Traditional synchronous handling (1-2 args)
+      const isJson = contentType && contentType.includes('application/json');
+      if (isJson) {
+        try {
+          const data = await response.json();
+          logger.debug('_executeApiCall raw response data:', data);
+          const result = await extractResponse(data, response.status);
+          
+          if (result === undefined) {
+            logger.error(`[${this.providerName}] _executeApiCall result is undefined. Raw data:`, data);
+            const err = new Error(ErrorTypes.API_RESPONSE_INVALID);
+            err.type = ErrorTypes.API_RESPONSE_INVALID;
+            err.statusCode = response.status;
+            err.context = context;
+            throw err;
+          }
+          return result;
+        } catch (jsonErr) {
+          if (jsonErr.type === ErrorTypes.API_RESPONSE_INVALID) throw jsonErr;
+          logger.debug(`[${this.providerName}] Failed to parse JSON even though content-type was JSON`, jsonErr);
+        }
+      }
 
+      // Fallback for non-JSON or failed JSON parsing
+      const responseText = await response.text();
+      if (!isJson) {
+        logger.error(`[${this.providerName}] Expected JSON but received ${contentType || 'unknown content type'}. Response:`, responseText.substring(0, 500));
         const err = new Error('API returned non-JSON response. This may indicate a proxy configuration error.');
         err.type = ErrorTypes.API_RESPONSE_INVALID;
         err.statusCode = response.status;
@@ -294,21 +453,9 @@ export class BaseProvider {
         throw err;
       }
 
-      const data = await response.json();
-      logger.debug('_executeApiCall raw response data:', data);
-
-      const result = extractResponse(data, response.status);
-      if (result === undefined) {
-        logger.error(`[${this.providerName}] _executeApiCall result is undefined. Raw data:`, data);
-        const err = new Error(ErrorTypes.API_RESPONSE_INVALID);
-        err.type = ErrorTypes.API_RESPONSE_INVALID;
-        err.statusCode = response.status;
-        err.context = context;
-        throw err;
-      }
-
-      logger.init(`_executeApiCall success for context: ${context}`);
-      return result;
+      // If it was supposed to be JSON but parsing failed, we already logged it.
+      // Final attempt to call extractResponse with the text (though it likely expects an object)
+      return await extractResponse(responseText, response.status);
     } catch (err) {
       if (err.name === 'AbortError') {
         const abortErr = new Error('Translation cancelled by user');
@@ -343,7 +490,7 @@ export class BaseProvider {
           : field.toLowerCase().includes('url')
           ? ErrorTypes.API_URL_MISSING
           : field.toLowerCase().includes('model')
-          ? ErrorTypes.AI_MODEL_MISSING
+          ? ErrorTypes.MODEL_MISSING
           : ErrorTypes.API;
 
         const err = new Error(errorType);
@@ -406,8 +553,11 @@ export class BaseProvider {
    * @param {AbortController} abortController - Optional abort controller for cancellation.
    * @returns {Promise<Array<string>>} - A promise that resolves to an array of translated segments.
    */
-  async _processInBatches(segments, translateChunk, limits, abortController = null) {
+  async _processInBatches(segments, translateChunk, limits, abortController = null, priority = null) {
     const { CHUNK_SIZE, CHAR_LIMIT } = limits;
+    const { TranslationPriority, rateLimitManager } = await import("@/features/translation/core/RateLimitManager.js");
+    const targetPriority = priority || TranslationPriority.NORMAL;
+
     const chunks = [];
     const chunkIndexMap = []; // Map to track which original indices each chunk contains
     let currentChunk = [];
@@ -453,9 +603,6 @@ export class BaseProvider {
       chunkIndexMap.push([...currentIndices]);
     }
 
-    // Import rate limiting manager
-    const { rateLimitManager } = await import("@/features/translation/core/RateLimitManager.js");
-
     // Process chunks sequentially with rate limiting
     const translatedSegments = new Array(segments.length); // Pre-allocate array to maintain order
 
@@ -478,7 +625,7 @@ export class BaseProvider {
           this.providerName,
           () => translateChunk(chunk, i, chunks.length), // Pass chunk index and total
           context,
-          null // translateMode not available in this generic method
+          targetPriority
         );
 
         // Place translated results in correct positions
@@ -494,7 +641,17 @@ export class BaseProvider {
         }
       } catch (error) {
         logger.error(`[${this.providerName}] Chunk ${i + 1} failed:`, error);
-        // For failed chunks, use the original text
+        
+        // Ensure error type is detected
+        const errorType = error.type || matchErrorToType(error);
+        if (!error.type) error.type = errorType;
+
+        // If it's a fatal error, stop processing subsequent chunks
+        if (isFatalError(error) || isFatalError(errorType)) {
+          throw error;
+        }
+
+        // For non-fatal chunk errors, use the original text as fallback for this chunk
         for (let j = 0; j < indices.length; j++) {
           translatedSegments[indices[j]] = chunk[j];
         }

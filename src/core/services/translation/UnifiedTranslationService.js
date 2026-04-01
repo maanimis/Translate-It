@@ -13,9 +13,10 @@
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { MessageActions } from '@/shared/messaging/core/MessageActions.js';
-import { TranslationMode } from '@/shared/config/config.js';
-import { MessageFormat } from '@/shared/messaging/core/MessagingCore.js';
+import { TranslationMode, getModeProvidersAsync, getTranslationApiAsync } from '@/shared/config/config.js';
+import { MessageFormat, MessageContexts } from '@/shared/messaging/core/MessagingCore.js';
 import { translationRequestTracker, RequestStatus } from './TranslationRequestTracker.js';
+import ExtensionContextManager from '@/core/extensionContext.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.TRANSLATION, 'UnifiedTranslationService');
 
@@ -48,12 +49,48 @@ export class UnifiedTranslationService {
   }
 
   /**
+   * Determine the effective provider based on mode and settings
+   * @private
+   */
+  async _resolveEffectiveProvider(data, context) {
+    // 1. If context is from UI, specific tools, or content (for batch page translation), respect the provider passed in the request
+    const uiContexts = [
+      MessageContexts.POPUP,
+      MessageContexts.SIDEPANEL,
+      MessageContexts.SELECT_ELEMENT,
+      MessageContexts.PAGE_TRANSLATION_BATCH,
+      MessageContexts.CONTENT,
+      MessageContexts.MOBILE_TRANSLATE
+    ];
+    if (uiContexts.includes(context) && data.provider) {
+      return data.provider;
+    }
+
+    // 2. Check for mode-specific provider in settings
+    const modeProviders = await getModeProvidersAsync();
+    const modeSpecificProvider = modeProviders ? modeProviders[data.mode] : null;
+
+    if (modeSpecificProvider && modeSpecificProvider !== 'default') {
+      logger.debug(`[UnifiedService] Using mode-specific provider for ${data.mode}: ${modeSpecificProvider}`);
+      return modeSpecificProvider;
+    }
+
+    // 3. Fallback to global provider (already passed in data.provider usually, but let's be sure)
+    return data.provider || await getTranslationApiAsync();
+  }
+
+  /**
    * Main entry point for all translation requests
    */
   async handleTranslationRequest(message, sender) {
-    const { messageId, data } = message;
+    const { messageId, data, context } = message;
 
-    logger.info(`[UnifiedService] Processing translation request: ${messageId} (${data?.text?.length || 0} chars, mode: ${data?.mode || 'unknown'})`);
+    // Resolve the effective provider based on mode settings
+    if (data) {
+      data.provider = await this._resolveEffectiveProvider(data, context);
+    }
+
+    logger.info(`[UnifiedService] Processing translation request: ${messageId} (${data?.text?.length || 0} chars, mode: ${data?.mode || 'unknown'}, provider: ${data?.provider || 'unknown'})`);
     // Service availability checked silently
 
     // Check if service is initialized
@@ -234,7 +271,7 @@ class TranslationResultDispatcher {
     // Dispatch based on mode
     if (request.mode === TranslationMode.Field) {
       await this.dispatchFieldResult({ messageId, result, request, originalMessage });
-    } else if (request.mode === 'select-element') {
+    } else if (request.mode === TranslationMode.Select_Element) {
       await this.dispatchSelectElementResult({ messageId, result, request, originalMessage });
     } else {
       // For other modes, return directly
@@ -242,27 +279,34 @@ class TranslationResultDispatcher {
   }
 
   /**
-   * Dispatch field mode translation result
+   * Dispatch field or page mode translation result
    */
   async dispatchFieldResult({ messageId, result, request }) {
 
     // Send back to original tab
     try {
+      const mode = request.mode === TranslationMode.Page ? TranslationMode.Page : TranslationMode.Field;
+      
       await browser.tabs.sendMessage(request.sender.tab.id, {
         action: MessageActions.TRANSLATION_RESULT_UPDATE,
         messageId,
         data: {
           ...result,
-          translationMode: TranslationMode.Field,  // Use translationMode to match ContentMessageHandler
-          context: 'field-mode',
+          translationMode: mode,  // Use translationMode to match ContentMessageHandler
+          context: mode === TranslationMode.Page ? 'page-mode' : 'field-mode',
           elementData: request.elementData
           // Note: Not marking as direct response for field mode - need to process in content script
         }
       });
 
-      // Field result handled silently
-    } catch (error) {
-      logger.warn(`[ResultDispatcher] Failed to dispatch field result:`, error);
+      // Result handled silently
+    } catch (sendError) {
+      // Use centralized context error detection
+      if (ExtensionContextManager.isContextError(sendError)) {
+        ExtensionContextManager.handleContextError(sendError, 'unified-translation-service');
+      } else {
+        logger.warn(`[UnifiedTranslationService] Failed to dispatch result:`, sendError);
+      }
     }
   }
 
@@ -296,8 +340,12 @@ class TranslationResultDispatcher {
             isBroadcast: true // Mark as broadcast to prevent duplicate processing
           }
         });
-      } catch {
-        // Tab might not have content script, ignore
+      } catch (sendError) {
+        // Use centralized context error detection
+        if (!ExtensionContextManager.isContextError(sendError)) {
+          logger.debug(`Could not broadcast to tab ${tab.id}:`, sendError.message);
+        }
+        // Context errors are handled silently via ExtensionContextManager
       }
     }
   }
@@ -327,8 +375,13 @@ class TranslationResultDispatcher {
           action: MessageActions.TRANSLATION_CANCELLED,
           messageId
         });
-      } catch (error) {
-        logger.warn(`[ResultDispatcher] Failed to send cancellation:`, error);
+      } catch (sendError) {
+        // Use centralized context error detection
+        if (ExtensionContextManager.isContextError(sendError)) {
+          ExtensionContextManager.handleContextError(sendError, 'unified-translation-service');
+        } else {
+          logger.warn(`[UnifiedTranslationService] Failed to send cancellation:`, sendError);
+        }
       }
     }
   }
@@ -348,12 +401,44 @@ class TranslationModeCoordinator {
     // Update request status
     request.status = RequestStatus.PROCESSING;
 
-    // Route to appropriate handler
+    // Determine priority based on mode using project constants
+    const { TranslationPriority } = await import('@/features/translation/core/RateLimitManager.js');
+    let priority = TranslationPriority.NORMAL;
+
+    // Priority mapping based on TranslationMode constants
+    const highPriorityModes = new Set([
+      TranslationMode.Field,
+      TranslationMode.Selection,
+      TranslationMode.Dictionary_Translation,
+      TranslationMode.Popup_Translate,
+      TranslationMode.Sidepanel_Translate,
+      TranslationMode.Mobile_Translate,
+    ]);
+    
+    const lowPriorityModes = new Set([
+      TranslationMode.Page,
+      TranslationMode.Select_Element,
+      TranslationMode.ScreenCapture
+    ]);
+
+    if (highPriorityModes.has(mode)) {
+      priority = TranslationPriority.HIGH;
+    } else if (lowPriorityModes.has(mode)) {
+      priority = TranslationPriority.LOW;
+    }
+
+    // Attach priority to request data for downstream use
+    request.data.priority = priority;
+
+    // Route to appropriate handler using TranslationMode constants
     switch (mode) {
       case TranslationMode.Field:
         return await this.processFieldTranslation(request, { translationEngine });
 
-      case 'select-element':
+      case TranslationMode.Page:
+        return await this.processPageTranslation(request, { translationEngine });
+
+      case TranslationMode.Select_Element:
         return await this.processSelectElementTranslation(request, { translationEngine });
 
       default:
@@ -362,25 +447,168 @@ class TranslationModeCoordinator {
   }
 
   /**
-   * Process field mode translation
+   * Process page mode translation (Batch)
+   */
+  async processPageTranslation(request, { translationEngine }) {
+    const { messageId, data } = request;
+    const { text, provider, sourceLanguage, targetLanguage, priority } = data;
+
+    if (!text) {
+      throw new Error('No text provided for translation');
+    }
+
+    // Parse texts array
+    const textsToTranslate = typeof text === 'string' ? JSON.parse(text) : text;
+    const segments = textsToTranslate.map(item => item.text || item);
+
+    // Get the provider instance
+    const providerInstance = await translationEngine.getProvider(provider || ProviderRegistryIds.GOOGLE_V2);
+    if (!providerInstance) {
+      throw new Error(`Provider '${provider}' not found or failed to initialize`);
+    }
+
+    // Get rate limit manager and provider info
+    const { rateLimitManager } = await import('@/features/translation/core/RateLimitManager.js');
+    const { registryIdToName, isProviderType, ProviderTypes, ProviderRegistryIds } = await import('@/features/translation/providers/ProviderConstants.js');
+    const { CONFIG: globalConfig } = await import('@/shared/config/config.js');
+
+    rateLimitManager.reloadConfigurations();
+
+    // AI providers need larger batches
+    const pName = registryIdToName(provider || ProviderRegistryIds.GOOGLE_V2);
+    const isAI = isProviderType(pName, ProviderTypes.AI);
+    const OPTIMAL_BATCH_SIZE = globalConfig.WHOLE_PAGE_CHUNK_SIZE;
+    const OPTIMAL_CHAR_LIMIT = isAI ? globalConfig.WHOLE_PAGE_AI_MAX_CHARS : globalConfig.WHOLE_PAGE_MAX_CHARS;
+    
+    const batches = translationEngine.createIntelligentBatches(segments, OPTIMAL_BATCH_SIZE, OPTIMAL_CHAR_LIMIT);
+    const results = new Array(segments.length).fill(null);
+    const errorMessages = [];
+    let hasErrors = false;
+
+    // Check if provider supports batch/chunk
+    const isAIProvider = providerInstance?.constructor?.type === "ai" || typeof providerInstance?._translateBatch === 'function';
+    
+    // Create abort controller
+    const abortController = new AbortController();
+    translationEngine.activeTranslations.set(messageId, abortController);
+
+    try {
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        if (translationEngine.isCancelled(messageId)) break;
+
+        // Non-AI providers need delays to avoid 429
+        if (i > 0 && !isAIProvider) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        try {
+          const batchResult = await rateLimitManager.executeWithRateLimit(
+            provider || ProviderRegistryIds.GOOGLE_V2,
+            () => {
+              if (isAIProvider) {
+                return providerInstance._translateBatch(
+                  batch,
+                  sourceLanguage || 'auto',
+                  targetLanguage,
+                  TranslationMode.Page,
+                  abortController,
+                  translationEngine,
+                  messageId,
+                  data.sessionId || messageId,
+                  priority // Use detected priority (LOW)
+                );
+              } else {
+                return providerInstance._translateChunk(
+                  batch,
+                  sourceLanguage || 'auto',
+                  targetLanguage,
+                  TranslationMode.Page,
+                  abortController
+                );
+              }
+            },
+            `batch-${i + 1}/${batches.length}`,
+            priority // Use detected priority (LOW)
+          );
+
+          // Apply results
+          if (Array.isArray(batchResult)) {
+            for (let j = 0; j < batch.length; j++) {
+              const segmentIndex = segments.indexOf(batch[j]);
+              if (segmentIndex !== -1 && segmentIndex < results.length) {
+                results[segmentIndex] = batchResult[j] || batch[j];
+              }
+            }
+          }
+        } catch (batchError) {
+          hasErrors = true;
+          const msg = batchError.message || String(batchError);
+          if (!errorMessages.includes(msg)) errorMessages.push(msg);
+          
+          // Fallback to original
+          for (const segment of batch) {
+            const idx = segments.indexOf(segment);
+            if (idx !== -1 && results[idx] === null) results[idx] = segment;
+          }
+        }
+      }
+
+      // Cleanup
+      for (let i = 0; i < results.length; i++) {
+        if (results[i] === null) results[i] = segments[i];
+      }
+
+      const finalResults = results.map(text => ({ text }));
+
+      if (hasErrors) {
+        return {
+          success: false,
+          error: errorMessages.join(', ') || 'Batch translation failed',
+          partialResults: JSON.stringify(finalResults)
+        };
+      }
+
+      return {
+        success: true,
+        translatedText: JSON.stringify(finalResults)
+      };
+    } finally {
+      translationEngine.activeTranslations.delete(messageId);
+    }
+  }
+
+  /**
+   * Process Field mode translation
    */
   async processFieldTranslation(request, { translationEngine }) {
+    const { messageId, data } = request;
+
     // Use translation engine directly
     if (!translationEngine) {
       throw new Error('Translation engine not available');
     }
 
+    // Ensure dictionary is disabled for field mode
+    const enhancedData = {
+      ...data,
+      mode: TranslationMode.Field,
+      enableDictionary: false,
+      options: {
+        ...(data.options || {}),
+        enableDictionary: false
+      }
+    };
+
     // Create the expected message format for translation engine
     const messageForEngine = {
       action: MessageActions.TRANSLATE,
-      messageId: request.messageId,
-      context: 'content', // Add required context
-      data: request.data
+      messageId: messageId,
+      context: 'content', 
+      data: enhancedData
     };
 
-    const result = await translationEngine.handleTranslateMessage(messageForEngine, request.sender);
-
-    return result;
+    return await translationEngine.handleTranslateMessage(messageForEngine, request.sender);
   }
 
   /**
@@ -390,16 +618,18 @@ class TranslationModeCoordinator {
     // For select-element, always use streaming for better UX
     const enhancedData = {
       ...request.data,
+      enableDictionary: false,
       options: {
         ...request.data.options,
-        forceStreaming: true
+        forceStreaming: true,
+        enableDictionary: false
       }
     };
 
     const result = await translationEngine.handleTranslateMessage({
       action: MessageActions.TRANSLATE,
       messageId: request.messageId,
-      context: 'content', // Add required context
+      context: 'content', 
       data: enhancedData
     }, request.sender);
 

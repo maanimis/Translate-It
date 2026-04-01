@@ -5,6 +5,7 @@
   >
     <!-- Side Toolbar -->
     <SidepanelToolbar 
+      v-model:current-provider="currentProvider"
       :is-history-visible="isHistoryVisible"
       @history-toggle="handleHistoryToggle"
       @clear-fields="handleClearFields"
@@ -14,12 +15,8 @@
     <div class="content-area">
       <!-- Main Content -->
       <SidepanelMainContent
-        v-if="!useEnhancedVersion"
         ref="mainContentRef"
-      />
-      <EnhancedSidepanelMainContent
-        v-else
-        ref="mainContentRef"
+        :provider="currentProvider"
       />
 
       <!-- History Panel -->
@@ -29,43 +26,28 @@
         @select-history-item="handleHistoryItemSelect"
       />
     </div>
-    
-    <!-- Development Toggle -->
-    <div
-      v-if="isDevelopment"
-      class="enhanced-version-toggle"
-      @click="toggleEnhancedVersion"
-    >
-      <Icon
-        v-if="useEnhancedVersion"
-        icon="fa6-solid:toggle-on"
-      />
-      <Icon
-        v-else
-        icon="fa6-solid:toggle-off"
-      />
-      <span>{{ useEnhancedVersion ? 'Enhanced' : 'Classic' }}</span>
-    </div>
+
+    <!-- Main View Area -->
   </div>
 </template>
 
 <script setup>
+import { useSettingsStore } from '@/features/settings/stores/settings.js';
 import { useTranslationStore } from '@/features/translation/stores/translation.js';
-import { onMounted, onUnmounted, ref, watch, computed } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { useHistory } from '@/features/history/composables/useHistory.js';
 import { useErrorHandler } from '@/composables/shared/useErrorHandler.js';
 import SidepanelHistory from './components/SidepanelHistory.vue';
 import SidepanelMainContent from './components/SidepanelMainContent.vue';
-import EnhancedSidepanelMainContent from './components/EnhancedSidepanelMainContent.vue';
 import SidepanelToolbar from './components/SidepanelToolbar.vue';
-import { Icon } from '@iconify/vue';
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.UI, 'SidepanelLayout');
 
 
-// Get composables to sync state
+// Get stores and composables to sync state
+const settingsStore = useSettingsStore()
 const { closeHistoryPanel, openHistoryPanel, setHistoryPanelOpen } = useHistory()
 const translationStore = useTranslationStore()
 useErrorHandler()
@@ -75,28 +57,34 @@ const mainContentRef = ref(null);
 
 // Shared state between components
 const isHistoryVisible = ref(false)
+const currentProvider = ref('')
 
-// Ensure history panel is closed on mount
-onMounted(() => {
+// Ensure history panel is closed on mount and initialize provider
+onMounted(async () => {
   isHistoryVisible.value = false
   setHistoryPanelOpen(false)
+
+  // Wait for settings to load if not already initialized
+  if (!settingsStore.isInitialized) {
+    await settingsStore.loadSettings()
+  }
+
+  // Initialize current provider from settings
+  if (settingsStore.settings.TRANSLATION_API && !currentProvider.value) {
+    currentProvider.value = settingsStore.settings.TRANSLATION_API
+    logger.debug('[SidepanelLayout] Initialized local provider:', currentProvider.value)
+  }
 })
 
-// Enhanced version toggle
-const useEnhancedVersion = ref(false) // Default to original version
-const isDevelopment = computed(() => {
-  return import.meta.env.MODE === 'development' || 
-         window.location.hostname === 'localhost' ||
-         localStorage.getItem('dev-mode') === 'true'
+// Watch for settings changes to keep local provider in sync when global setting changes
+watch(() => settingsStore.settings.TRANSLATION_API, (newVal) => {
+  if (newVal && newVal !== currentProvider.value) {
+    currentProvider.value = newVal
+    logger.debug('[SidepanelLayout] Local provider synced with global change:', newVal)
+  }
 })
 
-const toggleEnhancedVersion = () => {
-  useEnhancedVersion.value = !useEnhancedVersion.value
-  localStorage.setItem('sidepanel-enhanced-version', useEnhancedVersion.value.toString())
-  logger.debug('[SidepanelLayout] Enhanced version toggled:', useEnhancedVersion.value)
-}
-
-// Handle history panel toggle
+// States
 const handleHistoryToggle = (visible) => {
   // Only toggle if the value is actually changing
   if (isHistoryVisible.value !== visible) {
@@ -153,17 +141,7 @@ const handleHistoryItemSelect = (historyData) => {
 
 // Lifecycle management
 onMounted(() => {
-  // Load saved version preference
-  const savedVersion = localStorage.getItem('sidepanel-enhanced-version')
-  if (savedVersion !== null) {
-    useEnhancedVersion.value = savedVersion === 'true'
-  }
-
-  
-  logger.debug('[SidepanelLayout] Component initialized', {
-    useEnhancedVersion: useEnhancedVersion.value,
-    isDevelopment: isDevelopment.value
-  })
+  logger.debug('[SidepanelLayout] Component initialized')
 })
 
 onUnmounted(() => {
