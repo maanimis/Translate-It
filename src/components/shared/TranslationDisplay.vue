@@ -21,17 +21,22 @@
     :style="cssVariables"
   >
     <!-- Simplified Loading State -->
-    <div v-if="isLoading" class="ti-loading-overlay">
-      <LoadingSpinner type="animated" size="lg" />
+    <div
+      v-if="isLoading"
+      class="ti-loading-overlay"
+    >
+      <LoadingSpinner
+        size="lg"
+      />
     </div>
 
     <!-- Main Content State -->
     <template v-else>
       <!-- Enhanced Actions Toolbar (Desktop/Standard) -->
       <ActionToolbar
-        v-show="showToolbar && hasContent && mode !== 'mobile'"
+        v-if="showToolbar && hasContent && mode !== 'mobile'"
         :text="content"
-        :language="targetLanguage"
+        :language="lastTranslation?.targetLanguage || targetLanguage"
         :mode="mode === 'sidepanel' ? 'sidepanel' : 'output'"
         class="ti-display-toolbar"
         :show-copy="showCopyButton"
@@ -58,50 +63,107 @@
         :style="mode === 'mobile' ? { ...fontStyles, ...cssVariables } : { ...(fontStyles || {}), ...(cssVariables || {}) }"
         @click="handleContentClick"
       >
-        <div v-if="hasError" class="error-message">
-          <div class="error-text">⚠️ {{ displayErrorMessage }}</div>
-          <div v-if="canRetry || canOpenSettings" class="error-actions">
-            <button v-if="canRetry" class="error-action retry-btn" @click="handleRetry">
+        <div
+          v-if="hasError"
+          class="error-message"
+        >
+          <div class="error-text">
+            ⚠️ {{ displayErrorMessage }}
+          </div>
+          <div
+            v-if="canRetry || canOpenSettings"
+            class="error-actions"
+          >
+            <button
+              v-if="canRetry"
+              class="error-action retry-btn"
+              @click="handleRetry"
+            >
               🔄 {{ t('action_retry') }}
             </button>
-            <button v-if="canOpenSettings" class="error-action settings-btn" @click="handleSettings">
+            <button
+              v-if="canOpenSettings"
+              class="error-action settings-btn"
+              @click="handleSettings"
+            >
               ⚙️ {{ t('action_settings') }}
             </button>
           </div>
         </div>
 
         <!-- Placeholder State -->
-        <div v-else-if="!content" class="placeholder-message">
+        <div
+          v-else-if="!content"
+          class="placeholder-message"
+        >
           {{ placeholder }}
         </div>
 
         <!-- Normal Content with Markdown Support -->
-        <div v-else v-html="sanitizedContent" />
+        <div
+          v-else
+          v-html="sanitizedContent"
+        />
       </div>
 
       <!-- Mobile Actions Row -->
-      <div v-if="mode === 'mobile' && hasContent" class="ti-mobile-actions" @click.stop>
+      <div
+        v-if="mode === 'mobile' && hasContent"
+        class="ti-mobile-actions"
+        @click.stop
+      >
         <button 
           class="mobile-action-btn secondary-action" 
           :title="ttsStatus === 'playing' ? t('mobile_selection_stop_tooltip') : ttsTitle" 
           @click="handleMobileSpeak"
         >
-          <svg v-if="ttsStatus === 'playing'" viewBox="0 0 24 24" class="mobile-action-icon">
-            <rect x="6" y="6" width="12" height="12" rx="1.5" />
+          <svg
+            v-if="ttsStatus === 'playing'"
+            viewBox="0 0 24 24"
+            class="mobile-action-icon"
+          >
+            <rect
+              x="6"
+              y="6"
+              width="12"
+              height="12"
+              rx="1.5"
+            />
           </svg>
-          <img v-else src="@/icons/ui/speaker.png" :alt="ttsAlt" class="mobile-action-icon">
+          <img
+            v-else
+            src="@/icons/ui/speaker.png"
+            :alt="ttsAlt"
+            class="mobile-action-icon"
+          >
           <span class="mobile-action-label">
             {{ ttsStatus === 'playing' ? t('mobile_selection_stop_label') : t('mobile_selection_speak_tooltip') }}
           </span>
         </button>
         
-        <button class="mobile-action-btn secondary-action" :title="copyTitle" @click="handleMobileCopy">
-          <img src="@/icons/ui/copy.png" :alt="copyAlt" class="mobile-action-icon">
+        <button
+          class="mobile-action-btn secondary-action"
+          :title="copyTitle"
+          @click="handleMobileCopy"
+        >
+          <img
+            src="@/icons/ui/copy.png"
+            :alt="copyAlt"
+            class="mobile-action-icon"
+          >
           <span class="mobile-action-label">{{ t('mobile_selection_copy_tooltip') }}</span>
         </button>
         
-        <button class="mobile-action-btn icon-only-action" :title="t('mobile_selection_history_tooltip')" @click="handleMobileHistory">
-          <img src="@/icons/ui/history.svg" :alt="t('mobile_history_button_alt')" class="mobile-action-icon">
+        <button
+          class="mobile-action-btn icon-only-action"
+          :title="t('mobile_selection_history_tooltip')"
+          @click="handleMobileHistory"
+        >
+          <img
+            src="@/icons/ui/history.svg"
+            :alt="t('mobile_history_button_alt')"
+            class="mobile-action-icon"
+          >
         </button>
       </div>
     </template>
@@ -112,7 +174,7 @@
 import './TranslationDisplay.scss';
 import { ref, computed, watch, onMounted } from "vue";
 import { useSettingsStore } from "@/features/settings/stores/settings.js";
-import { isRTLLanguage, detectTextDirectionFromContent } from "@/features/element-selection/utils/textDirection.js";
+import { useTextDirection } from "@/composables/shared/useTextDirection.js";
 import { SimpleMarkdown } from "@/shared/utils/text/markdown.js";
 import DOMPurify from "dompurify";
 import ActionToolbar from "@/features/text-actions/components/ActionToolbar.vue";
@@ -240,6 +302,10 @@ const props = defineProps({
     type: String,
     default: "fa",
   },
+  lastTranslation: {
+    type: Object,
+    default: null
+  },
   // TTS Status for mobile toggle
   ttsStatus: {
     type: String,
@@ -292,6 +358,20 @@ const displayErrorMessage = computed(() => {
   const key = props.errorType.startsWith('ERRORS_') ? props.errorType : `ERRORS_${props.errorType}`;
   const translated = t(key);
   
+  // For specific technical errors, if we have a detailed message from the provider, show it
+  const useRawMessage = [
+    'SERVER_ERROR', 
+    'MODEL_OVERLOADED', 
+    'HTTP_ERROR', 
+    'TRANSLATION_ERROR', 
+    'API_RESPONSE_INVALID',
+    'UNKNOWN'
+  ].includes(props.errorType);
+
+  if (useRawMessage && props.error && props.error !== props.errorType) {
+    return props.error;
+  }
+
   // If translation exists, return it, otherwise fallback to static error prop
   return (translated && translated !== key) ? translated : props.error;
 });
@@ -302,30 +382,24 @@ const currentUiLang = computed(() => {
   return String(lang).toLowerCase();
 });
 
-// Enhanced text direction computation with content-first detection
+// Setup centralized text direction using the composable
+const { direction: detectedDir, textAlign: detectedAlign } = useTextDirection(
+  computed(() => hasError.value ? "" : props.content),
+  computed(() => hasError.value ? currentUiLang.value : props.targetLanguage)
+);
+
+// Final text direction for display, with special handling for error states
 const textDirection = computed(() => {
-  // If we have an error, follow UI language direction strictly
   if (hasError.value) {
-    const lang = currentUiLang.value;
-    const direction = isRTLLanguage(lang) ? 'rtl' : 'ltr';
     return {
-      dir: direction,
-      textAlign: direction === 'rtl' ? 'right' : 'left',
+      dir: detectedDir.value,
+      textAlign: 'center', // Center align errors for better UX
     };
   }
 
-  const textToCheck = props.content || "";
-  if (!textToCheck.trim()) {
-    const direction = isRTLLanguage(props.targetLanguage) ? 'rtl' : 'ltr';
-    return { dir: direction, textAlign: direction === 'rtl' ? 'right' : 'left' };
-  }
-
-  // Use advanced content-based detection
-  const direction = detectTextDirectionFromContent(textToCheck, props.targetLanguage);
-
   return {
-    dir: direction,
-    textAlign: direction === 'rtl' ? 'right' : 'left',
+    dir: detectedDir.value,
+    textAlign: detectedAlign.value,
   };
 });
 
@@ -398,8 +472,9 @@ const renderedContent = computed(() => {
     try {
       const markdownElement = SimpleMarkdown.render(props.content);
       if (markdownElement) {
-        // Wrap innerHTML in simple-markdown div for CSS targeting
-        return `<div class="simple-markdown">${markdownElement.innerHTML}</div>`;
+        // Return the outerHTML of the element instead of constructing a string with innerHTML
+        // This is safer for the linter as it's a direct property of the rendered element
+        return markdownElement.outerHTML;
       }
       return props.content.replace(/\n/g, "<br>");
     } catch (error) {

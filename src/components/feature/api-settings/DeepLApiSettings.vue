@@ -2,10 +2,10 @@
   <div class="deepl-settings">
     <h3>{{ t('deepl_api_settings_title') || 'DeepL API Settings' }}</h3>
 
-    <div class="setting-group api-key-info">
-      <span class="setting-description">
+    <div class="setting-group vertical api-key-info">
+      <p class="setting-description">
         {{ t('deepl_api_key_info') || 'You can get your DeepL API key from' }}
-      </span>
+      </p>
       <a
         class="api-link"
         href="https://www.deepl.com/en/your-account/keys"
@@ -14,12 +14,13 @@
       >
         {{ t('deepl_api_key_link') || 'DeepL API' }}
       </a>
-      <span class="setting-description">
+      <p class="setting-description">
         {{ t('deepl_free_api_info') || 'Free tier available with 500,000 characters/month.' }}
-      </span>
+      </p>
     </div>
 
     <ApiKeyInput
+      id="DEEPL_API_KEY"
       v-model="deeplApiKey"
       :label="t('deepl_api_key_label') || 'API Keys'"
       :placeholder="t('deepl_api_key_placeholder') || 'Enter your API keys (one per line)'"
@@ -29,7 +30,7 @@
       @test="testKeys"
     />
 
-    <div class="setting-group">
+    <div class="setting-group vertical">
       <label>{{ t('deepl_api_tier_label') || 'API Tier' }}</label>
       <BaseSelect
         v-model="deeplApiTier"
@@ -37,20 +38,23 @@
         class="tier-select"
         :style="rtlSelectStyle"
       />
-      <span class="setting-description">{{ tierDescription }}</span>
+      <p class="setting-description">
+        {{ tierDescription }}
+      </p>
     </div>
 
-    <div class="setting-group">
+    <div class="setting-group vertical">
       <BaseCheckbox
         v-model="deeplBetaLanguagesEnabled"
         :label="t('deepl_beta_languages_label') || 'Enable Beta Languages'"
+        class="deepl-checkbox"
       />
-      <span class="setting-description">
+      <p class="setting-description">
         {{ t('deepl_beta_languages_description') || 'Enable support for beta languages. Beta languages do not support formality settings.' }}
-      </span>
+      </p>
     </div>
 
-    <div class="setting-group">
+    <div class="setting-group vertical">
       <label>{{ t('deepl_formality_label') || 'Translation Formality' }}</label>
       <BaseSelect
         v-model="deeplFormality"
@@ -59,15 +63,16 @@
         :style="rtlSelectStyle"
         :disabled="deeplBetaLanguagesEnabled"
       />
-      <span class="setting-description">
+      <p class="setting-description">
         {{ t('deepl_formality_description') || 'Control the formality level of translations. Some languages may not support all options.' }}
-      </span>
+      </p>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue'
+import './DeepLApiSettings.scss'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/features/settings/stores/settings.js'
 import { CONFIG } from '@/shared/config/config.js'
@@ -161,7 +166,3 @@ const tierDescription = computed(() => {
     'Pro API endpoint with higher limits based on your subscription. Uses api.deepl.com'
 })
 </script>
-
-<style lang="scss" scoped>
-@use "@/assets/styles/components/api-settings-common" as *;
-</style>

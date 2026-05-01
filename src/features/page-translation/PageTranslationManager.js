@@ -1,46 +1,40 @@
 import { getScopedLogger } from '@/shared/logging/logger.js';
-import browser from 'webextension-polyfill';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import ResourceTracker from '@/core/memory/ResourceTracker.js';
 import { sendRegularMessage } from '@/shared/messaging/core/UnifiedMessaging.js';
 import { MessageActions } from '@/shared/messaging/core/MessageActions.js';
 import { ActionReasons } from '@/shared/messaging/core/MessagingCore.js';
-import { 
-  getWholePageLazyLoadingAsync, 
-  getWholePageAutoTranslateOnDOMChangesAsync, 
-  getWholePageRootMarginAsync, 
-  getWholePageExcludedSelectorsAsync, 
-  getWholePageAttributesToTranslateAsync, 
-  getWholePageShowOriginalOnHoverAsync, 
-  getTranslationApiAsync, 
-  getTargetLanguageAsync,
-  getModeProvidersAsync,
-  TranslationMode
-} from '@/config.js';
 
+import { ErrorHandler } from '@/shared/error-management/ErrorHandler.js';
+import { ErrorTypes } from '@/shared/error-management/ErrorTypes.js';
+import ExtensionContextManager from '@/core/extensionContext.js';
 import { NOTIFICATION_TIME } from '@/shared/config/constants.js';
 import { pageEventBus } from '@/core/PageEventBus.js';
 import { ToastIntegration } from '@/shared/toast/ToastIntegration.js';
 import { getTranslationString } from '@/utils/i18n/i18n.js';
+import { shouldShowProviderWarning } from '@/shared/utils/warning-manager.js';
 import { delay } from '@/core/helpers.js';
 import { ProviderRegistryIds } from '@/features/translation/providers/ProviderConstants.js';
 import { isSilentError } from '@/shared/error-management/ErrorMatcher.js';
-import { getErrorToastType } from '@/shared/error-management/ErrorDisplayStrategies.js';
-
 
 // Internal components
 import { PageTranslationHelper } from './PageTranslationHelper.js';
 import { PageTranslationScheduler } from './PageTranslationScheduler.js';
 import { PageTranslationBridge } from './PageTranslationBridge.js';
-import { PageTranslationHoverManager } from './PageTranslationHoverManager.js';
+import { hoverPreviewManager } from '@/features/shared/hover-preview/HoverPreviewManager.js';
+import { PageTranslationScrollTracker } from './utils/PageTranslationScrollTracker.js';
 import { PAGE_TRANSLATION_TIMING } from './PageTranslationConstants.js';
 import NotificationManager from '@/core/managers/core/NotificationManager.js';
+
+// Modularized utilities
+import { PageTranslationSettingsLoader } from './utils/PageTranslationSettingsLoader.js';
+import { PageTranslationEventManager } from './utils/PageTranslationEventManager.js';
 
 export class PageTranslationManager extends ResourceTracker {
   constructor() {
     super('page-translation-manager');
-    this.logger = getScopedLogger(LOG_COMPONENTS.PAGE_TRANSLATION, 'PageTranslationManager');
-    
+    this.logger = getScopedLogger(LOG_COMPONENTS.PAGE_TRANSLATION, 'Manager');
+
     this.toastIntegration = new ToastIntegration(pageEventBus);
     this.notificationManager = new NotificationManager();
 
@@ -55,132 +49,31 @@ export class PageTranslationManager extends ResourceTracker {
     this.isFatalErrorHandling = false;
     this._isCancelling = false;
     
-    this.scheduler = new PageTranslationScheduler(this.logger);
-    this.bridge = new PageTranslationBridge(this.logger);
-    this.hoverManager = new PageTranslationHoverManager();
+    this.scheduler = new PageTranslationScheduler();
+    this.bridge = new PageTranslationBridge();
+    this.hoverManager = hoverPreviewManager;
+    this.scrollTracker = new PageTranslationScrollTracker(
+      () => {
+        this.logger.debug('Scroll stop detected, signaling scheduler');
+        this.scheduler.signalScrollStop();
+      },
+      () => {
+        this.logger.debug('Scroll start detected, signaling scheduler');
+        this.scheduler.signalScrollStart();
+      }
+    );
 
     this.settings = {};
-    this._listenersInitialized = false;
     
-    // Bind handlers to this instance for reliable removal
-    this._handlers = {
-      progress: (data) => {
-        // High-frequency event: send to background but skip logging if possible
-        sendRegularMessage({ 
-          action: MessageActions.PAGE_TRANSLATE_PROGRESS, 
-          data, 
-          context: 'page-translation-progress-forward' 
-        }, { silent: true }).catch(() => {});
-      },
-      fatalError: ({ error, errorType, localizedMessage }) => this._handleFatalError(error, errorType, localizedMessage),
-      translate: (options) => {
-        this.logger.info('Page translation requested via PageEventBus');
-        this.translatePage(options || {}).catch(err => {
-          this.logger.error('Failed to translate page from PageEventBus:', err);
-        });
-      },
-      restore: () => {
-        this.logger.info('Page restore requested via PageEventBus');
-        this.restorePage().catch(() => {});
-      },
-      cancel: () => {
-        this.logger.info('Page translation cancel requested via PageEventBus');
-        this.cancelTranslation();
-      },
-      stopConflicts: (data) => {
-        if ((this.isTranslating || this.isTranslated) && data?.source !== 'page-translation') {
-          this.logger.info('Stopping/Restoring Page Translation due to conflicting feature:', data?.source);
-          this.restorePage();
-        }
-      }
-    };
-
-    this._setupPageEventBusListeners();
-  }
-
-  _setupPageEventBusListeners() {
-    const bus = window.pageEventBus;
-    if (!bus) return;
-
-    // Use a unique global flag to prevent multiple registrations in the same page
-    if (window._translateItPageTranslationListenersSet) {
-      this.logger.debug('Listeners already registered globally, skipping');
-      return;
-    }
-
-    this.logger.info('Setting up GLOBAL PageEventBus listeners for PageTranslationManager');
-
-    // Listen for progress from scheduler and forward to background
-    bus.on(MessageActions.PAGE_TRANSLATE_PROGRESS, (data) => {
-      // Use silent option to prevent high-frequency logging in UnifiedMessaging
-      sendRegularMessage({ 
-        action: MessageActions.PAGE_TRANSLATE_PROGRESS, 
-        data, 
-        context: 'page-translation-progress-forward' 
-      }, { silent: true }).catch(() => {});
-    });
-
-    // Listen for fatal errors from scheduler (Circuit Breaker)
-    bus.on('page-translation-fatal-error', ({ error, errorType, localizedMessage }) => 
-      this._handleFatalError(error, errorType, localizedMessage));
-
-    // Listen for activation from PageEventBus (Mobile Dashboard)
-    bus.on(MessageActions.PAGE_TRANSLATE, (options) => {
-      this.logger.info('Page translation requested via PageEventBus');
-      this.translatePage(options || {}).catch(err => {
-        this.logger.error('Failed to translate page from PageEventBus:', err);
-      });
-    });
-
-    bus.on(MessageActions.PAGE_RESTORE, () => {
-      this.logger.info('Page restore requested via PageEventBus');
-      this.restorePage().catch(() => {});
-    });
-
-    bus.on(MessageActions.PAGE_TRANSLATE_CANCELLED, () => {
-      this.logger.info('Page translation cancel requested via PageEventBus');
-      this.cancelTranslation();
-    });
-
-    bus.on(MessageActions.PAGE_TRANSLATE_STOP_AUTO, () => {
-      this.logger.info('Page stop auto-translation/pass requested via PageEventBus');
-      this.stopAutoTranslation().catch(() => {});
-    });
-
-    bus.on(MessageActions.PAGE_TRANSLATE_COMPLETE, (data) => {
-      this.logger.info('Page translation complete event received in Manager');
-      this.isTranslating = false;
-      this.isTranslated = true;
-      
-      // Forward to background - also silent to reduce noise
-      sendRegularMessage({ 
-        action: MessageActions.PAGE_TRANSLATE_COMPLETE, 
-        data: {
-          ...data,
-          url: this.currentUrl,
-          isAutoTranslating: this.isAutoTranslating
-        }, 
-        context: 'page-translation-complete-forward' 
-      }, { silent: true }).catch(() => {});
-    });
-
-    // Listen for conflicting features (like Select Element Mode)
-    bus.on('STOP_CONFLICTING_FEATURES', (data) => {
-      if ((this.isTranslating || this.isTranslated) && data?.source !== 'page-translation') {
-        this.logger.info('Stopping/Restoring Page Translation due to conflicting feature:', data?.source);
-        this.restorePage(); // Fully restore if conflict happens
-      }
-    });
-
-    window._translateItPageTranslationListenersSet = true;
-    this._listenersInitialized = true;
+    // Modularize event management
+    this.eventManager = new PageTranslationEventManager(this);
   }
 
   async activate() {
     if (this.isActive) return true;
     try {
       await this.toastIntegration.initialize();
-      await this._loadSettings();
+      this.settings = await PageTranslationSettingsLoader.load();
       this.scheduler.setSettings(this.settings);
       
       if (this.settings.showOriginalOnHover) {
@@ -212,6 +105,9 @@ export class PageTranslationManager extends ResourceTracker {
     if (this.isTranslating || (this.isTranslated && !options.isAuto)) return { success: false, reason: ActionReasons.BUSY_OR_DONE };
     if (!PageTranslationHelper.isSuitableForTranslation(this.logger)) return { success: false, reason: ActionReasons.NOT_SUITABLE };
 
+    // Inject layout fixes to the host page
+    this._injectLayoutFix();
+
     // Emit event to stop conflicting features (e.g., Select Element Mode)
     pageEventBus.emit('STOP_CONFLICTING_FEATURES', { source: 'page-translation' });
 
@@ -224,7 +120,7 @@ export class PageTranslationManager extends ResourceTracker {
     this.scheduler.reset();
 
     try {
-      await this._loadSettings(options);
+      this.settings = await PageTranslationSettingsLoader.load(options);
 
       this._broadcastEvent(MessageActions.PAGE_TRANSLATE_START, { 
         url: this.currentUrl, 
@@ -245,21 +141,29 @@ export class PageTranslationManager extends ResourceTracker {
         this.hoverManager.destroy();
       }
 
+      // Start scroll tracker to ensure visibility-driven flushes for already-enqueued items.
+      // This is critical for catching nodes skipped during fast scrolling.
+      this.scrollTracker.start(this.settings.scrollStopDelay);
+
       // Show warning for Lingva provider in Whole Page Translation
       if (this.settings.translationApi === ProviderRegistryIds.LINGVA) {
-        const warningMessage = await getTranslationString('LINGVA_WPT_WARNING');
-        this.notificationManager.show(
-          warningMessage || 'Lingva may have issues with long texts during page translation.',
-          'warning',
-          NOTIFICATION_TIME.WARNING_PROVIDER
-        );
+        if (await shouldShowProviderWarning('Lingva')) {
+          const warningMessage = await getTranslationString('LINGVA_WPT_WARNING');
+          this.notificationManager.show(
+            warningMessage || 'Lingva may have issues with long texts during page translation.',
+            'warning',
+            NOTIFICATION_TIME.WARNING_PROVIDER
+          );
+        }
       } else if (this.settings.translationApi === ProviderRegistryIds.BING) {
-        const warningMessage = await getTranslationString('BING_WPT_WARNING');
-        this.notificationManager.show(
-          warningMessage || 'Bing may have issues with long texts during page translation.',
-          'warning',
-          NOTIFICATION_TIME.WARNING_PROVIDER
-        );
+        if (await shouldShowProviderWarning('Bing')) {
+          const warningMessage = await getTranslationString('BING_WPT_WARNING');
+          this.notificationManager.show(
+            warningMessage || 'Bing may have issues with long texts during page translation.',
+            'warning',
+            NOTIFICATION_TIME.WARNING_PROVIDER
+          );
+        }
       }
 
       this.scheduler.setTranslationState(true, this.translationMessageId, this.sessionContext);
@@ -267,21 +171,40 @@ export class PageTranslationManager extends ResourceTracker {
       // Initialize bridge with fresh context and standard callback
       await this.bridge.initialize(
         this.settings, 
-        (text, context, score) => this.scheduler.enqueue(text, context, score),
+        (text, context, score, node) => {
+          // If we were idle, switch back to translating state
+          if (this.isAutoTranslating && !this.isTranslating) {
+            this.isTranslating = true;
+            this._broadcastEvent(MessageActions.PAGE_TRANSLATE_PROGRESS, {
+              status: 'translating',
+              isTranslating: true,
+              isAutoTranslating: true
+            });
+          }
+
+          // If we are in "On Stop" mode, notify activity to reset the timer
+          if (this.settings.translateAfterScrollStop) {
+            this.scrollTracker.notifyActivity();
+          }
+          return this.scheduler.enqueue(text, context, score, node);
+        },
         this.sessionContext
       );
       
-      this.bridge.translate(document.documentElement);
+      // CRITICAL: Translate only document.body to prevent scroll jumps and HEAD-tag interference.
+      // Translating documentElement causes jumps to top on sites with complex scrollers (like Twitter).
+      this.bridge.translate(document.body);
       
-      // We are now officially translating. 
-      // We do NOT set isTranslating = false or broadcast COMPLETE here anymore, 
-      // because domtranslator discovery/scheduler is asynchronous and just started.
-      // Note: we don't set isTranslated = true yet, as no content has been processed.
       this.isTranslated = false;
       this.isTranslating = true;
       this.isAutoTranslating = !!this.settings.autoTranslateOnDOMChanges;
 
-      return { success: true, url: this.currentUrl, messageId: this.translationMessageId };
+      return { 
+        success: true, 
+        url: this.currentUrl, 
+        messageId: this.translationMessageId,
+        isAutoTranslating: this.isAutoTranslating 
+      };
     } catch (error) {
       if (isSilentError(error)) {
         this.logger.debug('translatePage: Silent error caught', error.message);
@@ -299,7 +222,11 @@ export class PageTranslationManager extends ResourceTracker {
 
   async restorePage() {
     this._cleanupSession();
+    this._removeLayoutFix();
     try {
+      // 0. Stop scroll tracker
+      this.scrollTracker.stop();
+
       // 1. First stop batcher to prevent loop during library's restore
       this.scheduler.setTranslationState(false);
       this.isTranslated = false;
@@ -307,17 +234,20 @@ export class PageTranslationManager extends ResourceTracker {
 
       // 2. Use standard library restore
       this.bridge.restore(document.documentElement);
-      
+
       // 3. Deep clean any remaining markers
       PageTranslationHelper.deepCleanDOM();
 
-      // 4. Complete reset
+      // 4. Get the count before resetting
+      const restoredCount = this.scheduler.translatedCount || 0;
+
+      // 5. Complete reset
       this.resetLocalState();
 
       // Small delay for DOM to stabilize
       await delay(PAGE_TRANSLATION_TIMING.DOM_STABILIZATION_DELAY);
 
-      const resultData = { url: this.currentUrl, restoredCount: 0 };
+      const resultData = { url: this.currentUrl, restoredCount };
       this._broadcastEvent(MessageActions.PAGE_RESTORE_COMPLETE, resultData);
       return { success: true, ...resultData };
     } catch (error) {
@@ -327,7 +257,13 @@ export class PageTranslationManager extends ResourceTracker {
     }
   }
 
+  resetError() {
+    this.isFatalErrorHandling = false;
+    this._broadcastEvent(MessageActions.PAGE_TRANSLATE_RESET_ERROR, { isInternal: true });
+  }
+
   resetLocalState() {
+    this._removeLayoutFix();
     this.isTranslated = false;
     this.isTranslating = false;
     this.isAutoTranslating = false;
@@ -348,22 +284,23 @@ export class PageTranslationManager extends ResourceTracker {
 
     try {
       this.logger.info('Stopping page translation/persistence without restoring');
-      
+
+      this.scrollTracker.stop();
       this.bridge.stopPersistence();
       this.isAutoTranslating = false;
       this.isTranslating = false;
       this.isTranslated = this.scheduler.translatedCount > 0;
-      
+
       // Stop the scheduler from processing more batches
       this.scheduler.setTranslationState(false);
 
       const resultData = {
-        url: this.currentUrl, 
+        url: this.currentUrl,
         translatedCount: this.scheduler.translatedCount,
-        isTranslated: this.isTranslated, 
+        isTranslated: this.isTranslated,
         isAutoTranslating: false
       };
-      
+
       this._broadcastEvent(MessageActions.PAGE_AUTO_RESTORE_COMPLETE, resultData);
       return { success: true, ...resultData };
     } catch (error) {
@@ -382,7 +319,9 @@ export class PageTranslationManager extends ResourceTracker {
       
       if (this.abortController) {
         this.abortController.abort();
-        this._broadcastEvent(MessageActions.PAGE_TRANSLATE_CANCELLED);
+        this._broadcastEvent(MessageActions.PAGE_TRANSLATE_CANCELLED, {
+          sessionId: this.translationMessageId
+        });
       }
     } finally {
       this._isCancelling = false;
@@ -393,83 +332,48 @@ export class PageTranslationManager extends ResourceTracker {
     if (this.isFatalErrorHandling) return;
     this.isFatalErrorHandling = true;
 
-    this.logger.error('Fatal error. Stopping page translation.', error);
-    
-    // Check if cancellation is already handled to avoid loop
-    if (!this._isCancelling) {
-      this.cancelTranslation();
+    const isContextError = ExtensionContextManager.isContextError(error);
+
+    // Use centralized context error detection to avoid orange/red logs
+    if (isContextError) {
+      ExtensionContextManager.handleContextError(error, 'page-translation-fatal');
+    } else {
+      this.logger.warn('Fatal error. Stopping page translation.', error.message);
     }
-    
-    // Get localized message for "Whole-page translation stopped"
-    const stopMessage = (browser.i18n?.getMessage ? browser.i18n.getMessage('ERRORS_PAGE_TRANSLATION_STOPPED') : null) || '{error}';
-    
-    // Use the provided localized message from scheduler if available, fallback to error message
-    const displayError = localizedMessage || error.message || String(error);
-    const finalMessage = stopMessage.replace('{error}', displayError).replace('$1', displayError);
 
-    // Determine the toast level (error, warning, info) based on error type
-    const toastType = getErrorToastType(errorType);
+    this.isTranslating = false;
+    this.isAutoTranslating = false;
+    this.isFatalErrorHandling = false;
 
-    this.notificationManager.show(
-      finalMessage,
-      toastType,
-      PAGE_TRANSLATION_TIMING.FATAL_ERROR_DURATION
-    );
+    // CRITICAL: Stop further translation without restoring the page.
+    // This ensures already translated parts remain visible.
+    this.stopAutoTranslation().catch(() => {});
 
-    this._broadcastEvent(MessageActions.PAGE_TRANSLATE_ERROR, { 
-      error: displayError, 
-      errorType,
-      isFatal: true 
+    // Use centralized ErrorHandler to manage notification and logging
+    ErrorHandler.getInstance().handle(error, {
+      type: errorType || ErrorTypes.TRANSLATION_FAILED,
+      context: 'page-translation-fatal',
+      showToast: !isContextError // Don't show toast for context errors
+    }).catch(err => {
+      this.logger.error('ErrorHandler failed in _handleFatalError:', err);
     });
-  }
 
-  async _loadSettings(options = {}) {
-    // Load all settings in parallel to eliminate sequential await delays
-    const [
-      rawRootMargin,
-      modeProviders,
-      globalTranslationApi,
-      targetLanguage,
-      lazyLoading,
-      autoTranslateOnDOMChanges,
-      excludedSelectors,
-      attributesToTranslate,
-      showOriginalOnHover
-    ] = await Promise.all([
-      getWholePageRootMarginAsync(),
-      getModeProvidersAsync(),
-      getTranslationApiAsync(),
-      getTargetLanguageAsync(),
-      getWholePageLazyLoadingAsync(),
-      getWholePageAutoTranslateOnDOMChangesAsync(),
-      getWholePageExcludedSelectorsAsync(),
-      getWholePageAttributesToTranslateAsync(),
-      getWholePageShowOriginalOnHoverAsync()
-    ]);
-
-    const formattedRootMargin = rawRootMargin ? (String(rawRootMargin).match(/px|%|em|rem|vh|vw$/) ? String(rawRootMargin) : `${rawRootMargin}px`) : '10px';
-
-    // Get mode-specific provider if not explicitly provided in options
-    let effectiveProvider = options.provider;
-    if (!effectiveProvider) {
-      effectiveProvider = modeProviders?.[TranslationMode.Page] || globalTranslationApi;
+    // Don't broadcast UI error for context errors to keep it silent
+    if (!isContextError) {
+      this._broadcastEvent(MessageActions.PAGE_TRANSLATE_ERROR, {
+        error: localizedMessage || error.message || String(error),
+        errorType: errorType || ErrorTypes.TRANSLATION_FAILED,
+        isFatal: true
+      });
     }
 
-    this.settings = {
-      translationApi: effectiveProvider,
-      targetLanguage: options.targetLanguage || targetLanguage,
-      lazyLoading: lazyLoading,
-      rootMargin: formattedRootMargin,
-      autoTranslateOnDOMChanges: autoTranslateOnDOMChanges,
-      excludedSelectors: excludedSelectors,
-      attributesToTranslate: attributesToTranslate,
-      showOriginalOnHover: showOriginalOnHover
-    };
-
-    const { CONFIG } = await import('@/shared/config/config.js');
-    Object.assign(this.settings, {
-      chunkSize: CONFIG.WHOLE_PAGE_CHUNK_SIZE,
-      maxConcurrentFlushes: CONFIG.WHOLE_PAGE_MAX_CONCURRENT_REQUESTS
+    // ALWAYS broadcast local state update via PageEventBus to ensure UI (FAB, Sidepanel) 
+    // resets its state even on non-silent fatal errors.
+    pageEventBus.emit(MessageActions.PAGE_TRANSLATE_PROGRESS, {
+      status: 'idle',
+      isTranslating: false,
+      percent: 0,
+      isInternal: true
     });
   }
 
@@ -483,18 +387,106 @@ export class PageTranslationManager extends ResourceTracker {
     }
   }
 
+  /**
+   * Injects minimal CSS fixes to ensure layout stability during translation.
+   * 
+   * Strategy: "Non-Intrusive Protection"
+   * 1. Uses 'overflow-x: clip' to prevent horizontal scrollbars without triggering scroll resets.
+   * 2. Uses 'max-width: 100%' to keep the body within viewport bounds (fixes Wikipedia FAB drift).
+   * 3. Neutralizes 'transform/filter' on body to protect 'position: fixed' elements (Toasts, FAB).
+   * 4. Strictly avoids touching the <html> tag to prevent the browser from jumping to the top.
+   * 
+   * @private
+   */
+  _injectLayoutFix() {
+    try {
+      // Mark both html and body for maximum specificity without triggering scroll jumps
+      document.documentElement.classList.add('ti-translation-active');
+
+      if (!document.getElementById('ti-translation-layout-fix')) {
+        const style = document.createElement('style');
+        style.id = 'ti-translation-layout-fix';
+        style.textContent = `
+          /**
+           * UNIVERSAL LAYOUT STABILITY FIX
+           */
+          html.ti-translation-active body {
+            /* Basic protection for all devices */
+            overflow-x: clip !important;
+          }
+
+          /**
+           * MOBILE & TOUCH SPECIFIC FIX
+           * We use containment on mobile/tablet or touch devices to solve persistent 
+           * horizontal scrollbars (like on Wikipedia) without causing layout jumps 
+           * on desktop (like Twitter).
+           * Since UI Host is attached to <html>, containment on <body> won't break 
+           * the fixed position of the FAB/Sheet.
+           */
+          @media (max-width: 1024px), (pointer: coarse) {
+            html.ti-translation-active body {
+              contain: paint !important;
+              max-width: 100% !important;
+            }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+    } catch (e) {
+      this.logger.debug('Failed to inject layout fix:', e);
+    }
+  }
+
+  /**
+   * Removes layout fixes and cleans up the DOM after translation is restored or stopped.
+   * @private
+   */
+  _removeLayoutFix() {
+    try {
+      document.documentElement.classList.remove('ti-translation-active');
+      const style = document.getElementById('ti-translation-layout-fix');
+      if (style) style.remove();
+    } catch (e) {
+      this.logger.debug('Failed to remove layout fix:', e);
+    }
+  }
+
   async _broadcastEvent(action, data = {}) {
     try {
+      const isTopFrame = window.self === window.top;
+
+      // Always emit to pageEventBus (both main frame and iframes)
+      // This ensures content app receives messages from all frames
       pageEventBus.emit(action, data);
-      sendRegularMessage({ action, data, context: 'page-translation-broadcast' }).catch(() => {});
-    } catch {
-      // Silent error
+
+      // Only broadcast to background from the main frame (top-level window)
+      // This prevents duplicate messages from iframes to other contexts
+      if (isTopFrame) {
+        sendRegularMessage({ action, data, context: 'page-translation-broadcast' }, { silent: true }).catch(() => {});
+      } else {
+        // IFrame: Send to Main Frame for aggregation
+        this.logger.debug(`IFrame sending event to main frame: ${action}`, data);
+        try {
+          window.top.postMessage({
+            type: 'TRANSLATE_IT_PAGE_EVENT',
+            action,
+            data: {
+              ...data,
+              frameUrl: window.location.href
+            },
+            source: 'translate-it-iframe'
+          }, '*');
+          this.logger.debug(`IFrame successfully sent event to main frame`);
+        } catch (e) {
+          this.logger.warn('IFrame failed to send event to main frame:', e);
+        }
+      }
+    } catch (error) {
+      this.logger.debug('Broadcast event failed - iframe or background unavailable:', error);
     }
   }
 
   getStatus() {
-    // We no longer reset on URL change here because the background script 
-    // and translatePage(isAuto) handle the state transition across navigations.
     if (this.currentUrl && this.currentUrl !== window.location.href) {
       this.currentUrl = window.location.href;
     }
@@ -514,6 +506,7 @@ export class PageTranslationManager extends ResourceTracker {
     this.cancelTranslation();
     if (this.isTranslated) await this.restorePage();
     this.isAutoTranslating = false;
+    this.scrollTracker.destroy();
     this.bridge.cleanup();
     this.scheduler.reset();
     if (this.hoverManager) {

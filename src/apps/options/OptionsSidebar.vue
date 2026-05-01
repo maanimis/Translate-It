@@ -23,9 +23,11 @@
         </a>
         <p>{{ t('description') }}</p>
       </div>
+      
       <div class="sidebar-section theme-controls">
         <ThemeSelector />
       </div>
+
       <div class="sidebar-section localization-controls">
         <h2>{{ t('localization_section_title') }}</h2>
         
@@ -39,6 +41,7 @@
           <InterfaceLocaleSelector mode="dropdown" />
         </div>
       </div>
+
       <div class="sidebar-footer">
         <a
           :href="REPO_URLS.GITHUB_MAIN"
@@ -76,28 +79,36 @@
 </template>
 
 <script setup>
+import './OptionsSidebar.scss'
 import { ref, computed, onMounted } from 'vue'
+import browser from 'webextension-polyfill'
 import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js'
+import { getScopedLogger } from '@/shared/logging/logger.js'
+import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js'
+import { REPO_URLS } from '@/shared/config/constants.js'
 import ThemeSelector from './components/ThemeSelector.vue'
 import InterfaceLocaleSelector from './components/InterfaceLocaleSelector.vue'
-import { getScopedLogger } from '@/shared/logging/logger.js';
-import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
-import { REPO_URLS } from '@/shared/config/constants.js'
-import browser from 'webextension-polyfill'
 
-const sidebarError = ref('')
-const logger = getScopedLogger(LOG_COMPONENTS.UI, 'OptionsSidebar');
+// Logger
+const logger = getScopedLogger(LOG_COMPONENTS.UI, 'OptionsSidebar')
+
+// Composables
 const { t } = useUnifiedI18n()
+
+// State
+const sidebarError = ref('')
 const manifestVersion = ref('v0.0.0')
+
+// --- Computed Properties ---
 
 // Dynamic copyright year logic based on build time
 const copyrightYear = computed(() => {
   const startYear = 2025
-  const buildYear = __BUILD_YEAR__ || startYear
-
-  // If build year is greater than start year, show range, otherwise just start year
+  const buildYear = typeof __BUILD_YEAR__ !== 'undefined' ? __BUILD_YEAR__ : startYear
   return buildYear > startYear ? `${startYear}-${buildYear}` : `${startYear}`
 })
+
+// --- Lifecycle ---
 
 onMounted(async () => {
   try {
@@ -105,301 +116,7 @@ onMounted(async () => {
     manifestVersion.value = `v${manifest.version}`
   } catch (error) {
     logger.warn('Failed to get manifest version:', error)
-    sidebarError.value = error && error.message ? error.message : String(error)
+    sidebarError.value = error?.message || String(error)
   }
-});
+})
 </script>
-
-<style scoped lang="scss">
-@use '@/assets/styles/base/variables' as *;
-
-:root {
-  --breakpoint-lg: 1024px;
-  --breakpoint-md: 768px;
-}
-
-.options-sidebar {
-  flex: 0 0 280px;
-  padding: var(--spacing-md);
-  background: var(--color-surface);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  border-right: var(--border-width) var(--border-style) var(--color-border);
-  position: relative;
-  z-index: 1;
-  box-sizing: border-box;
-  box-shadow: inset -1px 0 0 var(--color-border);
-  
-  /* Add scroll support for the entire sidebar if content is too tall */
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-/* Custom scrollbar for sidebar */
-.options-sidebar::-webkit-scrollbar {
-  width: 4px;
-}
-.options-sidebar::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 2px;
-}
-
-.sidebar-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
-  flex-grow: 1;
-  min-height: min-content; /* Ensure items don't squash */
-}
-
-.sidebar-header {
-  padding: var(--spacing-xs) var(--spacing-sm);
-  text-align: center;
-  margin-bottom: var(--spacing-sm);
-
-  .header-logo-link {
-    text-decoration: none;
-    color: inherit;
-    display: block;
-    cursor: default;
-    pointer-events: none; /* Disabled by default on desktop */
-  }
-
-  h1 {
-    font-size: var(--font-size-xxl);
-    font-weight: var(--font-weight-medium);
-    margin: 0 0 4px 0;
-    color: var(--color-text);
-  }
-
-  span {
-    font-size: var(--font-size-xs);
-    color: var(--color-text-secondary);
-  }
-
-  p {
-    font-size: var(--font-size-sm);
-    margin-top: var(--spacing-sm);
-    color: var(--color-text-secondary);
-  }
-}
-
-.sidebar-section {
-  border: var(--border-width) var(--border-style) var(--color-border);
-  border-radius: var(--border-radius-lg);
-  padding: var(--spacing-md);
-  background: var(--color-background);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  transition: border-color var(--transition-base), box-shadow var(--transition-base);
-  margin: 10px;
-
-  &:hover {
-    border-color: var(--color-primary);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-  }
-
-  h2 {
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin: 0 0 var(--spacing-base) 0;
-    color: var(--color-text-secondary);
-  }
-}
-
-.sidebar-footer {
-  margin-top: auto;
-  padding-top: var(--spacing-md);
-  border-top: var(--border-width) var(--border-style) var(--color-border);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  text-align: center;
-
-  .github-icon {
-    opacity: 0.7;
-    transition: opacity var(--transition-fast);
-    filter: var(--github-icon-filter, none);
-
-    &:hover {
-      opacity: 1;
-    }
-  }
-
-  .about-link {
-    color: var(--color-primary);
-    text-decoration: none;
-    font-weight: var(--font-weight-medium);
-
-    &:hover {
-      text-decoration: underline;
-    }
-  }
-}
-
-.desktop-only {
-  display: block;
-}
-
-.mobile-only {
-  display: none;
-}
-
-/* Tablet responsive */
-@media (max-width: #{$breakpoint-lg}) {
-  .desktop-only {
-    display: none;
-  }
-
-  .mobile-only {
-    display: block;
-    width: auto;
-    min-width: 140px;
-  }
-
-  .options-sidebar {
-    flex: none;
-    width: 100%;
-    border-right: none;
-    border-bottom: var(--border-width) var(--border-style) var(--color-border);
-    flex-direction: row;
-    align-items: center;
-    padding: 6px var(--spacing-md);
-    min-height: 50px;
-    position: relative; /* Ensure it stays in flow */
-    overflow: visible !important; /* Allow dropdowns to show outside the header */
-    z-index: 100; /* Ensure header is above main content */
-    
-    /* Force LTR for the header on mobile/tablet to keep it consistent */
-    direction: ltr !important;
-    text-align: left !important;
-  }
-
-  .sidebar-content {
-    flex-direction: row;
-    align-items: center;
-    width: 100%;
-    gap: var(--spacing-sm);
-    justify-content: space-between; /* Spread items across the header */
-  }
-
-  .sidebar-header {
-    margin-bottom: 0;
-    text-align: left;
-    flex: 0 1 auto;
-    display: flex; /* Align H1 and Span in a row */
-    align-items: baseline;
-    gap: 8px;
-
-    .header-logo-link {
-      pointer-events: auto; /* Enable link only in header mode */
-      cursor: pointer;
-      display: flex;
-      align-items: baseline;
-      gap: 8px;
-      transition: transform var(--transition-base);
-
-      &:hover {
-        transform: scale(1.02);
-        h1 { color: var(--color-primary); }
-      }
-    }
-
-    p { display: none; } /* Still hide description */
-    span { 
-      display: inline-block; /* Show version now */
-      font-size: var(--font-size-xs);
-      opacity: 0.7;
-    }
-
-    h1 { 
-      font-size: var(--font-size-xl); 
-      margin: 0;
-      white-space: nowrap;
-    }
-  }
-
-  .sidebar-section {
-    margin: 0;
-    padding: var(--spacing-sm);
-    box-shadow: none !important;
-    border: none !important;
-    background: transparent !important;
-    h2 { display: none; }
-    flex: 0 0 auto; /* Keep controls at their natural size */
-    
-    /* Limit list height even more in horizontal header mode */
-    .language-list {
-      max-height: 100px !important;
-    }
-    
-    /* Remove click/tap highlight effects on mobile header */
-    -webkit-tap-highlight-color: transparent !important;
-    outline: none !important;
-    
-    &:hover {
-      box-shadow: none !important;
-      border: none !important;
-    }
-
-    // Target the specific control groups within sections
-    :deep(*) {
-      outline: none !important;
-      -webkit-tap-highlight-color: transparent !important;
-    }
-  }
-
-  .sidebar-footer {
-    display: none;
-  }
-}
-
-/* Mobile responsive */
-@media (max-width: 768px) {
-  .options-sidebar {
-    padding: 4px var(--spacing-sm);
-    min-height: 44px;
-  }
-
-  .sidebar-content {
-    gap: var(--spacing-sm);
-    justify-content: space-between;
-  }
-
-  .sidebar-header {
-    h1 {
-      font-size: var(--font-size-lg);
-    }
-  }
-  
-  .sidebar-section {
-    padding: 0;
-  }
-}
-
-/* Small mobile responsive */
-@media (max-width: 480px) {
-  .sidebar-header {
-    h1 {
-      font-size: var(--font-size-base);
-    }
-  }
-}
-
-.localization-controls {
-  // Empty or minimal styles since InterfaceLocaleSelector handles it
-}
-
-.sidebar-section.theme-controls {
-  display: flex;
-  flex-direction: column; /* Stack items vertically */
-  gap: var(--spacing-sm); /* Add spacing between rows */
-}
-
-:global(.options-layout.rtl) {
-  .sidebar-section h2 {
-    text-align: right;
-  }
-}
-</style>

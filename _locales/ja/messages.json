@@ -83,6 +83,9 @@
   "api_provider_deepl": {
     "message": "DeepL"
   },
+  "api_provider_mock": {
+    "message": "開発用モック"
+  },
   "provider_default": {
     "message": "デフォルト"
   },
@@ -170,6 +173,12 @@
   "provider_custom_description": {
     "message": "カスタムOpenAI互換APIエンドポイント。独自のURLとキーを設定してください。"
   },
+  "provider_mock_title": {
+    "message": "開発用モック"
+  },
+  "provider_mock_description": {
+    "message": "開発およびテストに使用されるシミュレーションプロバイダーです。"
+  },
   "options_page_title": {
     "message": "設定"
   },
@@ -221,6 +230,36 @@
   "advance_tab_title": {
     "message": "詳細"
   },
+  "tts_tab_title": {
+    "message": "テキスト読み上げ"
+  },
+  "tts_tab_desc": {
+    "message": "音声設定と読み上げエンジンを構成します。"
+  },
+  "tts_engine_label": {
+    "message": "TTSエンジン"
+  },
+  "tts_engine_google": {
+    "message": "Google 翻訳 (標準)"
+  },
+  "tts_engine_edge": {
+    "message": "Microsoft Edge TTS (ニューラル)"
+  },
+  "tts_engine_desc": {
+    "message": "既定の読み上げエンジンを選択します。Edge TTSは、より高品質で自然な音声を提供します。"
+  },
+  "tts_fallback_label": {
+    "message": "フォールバックを有効にする"
+  },
+  "tts_fallback_desc": {
+    "message": "選択したエンジンが言語をサポートしていない場合、自動的に代替エンジンまたは類似の言語に切り替えます。"
+  },
+  "tts_autodetect_label": {
+    "message": "スマート言語検出"
+  },
+  "tts_autodetect_desc": {
+    "message": "正しい音声が使用されるように、読み上げの前にテキストの言語を自動的に識別します。"
+  },
   "import_success": {
     "message": "設定のインポートが完了しました。"
   },
@@ -232,6 +271,9 @@
   },
   "activation_group_fab_title": {
     "message": "クイックアクションボタン (FAB)"
+  },
+  "activation_group_select_element_title": {
+    "message": "要素の選択"
   },
   "activation_group_text_fields_title": {
     "message": "テキストフィールド翻訳"
@@ -407,6 +449,12 @@
   "translate_with_select_element_description": {
     "message": "特定の選択方法（例：段落全体の選択）で翻訳を呼び出せます。"
   },
+  "show_select_element_in_context_menu_label": {
+    "message": "右クリックメニューに表示"
+  },
+  "show_select_element_in_context_menu_description": {
+    "message": "ブラウザの右クリックコンテキストメニューに「要素を選択」オプションを表示します。"
+  },
   "translate_on_text_selection_label": {
     "message": "テキスト選択時の翻訳を有効にする"
   },
@@ -458,9 +506,6 @@
   "mobile_selection_copied_message": {
     "message": "翻訳結果をクリップボードにコピーしました"
   },
-  "mobile_page_dashboard_btn": {
-    "message": "ダッシュボード"
-  },
   "mobile_page_error_encountered": {
     "message": "エラーが発生しました"
   },
@@ -511,9 +556,6 @@
   },
   "mobile_fab_alt": {
     "message": "翻訳"
-  },
-  "mobile_back_button_alt": {
-    "message": "戻る"
   },
   "mobile_close_button_alt": {
     "message": "閉じる"
@@ -569,14 +611,8 @@
   "mobile_ui_mode_mobile": {
     "message": "常にモバイル"
   },
-  "mobile_ui_mode_mobile_desc": {
-    "message": "タッチ操作に最適化"
-  },
   "mobile_ui_mode_desktop": {
     "message": "常にデスクトップ"
-  },
-  "mobile_ui_mode_desktop_desc": {
-    "message": "デスクトップ用"
   },
   "mobile_input_header_title": {
     "message": "手動入力"
@@ -595,9 +631,6 @@
   },
   "mobile_input_no_result_error": {
     "message": "翻訳結果が見つかりませんでした。もう一度お試しください。"
-  },
-  "mobile_input_default_error": {
-    "message": "翻訳に失敗しました。"
   },
   "mobile_input_copied_message": {
     "message": "コピーしました"
@@ -621,13 +654,13 @@
     "message": "選択翻訳モード"
   },
   "options_selection_mode_immediate": {
-    "message": "すぐに翻訳"
+    "message": "即座に"
   },
   "options_selection_mode_onclick": {
-    "message": "アイコンをクリックして翻訳"
+    "message": "アイコンを表示"
   },
   "options_selection_mode_onfabclick": {
-    "message": "デスクトップFABを使用して翻訳"
+    "message": "FAB"
   },
   "require_ctrl_for_text_selection_label": {
     "message": "テキスト選択翻訳にCtrlキーを必要とする"
@@ -669,7 +702,7 @@
     "message": "翻訳API"
   },
   "translation_api_label": {
-    "message": "APIプロバイダーの選択"
+    "message": "サービス"
   },
   "provider_label": {
     "message": "プロバイダー"
@@ -938,6 +971,9 @@
   "advance_debug_mode_label": {
     "message": "デバッグモード"
   },
+  "debug_section_description": {
+    "message": "特定のコンポーネントの詳細なログを有効にします。グローバルのログレベルを上書きします。"
+  },
   "proxy_section_title": {
     "message": "プロキシ設定"
   },
@@ -974,11 +1010,20 @@
   "proxy_test_success": {
     "message": "プロキシ接続に成功しました！"
   },
+  "direct_test_success": {
+    "message": "直接接続に成功しました！"
+  },
   "proxy_test_failed": {
     "message": "プロキシ接続に失敗しました。設定を確認してください。"
   },
+  "direct_test_failed": {
+    "message": "直接接続に失敗しました。インターネット接続を確認してください。"
+  },
   "proxy_test_error": {
     "message": "エラーが発生しました。"
+  },
+  "proxy_not_enabled": {
+    "message": "接続をテストするには、まずプロキシを有効にしてください。"
   },
   "proxy_warning_title": {
     "message": "ブラウザ拡張機能の制限"
@@ -1064,8 +1109,8 @@
   "popup_translate_button_title": {
     "message": "翻訳"
   },
-  "popup_translate_button_alt_icon": {
-    "message": "翻訳"
+  "popup_stop_button_title": {
+    "message": "翻訳を停止"
   },
   "popup_exclude_toggle_title": {
     "message": "このサイトで有効/無効を切り替え"
@@ -1514,9 +1559,6 @@
   "SELECT_ELEMENT_CANCEL": {
     "message": "キャンセル"
   },
-  "SELECT_ELEMENT_REVERT": {
-    "message": "元に戻す"
-  },
   "LINGVA_WPT_WARNING": {
     "message": "Lingvaは長いテキストで失敗する可能性があります。"
   },
@@ -1525,12 +1567,6 @@
   },
   "click_to_set_shortcut": {
     "message": "クリックしてショートカットを設定"
-  },
-  "shortcut_recording_title": {
-    "message": "ショートカットを押してください"
-  },
-  "shortcut_recording_instruction": {
-    "message": "使用したいキーを押してください。"
   },
   "shortcut_waiting": {
     "message": "キー入力を待機中..."
@@ -1891,5 +1927,197 @@
   },
   "whole_page_show_original_on_hover_description": {
     "message": "翻訳されたテキストにマウスカーソルを合わせると、ツールチップで原文を表示します。"
+  },
+  "select_element_show_original_on_hover_label": {
+    "message": "ホバー時に原文を表示"
+  },
+  "select_element_show_original_on_hover_description": {
+    "message": "「要素選択」で翻訳された要素にマウスを重ねると、ツールチップで元のテキストを表示します。"
+  },
+  "whole_page_translate_after_scroll_stop_label": {
+    "message": "スクロール停止時に翻訳"
+  },
+  "whole_page_translate_after_scroll_stop_description": {
+    "message": "スクロールが停止したときのみ、翻訳を実行します。パフォーマンスの向上とAPIクレジットの節約に最適です。"
+  },
+  "whole_page_translate_fluid_description": {
+    "message": "スクロール中にわずかな遅延をおいて継続的に翻訳します。レスポンスは速くなりますが、APIリクエストが増える可能性があります。"
+  },
+  "whole_page_trigger_mode_label": {
+    "message": "翻訳開始タイミング"
+  },
+  "whole_page_trigger_on_stop": {
+    "message": "スクロール停止時"
+  },
+  "whole_page_trigger_fluid": {
+    "message": "スクロール中"
+  },
+  "whole_page_delay_label": {
+    "message": "翻訳遅延時間"
+  },
+  "whole_page_scroll_stop_delay_unit": {
+    "message": "ミリ秒"
+  },
+  "ai_optimization_section_title": {
+    "message": "AIの最適化"
+  },
+  "ai_context_translation_label": {
+    "message": "スマートな文脈理解"
+  },
+  "ai_context_translation_description": {
+    "message": "ページのメタデータ（タイトル、セクション）をAIモデルに送信します。これにより、短いテキストや曖昧なテキストの翻訳精度が向上します。（DeepLでは常に有効です）"
+  },
+  "ai_conversation_history_label": {
+    "message": "会話メモリ"
+  },
+  "ai_conversation_history_description": {
+    "message": "Select Elementモードで直近の翻訳内容を短期間保持し、一貫性と文脈理解を向上させます。翻訳品質の向上が期待できますが、トークン使用量がわずかに増加する可能性があります。"
+  },
+  "bilingual_translation_label": {
+    "message": "双方向翻訳 (言語の自動入れ替え)"
+  },
+  "bilingual_translation_description": {
+    "message": "検出された言語が翻訳先言語と一致する場合、自動的に翻訳元言語（翻訳元が自動の場合は英語）へ翻訳します。"
+  },
+  "bilingual_mode_selection_label": {
+    "message": "テキスト選択"
+  },
+  "bilingual_mode_select_element_label": {
+    "message": "要素選択"
+  },
+  "bilingual_mode_field_label": {
+    "message": "テキストフィールド"
+  },
+  "bilingual_mode_popup_label": {
+    "message": "ポップアップ & サイドパネル"
+  },
+  "bilingual_mode_page_label": {
+    "message": "ページ全体の翻訳"
+  },
+  "optimization_level_label": {
+    "message": "翻訳戦略 (速度 vs コスト)"
+  },
+  "optimization_level_1": {
+    "message": "レベル 1"
+  },
+  "optimization_level_2": {
+    "message": "レベル 2"
+  },
+  "optimization_level_3": {
+    "message": "レベル 3"
+  },
+  "optimization_level_4": {
+    "message": "レベル 4"
+  },
+  "optimization_level_5": {
+    "message": "レベル 5"
+  },
+  "opt_economy": {
+    "message": "エコノミー"
+  },
+  "opt_stable": {
+    "message": "安定"
+  },
+  "opt_balanced": {
+    "message": "バランス"
+  },
+  "opt_turbo": {
+    "message": "ターボ"
+  },
+  "opt_fast": {
+    "message": "高速"
+  },
+  "optimization_description_ai": {
+    "message": "「エコノミー」でトークン効率を最大化するか、「ターボ」で最速のUI更新を実現するかを選択します。"
+  },
+  "optimization_description_traditional": {
+    "message": "API使用量とIPの安定性を翻訳速度とバランスさせます。効率を高めることでリクエスト頻度を抑え、レート制限を防ぎます。"
+  },
+  "enable_translation_history_label": {
+    "message": "翻訳履歴を有効にする"
+  },
+  "enable_translation_history_description": {
+    "message": "翻訳を履歴に保存します。"
+  },
+  "language_detection_label": {
+    "message": "言語検出"
+  },
+  "language_detection_preferences_description": {
+    "message": "共有スクリプトの優先言語を設定します。この設定は、「自動検出」モードにおいてどの言語を優先的に識別するかを決定します（例：類似した言語の中からペルシア語を正しく検出するため）。"
+  },
+  "arabic_script_priority_label": {
+    "message": "アラビア文字の優先"
+  },
+  "persian_language_name": {
+    "message": "ペルシア語"
+  },
+  "default_label": {
+    "message": "デフォルト"
+  },
+  "arabic_language_name": {
+    "message": "アラビア語"
+  },
+  "urdu_language_name": {
+    "message": "ウルドゥー語"
+  },
+  "pashto_language_name": {
+    "message": "パシュトー語"
+  },
+  "chinese_simplified_name": {
+    "message": "中国語 (簡体字)"
+  },
+  "chinese_traditional_name": {
+    "message": "中国語 (繁体字)"
+  },
+  "chinese_classical_name": {
+    "message": "中国語 (古文)"
+  },
+  "chinese_cantonese_name": {
+    "message": "広東語"
+  },
+  "chinese_script_priority_label": {
+    "message": "中国語スクリプトの優先"
+  },
+  "devanagari_script_priority_label": {
+    "message": "デーヴァナーガリー文字の優先"
+  },
+  "hindi_language_name": {
+    "message": "ヒンディー語"
+  },
+  "marathi_language_name": {
+    "message": "マラーティー語"
+  },
+  "nepali_language_name": {
+    "message": "ネパール語"
+  },
+  "latin_script_priority_label": {
+    "message": "ラテンスクリプトの優先度"
+  },
+  "latin_priority_none_label": {
+    "message": "なし (プロバイダーの検出を使用)"
+  },
+  "english_language_name": {
+    "message": "英語"
+  },
+  "french_language_name": {
+    "message": "フランス語"
+  },
+  "spanish_language_name": {
+    "message": "スペイン語"
+  },
+  "german_language_name": {
+    "message": "ドイツ語"
+  },
+  "italian_language_name": {
+    "message": "イタリア語"
+  },
+  "portuguese_language_name": {
+    "message": "ポルトガル語"
+  },
+  "turkish_language_name": {
+    "message": "トルコ語"
+  },
+  "dutch_language_name": {
+    "message": "オランダ語"
   }
 }

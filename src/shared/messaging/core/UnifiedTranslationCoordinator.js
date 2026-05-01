@@ -12,18 +12,11 @@ import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { streamingTimeoutManager } from './StreamingTimeoutManager.js';
 import { sendRegularMessage } from './UnifiedMessaging.js';
+import { MessageActions } from './MessageActions.js';
 import { matchErrorToType } from '@/shared/error-management/ErrorMatcher.js';
 import { ErrorTypes } from '@/shared/error-management/ErrorTypes.js';
-import { ErrorHandler } from '@/shared/error-management/ErrorHandler.js';
 
-// Lazy logger initialization to avoid TDZ issues
-let logger = null;
-function getLogger() {
-  if (!logger) {
-    logger = getScopedLogger(LOG_COMPONENTS.MESSAGING, 'UnifiedTranslationCoordinator');
-  }
-  return logger;
-}
+const logger = getScopedLogger(LOG_COMPONENTS.MESSAGING, 'UnifiedTranslationCoordinator');
 
 export class UnifiedTranslationCoordinator {
   constructor() {
@@ -39,14 +32,16 @@ export class UnifiedTranslationCoordinator {
    * @returns {Promise} - Translation result
    */
   async coordinateTranslation(message, options = {}) {
+    if (!message) throw new Error('Message is undefined in coordinateTranslation');
     const { action, data } = message;
+    const textLength = (data?.text?.length) || 0;
 
-    getLogger().info(`Coordinating ${action} request (${data?.text?.length || 0} chars, mode: ${data?.mode || 'unknown'})`);
+    logger.debug(`Coordinating ${action} request (${textLength} chars, mode: ${data?.mode || 'unknown'})`);
 
     try {
       // Early check if operation was cancelled before any processing
       if (message.messageId && streamingTimeoutManager.shouldContinue(message.messageId) === false) {
-        getLogger().debug('Translation operation cancelled before coordination');
+        logger.debug('Translation operation cancelled before coordination');
         throw new Error('Translation cancelled by user');
       }
 
@@ -59,27 +54,10 @@ export class UnifiedTranslationCoordinator {
         return await this._coordinateRegularTranslation(message, options);
       }
     } catch (error) {
-      // Final catch-all for any unhandled errors in coordination
-      // Don't log user cancellations as errors
       const errorType = matchErrorToType(error);
-      if (errorType === ErrorTypes.USER_CANCELLED) {
-        getLogger().info(`Translation coordination cancelled by user: ${message.messageId}`, error);
-      } else {
-        getLogger().info(`Translation coordination failed: ${message.messageId}`, error);
+      if (errorType !== ErrorTypes.USER_CANCELLED) {
+        logger.debug(`Translation coordination failed for ${message.messageId}: ${error.message}`);
       }
-
-      // Use centralized error handling for coordination errors
-      try {
-        await ErrorHandler.getInstance().handle(error, {
-          context: 'translation-coordination-top-level',
-          messageId: message.messageId,
-          action: action,
-          showToast: false
-        });
-      } catch (handlerError) {
-        getLogger().warn('Top-level ErrorHandler failed:', handlerError);
-      }
-
       throw error;
     }
   }
@@ -94,7 +72,7 @@ export class UnifiedTranslationCoordinator {
     try {
       // Check if operation was cancelled before sending the request
       if (messageId && streamingTimeoutManager.shouldContinue(messageId) === false) {
-        getLogger().debug('Regular translation operation cancelled');
+        logger.debug('Regular translation operation cancelled');
         throw new Error('Translation cancelled by user');
       }
 
@@ -108,27 +86,8 @@ export class UnifiedTranslationCoordinator {
       // Use regular messaging (bypass coordinator to avoid recursion)
       const result = await sendRegularMessage(message, options);
 
-      getLogger().debug(`Regular translation completed: ${messageId}`);
       return result;
 
-    } catch (error) {
-      // Use centralized error handling with better context (no direct logger.error needed)
-      try {
-        await ErrorHandler.getInstance().handle(error, {
-          context: 'regular-translation-coordination',
-          messageId: messageId,
-          showToast: false, // Regular translation errors are handled by callers
-          metadata: {
-            messageId: messageId,
-            coordinatorAction: 'regular-translation',
-            timestamp: Date.now()
-          }
-        });
-      } catch (handlerError) {
-        getLogger().warn('ErrorHandler failed to handle regular translation error:', handlerError);
-      }
-
-      throw error;
     } finally {
       this.activeTranslations.delete(messageId);
     }
@@ -155,7 +114,7 @@ export class UnifiedTranslationCoordinator {
       // Calculate appropriate timeouts for streaming
       const streamingTimeouts = this._calculateStreamingTimeouts(data, customTimeout);
 
-      getLogger().debug(`Starting streaming translation coordination: ${messageId}`, streamingTimeouts);
+      logger.debug(`Starting streaming translation coordination: ${messageId}`, streamingTimeouts);
 
       // Register with StreamingTimeoutManager
       const streamingPromise = streamingTimeoutManager.registerStreamingOperation(
@@ -163,22 +122,22 @@ export class UnifiedTranslationCoordinator {
         streamingTimeouts.initialTimeout,
         {
           onProgress: (progressData) => {
-            getLogger().debug(`Streaming progress: ${messageId}`, progressData);
+            logger.debug(`Streaming progress: ${messageId}`, progressData);
           },
           onComplete: (result) => {
-            getLogger().debug(`Streaming completed: ${messageId}`, result);
+            logger.debug(`Streaming completed: ${messageId}`, result);
           },
           onTimeout: () => {
-            getLogger().warn(`Streaming timeout: ${messageId}`);
+            logger.warn(`Streaming timeout: ${messageId}`);
             this._handleStreamingTimeout(messageId);
           },
           onError: (error) => {
             // Log cancellation as debug instead of error using proper error management
             const errorType = matchErrorToType(error);
             if (errorType === ErrorTypes.USER_CANCELLED) {
-              getLogger().debug(`Streaming cancelled: ${messageId}`, error);
+              logger.debug(`Streaming cancelled: ${messageId}`, error);
             } else {
-              getLogger().debug(`Streaming error: ${messageId}`, error);
+              logger.debug(`Streaming error: ${messageId}`, error);
             }
           },
           maxProgressTimeout: streamingTimeouts.progressTimeout,
@@ -192,62 +151,57 @@ export class UnifiedTranslationCoordinator {
       });
 
       // If initial response indicates streaming started, wait for streaming completion
-      if (initialResponse.streaming) {
-        getLogger().debug(`Streaming initiated successfully: ${messageId}`);
+      if (initialResponse && initialResponse.streaming) {
+        logger.debug(`Streaming initiated successfully: ${messageId}`);
         const streamingResult = await streamingPromise;
 
         // Check if streaming failed (resolved with error instead of rejected to avoid uncaught promise)
-        if (streamingResult && !streamingResult.success) {
-          throw streamingResult.error;
+        if (streamingResult && streamingResult.success === false) {
+          if (streamingResult.cancelled) {
+            const cancelError = new Error(streamingResult.reason || 'Operation cancelled');
+            cancelError.type = ErrorTypes.USER_CANCELLED;
+            cancelError.isCancelled = true;
+            throw cancelError;
+          }
+          throw streamingResult.error || new Error('Streaming failed without explicit error');
         }
 
         return streamingResult;
       } else {
         // Not streaming, return regular response
-        streamingTimeoutManager.completeStreaming(messageId, initialResponse);
+        if (messageId) streamingTimeoutManager.completeStreaming(messageId, initialResponse || { success: true });
         return initialResponse;
       }
 
     } catch (error) {
       // Log cancellation as info instead of error using proper error management
-      const errorType = matchErrorToType(error);
-      if (errorType === ErrorTypes.USER_CANCELLED) {
-        getLogger().info(`Streaming translation coordination cancelled: ${messageId}`, error);
-      } else {
-        getLogger().info(`Streaming translation coordination failed: ${messageId}`, error);
-      }
-
-      // Use centralized error handling for non-cancellation errors
+      const errorType = error ? matchErrorToType(error) : ErrorTypes.UNKNOWN;
+      const errorMessage = error?.message || (typeof error === 'string' ? error : 'Unknown error');
+      
       if (errorType !== ErrorTypes.USER_CANCELLED) {
-        try {
-          await ErrorHandler.getInstance().handle(error, {
-            context: 'streaming-translation-coordination',
-            messageId: messageId,
-            showToast: false // Streaming errors are handled by the streaming system
-          });
-        } catch (handlerError) {
-          getLogger().warn('ErrorHandler failed to handle streaming error:', handlerError);
-        }
+        logger.warn(`Streaming translation coordination failed for ${messageId}: ${errorMessage}`);
       }
 
       // Cancel streaming if it was registered
-      if (this.streamingOperations.has(messageId)) {
+      if (messageId && this.streamingOperations.has(messageId)) {
         const cancelReason = errorType === ErrorTypes.USER_CANCELLED
-          ? `User cancelled: ${error.message}`
-          : `Coordination error: ${error.message}`;
+          ? `User cancelled: ${errorMessage}`
+          : `Coordination error: ${errorMessage}`;
 
         try {
           streamingTimeoutManager.cancelStreaming(messageId, cancelReason);
         } catch (cancelError) {
           // Log cancellation errors as debug to avoid adding noise to console
-          getLogger().debug('Error during streaming cancellation (handled gracefully):', cancelError);
+          logger.debug('Error during streaming cancellation (handled gracefully):', cancelError);
         }
       }
 
       throw error;
     } finally {
-      this.activeTranslations.delete(messageId);
-      this.streamingOperations.delete(messageId);
+      if (messageId) {
+        this.activeTranslations.delete(messageId);
+        this.streamingOperations.delete(messageId);
+      }
     }
   }
 
@@ -257,7 +211,7 @@ export class UnifiedTranslationCoordinator {
    * @param {object} progressData - Progress information
    */
   reportStreamingProgress(messageId, progressData) {
-    if (this.streamingOperations.has(messageId)) {
+    if (messageId && this.streamingOperations.has(messageId)) {
       streamingTimeoutManager.reportProgress(messageId, progressData);
     }
   }
@@ -268,7 +222,7 @@ export class UnifiedTranslationCoordinator {
    * @param {object} result - Final result
    */
   completeStreamingOperation(messageId, result) {
-    if (this.streamingOperations.has(messageId)) {
+    if (messageId && this.streamingOperations.has(messageId)) {
       streamingTimeoutManager.completeStreaming(messageId, result);
     }
   }
@@ -279,7 +233,7 @@ export class UnifiedTranslationCoordinator {
    * @param {Error} error - Error object
    */
   handleStreamingError(messageId, error) {
-    if (this.streamingOperations.has(messageId)) {
+    if (messageId && this.streamingOperations.has(messageId)) {
       streamingTimeoutManager.errorStreaming(messageId, error);
     }
   }
@@ -290,16 +244,27 @@ export class UnifiedTranslationCoordinator {
    * @param {string} reason - Cancellation reason
    */
   cancelTranslation(messageId, reason = 'User cancelled') {
+    if (!messageId) return false;
     const translation = this.activeTranslations.get(messageId);
     if (!translation) {
       return false;
     }
 
-    getLogger().debug(`Cancelling translation: ${messageId} (${translation.type})`);
+    logger.debug(`Cancelling translation: ${messageId} (${translation.type})`);
 
     if (translation.type === 'streaming') {
       streamingTimeoutManager.cancelStreaming(messageId, reason);
     }
+
+    // Notify background to stop translation immediately
+    // We don't await this as we want the content-side cancellation to be immediate
+    sendRegularMessage({
+      action: MessageActions.CANCEL_TRANSLATION,
+      data: { messageId, reason }
+    }).catch(err => {
+      // Log at debug level as this is often due to extension context invalidation during cancellation
+      logger.debug(`Cancellation message to background failed for ${messageId}:`, err.message);
+    });
 
     this.activeTranslations.delete(messageId);
     this.streamingOperations.delete(messageId);
@@ -312,19 +277,24 @@ export class UnifiedTranslationCoordinator {
    * @private
    */
   _shouldUseStreaming(message) {
+    if (!message) return false;
     const { data, context } = message;
 
     // For Select Element mode, check text length
-    if (context === 'select-element') {
-      const textLength = data?.text?.length || 0;
-      return textLength > 500;
+    if (context === 'select-element' || data?.mode === 'select-element') {
+      const textLength = (data?.text?.length) || 0;
+      // Also check if text is a JSON string with abbreviated keys
+      if (typeof data?.text === 'string' && data.text.startsWith('[') && data.text.includes('"t":')) {
+        return true; // Always stream for JSON payloads in select-element mode
+      }
+      return textLength > 200;
     }
 
     // For other contexts with JSON payload (multiple segments)
-    if (data?.options?.rawJsonPayload) {
+    if (data?.options?.rawJsonPayload && typeof data?.text === 'string') {
       try {
         const jsonData = JSON.parse(data.text);
-        if (Array.isArray(jsonData) && jsonData.length > 5) {
+        if (Array.isArray(jsonData) && (jsonData.length || 0) > 5) {
           return true; // Multiple segments warrant streaming
         }
       } catch {
@@ -333,7 +303,7 @@ export class UnifiedTranslationCoordinator {
     }
 
     // For other contexts with long text
-    const textLength = data?.text?.length || 0;
+    const textLength = (data?.text?.length) || 0;
     return textLength > 2000;
   }
 
@@ -342,17 +312,20 @@ export class UnifiedTranslationCoordinator {
    * @private
    */
   _calculateStreamingTimeouts(data, customTimeout) {
-    let textLength = data?.text?.length || 0;
+    let textLength = (data?.text?.length) || 0;
     let segmentCount = 1;
 
     // Estimate segment count for JSON payload
-    if (data?.options?.rawJsonPayload) {
+    if (data?.options?.rawJsonPayload && typeof data?.text === 'string') {
       try {
         const jsonData = JSON.parse(data.text);
         if (Array.isArray(jsonData)) {
-          segmentCount = jsonData.length;
-          // Calculate actual text length from JSON
-          textLength = jsonData.reduce((sum, item) => sum + (item.text || '').length, 0);
+          segmentCount = (jsonData.length) || 1;
+          // Calculate actual text length from JSON (support both 't' and 'text' keys)
+          textLength = jsonData.reduce((sum, item) => {
+            const text = item?.t || item?.text || '';
+            return sum + (text?.length || 0);
+          }, 0);
         }
       } catch {
         // Fallback to text length estimation
@@ -364,7 +337,7 @@ export class UnifiedTranslationCoordinator {
     }
 
     // Enhanced timeouts for Select Element mode - allow longer processing times
-    const isSelectElementMode = data?.mode === 'select_element' || data?.options?.mode === 'select_element';
+    const isSelectElementMode = data?.mode === 'select_element' || data?.mode === 'select-element' || data?.options?.mode === 'select_element';
 
     let baseTimeout, initialTimeout, progressTimeout, gracePeriod;
 
@@ -395,13 +368,14 @@ export class UnifiedTranslationCoordinator {
    * @private
    */
   _handleStreamingTimeout(messageId) {
-    getLogger().warn(`Handling streaming timeout for: ${messageId}`);
+    if (!messageId) return;
+    logger.warn(`Handling streaming timeout for: ${messageId}`);
 
     const translation = this.activeTranslations.get(messageId);
     if (translation) {
       // Streaming timeout occurred, but background might still be processing
       // We keep the operation active but notify user about timeout
-      getLogger().debug(`Streaming timeout handled, background processing may continue`);
+      logger.debug(`Streaming timeout handled, background processing may continue`);
     }
   }
 
@@ -411,11 +385,11 @@ export class UnifiedTranslationCoordinator {
    */
   getStatus() {
     const activeOperations = Array.from(this.activeTranslations.values()).map(translation => ({
-      messageId: translation.message.messageId,
+      messageId: translation.message?.messageId,
       type: translation.type,
-      context: translation.message.context,
+      context: translation.message?.context,
       duration: Date.now() - translation.startTime,
-      textLength: translation.message.data?.text?.length
+      textLength: (translation.message?.data?.text?.length) || 0
     }));
 
     return {
@@ -430,7 +404,7 @@ export class UnifiedTranslationCoordinator {
    * Cleanup all operations
    */
   cleanup() {
-    getLogger().debug('Cleaning up UnifiedTranslationCoordinator');
+    logger.debug('Cleaning up UnifiedTranslationCoordinator');
 
     // Cancel all active translations
     for (const messageId of this.activeTranslations.keys()) {

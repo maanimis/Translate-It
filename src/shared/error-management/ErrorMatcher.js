@@ -1,7 +1,8 @@
-// s../error-management/ErrorMatcher.js
+// src/shared/error-management/ErrorMatcher.js
 
 import { ErrorTypes } from "./ErrorTypes.js";
 import { ProviderTypes } from "@/features/translation/providers/ProviderConstants.js";
+import ExtensionContextManager from '@/core/extensionContext.js';
 
 /**
  * Errors that should be handled silently without showing any UI or toast
@@ -17,6 +18,9 @@ export const SILENT_ERRORS = new Set([
   ErrorTypes.TAB_NOT_ACCESSIBLE,
   ErrorTypes.NODE_ALREADY_TRANSLATED,
   ErrorTypes.USER_CANCELLED,
+  ErrorTypes.TRANSLATION_CANCELLED,
+  ErrorTypes.PAGE_TRANSLATION_STOPPED,
+  ErrorTypes.FEATURE_BLOCKED, // New: Intentionally blocked features
 ]);
 
 /**
@@ -83,7 +87,8 @@ export const CRITICAL_CONFIG_ERRORS = new Set([
   ErrorTypes.INSUFFICIENT_BALANCE,
   ErrorTypes.DEEPL_QUOTA_EXCEEDED,
   ErrorTypes.GEMINI_QUOTA_REGION,
-  ErrorTypes.CIRCUIT_BREAKER_OPEN
+  ErrorTypes.CIRCUIT_BREAKER_OPEN,
+  ErrorTypes.SETTINGS_LOADING_TIMEOUT
 ]);
 
 /**
@@ -100,15 +105,43 @@ export const FATAL_ERRORS = new Set([
   ErrorTypes.TRANSLATION_FAILED,
   ErrorTypes.TRANSLATION_ERROR,
   ErrorTypes.USER_CANCELLED,
+  ErrorTypes.EXTENSION_CONTEXT_INVALIDATED,
+  ErrorTypes.CONTEXT,
+  ErrorTypes.PAGE_MOVED_TO_CACHE,
   ErrorTypes.LANGUAGE_PAIR_NOT_SUPPORTED,
   ErrorTypes.API_RESPONSE_INVALID,
-  ErrorTypes.SETTINGS_LOADING_TIMEOUT
+  ErrorTypes.API_ENDPOINT_INVALID,
+  ErrorTypes.SETTINGS_LOADING_TIMEOUT,
+  ErrorTypes.CONNECTION_LOST,
+  ErrorTypes.BROWSER_API_UNAVAILABLE
 ]);
 
 /**
+ * ErrorMatcher - Centralizes the logic for identifying and classifying errors
+ * based on their messages, codes, or types.
+ */
+export class ErrorMatcher {
+  static matchErrorToType(error) { return matchErrorToType(error); }
+  static isSilent(type) { return isSilentError(type); }
+  static isFatal(type) { return isFatalError(type); }
+  static needsSettings(type) { return needsSettings(type); }
+  static shouldSuppressConsole(type) { return shouldSuppressConsole(type); }
+  static isCancellation(error) { return isCancellationError(error); }
+}
+
+/**
+ * Determines if an error is a cancellation error
+ */
+export function isCancellationError(error) {
+  if (!error) return false;
+  if (error.isCancelled) return true;
+  
+  const type = typeof error === 'string' ? error : (error.type || matchErrorToType(error));
+  return type === ErrorTypes.USER_CANCELLED || type === ErrorTypes.TRANSLATION_CANCELLED;
+}
+
+/**
  * Determines if an error is considered "fatal" (should stop translation process)
- * @param {string|Error|object} errorOrType - Error type string, Error object, or response object
- * @returns {boolean}
  */
 export function isFatalError(errorOrType) {
   if (!errorOrType) return false;
@@ -125,8 +158,6 @@ export function isFatalError(errorOrType) {
 
 /**
  * Determines if an error should trigger a retry or fallback
- * @param {string|Error|object} errorOrType - Error type string, Error object, or response object
- * @returns {boolean} True if the error is retryable
  */
 export function isRetryableError(errorOrType) {
   return !isFatalError(errorOrType);
@@ -134,37 +165,36 @@ export function isRetryableError(errorOrType) {
 
 /**
  * Determines if an error should be handled silently
- * @param {string|Error|object} errorOrType 
- * @returns {boolean}
  */
 export function isSilentError(errorOrType) {
-  const type = typeof errorOrType === 'string' ? errorOrType : matchErrorToType(errorOrType);
+  // If context is already invalidated, everything should be silent
+  if (!ExtensionContextManager.isValidSync()) {
+    return true;
+  }
+
+  const type = typeof errorOrType === 'string' ? errorOrType : (errorOrType?.type || matchErrorToType(errorOrType));
   return SILENT_ERRORS.has(type);
 }
 
 /**
  * Determines if console logging should be suppressed for this error
- * @param {string|Error|object} errorOrType 
- * @returns {boolean}
  */
 export function shouldSuppressConsole(errorOrType) {
-  const type = typeof errorOrType === 'string' ? errorOrType : matchErrorToType(errorOrType);
+  const type = typeof errorOrType === 'string' ? errorOrType : (errorOrType?.type || matchErrorToType(errorOrType));
   return SUPPRESS_CONSOLE_ERRORS.has(type);
 }
 
 /**
  * Determines if the error requires user to check settings
- * @param {string|Error|object} errorOrType 
- * @returns {boolean}
  */
 export function needsSettings(errorOrType) {
-  const type = typeof errorOrType === 'string' ? errorOrType : matchErrorToType(errorOrType);
+  const type = typeof errorOrType === 'string' ? errorOrType : (errorOrType?.type || matchErrorToType(errorOrType));
   return SETTINGS_REQUIRED_ERRORS.has(type);
 }
 
 /**
  * Determines the error type for a given error object or message
- * @param {Error|string} rawOrError - The error object or message string.
+ * @param {Error|string|Object} rawOrError - The error object or message string.
  * @returns {string} One of the keys from ErrorTypes.
  */
 export function matchErrorToType(rawOrError = "") {
@@ -177,12 +207,8 @@ export function matchErrorToType(rawOrError = "") {
   if (rawOrError && typeof rawOrError === "object" && rawOrError.type) {
     const type = rawOrError.type;
     
-    // Ensure API_RESPONSE_INVALID is properly recognized
-    if (type === ErrorTypes.API_RESPONSE_INVALID) {
-      return ErrorTypes.API_RESPONSE_INVALID;
-    }
+    if (type === ErrorTypes.API_RESPONSE_INVALID) return ErrorTypes.API_RESPONSE_INVALID;
     
-    // If it's a generic translation error or unknown type, we still want to check the message
     if (type !== ErrorTypes.TRANSLATION_ERROR && 
         type !== ErrorTypes.TRANSLATION_FAILED && 
         type !== ErrorTypes.UNKNOWN &&
@@ -196,7 +222,6 @@ export function matchErrorToType(rawOrError = "") {
   if (rawOrError && typeof rawOrError === "object" && rawOrError.statusCode) {
     const code = Number(rawOrError.statusCode);
     if (!isNaN(code) && code >= 400) {
-      // 1. Granular overrides for 400/422/404 based on message/context
       const errorMsg = String(rawOrError.message || "").toLowerCase();
       
       if (code === 400 || code === 422) {
@@ -212,17 +237,19 @@ export function matchErrorToType(rawOrError = "") {
         return ErrorTypes.API_URL_MISSING;
       }
 
-      // 2. Map other standard status codes
       if (code === 401) return ErrorTypes.API_KEY_INVALID;
       if (code === 402) return ErrorTypes.INSUFFICIENT_BALANCE;
       if (code === 403) return ErrorTypes.FORBIDDEN_ERROR;
       if (code === 429) return ErrorTypes.RATE_LIMIT_REACHED;
       if (code === 456) return ErrorTypes.DEEPL_QUOTA_EXCEEDED;
       
-      // 3. Catch ALL server-side errors (500-599)
-      if (code >= 500 && code <= 599) return ErrorTypes.SERVER_ERROR;
+      if (code === 503 || code === 504 || code === 500) {
+        if (errorMsg.includes("overloaded") || errorMsg.includes("high demand") || errorMsg.includes("busy") || errorMsg.includes("unavailable")) {
+          return ErrorTypes.MODEL_OVERLOADED;
+        }
+      }
 
-      // 4. Default for other 4xx errors
+      if (code >= 500 && code <= 599) return ErrorTypes.SERVER_ERROR;
       return ErrorTypes.HTTP_ERROR;
     }
   }
@@ -235,6 +262,12 @@ export function matchErrorToType(rawOrError = "") {
                    (typeof rawOrError === 'string' ? rawOrError : 
                    (typeof rawOrError.message === 'string' ? rawOrError.message : 
                    (rawOrError.code || rawOrError.status || ""))));
+    
+    const trimmedRaw = String(rawMsg || "").trim();
+    if (trimmedRaw && Object.values(ErrorTypes).includes(trimmedRaw)) {
+      return trimmedRaw;
+    }
+
     msg = String(rawMsg || "").toLowerCase().trim();
   } catch {
     msg = "unknown error";
@@ -248,12 +281,22 @@ export function matchErrorToType(rawOrError = "") {
     }
   }
 
-  if (msg.includes("api response invalid") || msg.includes("invalid api response")) {
-    return ErrorTypes.API_RESPONSE_INVALID;
+  if (msg.includes("api response invalid") || msg.includes("invalid api response")) return ErrorTypes.API_RESPONSE_INVALID;
+  if (msg.includes("already been translated")) return ErrorTypes.NODE_ALREADY_TRANSLATED;
+  
+  // URL Construction / Endpoint errors
+  if (msg.includes("failed to construct 'url'") || msg.includes("invalid url") || msg.includes("failed to construct url")) {
+    return ErrorTypes.API_ENDPOINT_INVALID;
   }
 
-  if (msg.includes("already been translated")) {
-    return ErrorTypes.NODE_ALREADY_TRANSLATED;
+  // Feature Blocked / Exclusion matching
+  if (msg.includes("feature blocked") || msg.includes("blocked on this page") || msg.includes("blocked by exclusion")) {
+    return ErrorTypes.FEATURE_BLOCKED;
+  }
+
+  // JavaScript / System errors
+  if (msg.includes("typeerror") || msg.includes("referenceerror") || msg.includes("syntaxerror")) {
+    return ErrorTypes.TRANSLATION_ERROR;
   }
 
   // String-based matching fallback
@@ -266,7 +309,14 @@ export function matchErrorToType(rawOrError = "") {
   if (msg.includes("translation failed") || msg.includes("translation_failed") || msg.includes("batch translation failed") || msg === "translation failed") return ErrorTypes.TRANSLATION_FAILED;
   if (msg.includes("translation error") || msg.includes("translation_error")) return ErrorTypes.TRANSLATION_ERROR;
 
-  if (msg.includes("cancelled by user") || msg.includes("translation cancelled") || msg.includes("user cancelled") || msg.includes("user_cancelled") || msg.includes("operation cancelled")) return ErrorTypes.USER_CANCELLED;
+  if (msg.includes("cancelled by user") || 
+      msg.includes("translation cancelled") || 
+      msg.includes("user cancelled") || 
+      msg.includes("user_cancelled") || 
+      msg.includes("operation cancelled") ||
+      msg === "cancelled" ||
+      msg === "handler cancelled" ||
+      msg === "request cancelled") return ErrorTypes.USER_CANCELLED;
 
   if (msg.includes("html response") || msg.includes("returned html") || msg.includes("html instead of json")) return ErrorTypes.HTML_RESPONSE_ERROR;
   if (msg.includes("json parsing") || msg.includes("json parse") || msg.includes("unexpected end of json input")) return ErrorTypes.JSON_PARSING_ERROR;
@@ -295,21 +345,26 @@ export function matchErrorToType(rawOrError = "") {
 
   if ((msg.includes("api url") && msg.includes("missing")) || msg.includes("no endpoints found") || msg === "api_url_missing") return ErrorTypes.API_URL_MISSING;
   if (msg.includes("not a valid model id") || msg.includes("invalid model") || msg.includes("model not found") || msg.includes("model_missing")) return ErrorTypes.MODEL_MISSING;
-  if (msg.includes("the model is overloaded") || msg.includes("overloaded") || msg.includes("model_overloaded")) return ErrorTypes.MODEL_OVERLOADED;
+  if (msg.includes("the model is overloaded") || msg.includes("overloaded") || msg.includes("model_overloaded") || msg.includes("high demand") || msg.includes("service unavailable")) return ErrorTypes.MODEL_OVERLOADED;
   if (msg.includes("circuit breaker open")) return ErrorTypes.CIRCUIT_BREAKER_OPEN;
 
   if ((msg.includes("quota exceeded") && msg.includes("region")) || msg.includes("location is not supported") || msg.includes("gemini_quota_region")) return ErrorTypes.GEMINI_QUOTA_REGION;
-  if (msg.includes("quota exceeded") || msg.includes("resource has been exhausted") || msg.includes("quota_exceeded")) return ErrorTypes.QUOTA_EXCEEDED;
-  if (msg.includes("insufficient balance") || msg.includes("insufficient_balance") || msg.includes("billing") || msg.includes("check your plan")) return ErrorTypes.INSUFFICIENT_BALANCE;
+  if (msg.includes("quota exceeded") || msg.includes("resource has been exhausted") || msg.includes("quota_exceeded") || msg.includes("limit exceeded")) return ErrorTypes.QUOTA_EXCEEDED;
+  if (msg.includes("insufficient balance") || msg.includes("insufficient_balance") || msg.includes("billing") || msg.includes("check your plan") || msg.includes("more credits") || msg.includes("credits") || msg.includes("api credit") || msg.includes("out of credit")) return ErrorTypes.INSUFFICIENT_BALANCE;
 
   if (msg.includes("failed to fetch") || msg.includes("network failure") || msg.includes("networkerror")) return ErrorTypes.NETWORK_ERROR;
   if (msg.includes("http error") || msg.includes("http status") || msg.includes("the operation was aborted.")) return ErrorTypes.HTTP_ERROR;
 
-  if (msg.includes("extension context invalidated") || (msg.includes("extension context") && msg.includes("invalidated"))) return ErrorTypes.EXTENSION_CONTEXT_INVALIDATED;
+  if (msg.includes("extension context invalidated") || 
+      (msg.includes("extension context") && msg.includes("invalidated")) ||
+      msg.includes("extension context invalid before operation") ||
+      msg.includes("receiving end does not exist") ||
+      msg.includes("message channel closed") ||
+      msg.includes("listener indicated an asynchronous response")) return ErrorTypes.EXTENSION_CONTEXT_INVALIDATED;
+  
   if (msg.includes("no sw") || msg.includes("no service worker") || (msg.includes("service worker") && msg.includes("not available"))) return ErrorTypes.CONTEXT;
-
-  if (msg.includes("listener indicated an asynchronous response") || msg.includes("message channel closed") || msg.includes("receiving end does not exist")) return ErrorTypes.USER_CANCELLED;
-  if (msg.includes("context") || msg.includes("message port closed") || msg.includes("page-moved-to-cache")) return ErrorTypes.CONTEXT;
 
   return ErrorTypes.UNKNOWN;
 }
+
+export default ErrorMatcher;

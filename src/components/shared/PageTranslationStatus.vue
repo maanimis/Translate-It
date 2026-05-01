@@ -1,6 +1,7 @@
 <!-- src/components/shared/PageTranslationStatus.vue -->
 <script setup>
 import { computed } from 'vue';
+import './PageTranslationStatus.scss'
 import { useMobileStore } from '@/store/modules/mobile.js';
 import { TRANSLATION_STATUS } from '@/shared/config/constants.js';
 
@@ -64,7 +65,10 @@ const status = computed(() => {
       { 'has-pulse': status.isPulse }
     ]"
   >
-    <div v-if="status.isPulse" class="status-pulse-glow"></div>
-    <div class="status-inner-dot"></div>
+    <div
+      v-if="status.isPulse"
+      class="status-pulse-glow"
+    />
+    <div class="status-inner-dot" />
   </div>
 </template>

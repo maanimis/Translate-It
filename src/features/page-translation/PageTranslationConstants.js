@@ -47,9 +47,8 @@ export const DEFAULT_PAGE_TRANSLATION_SETTINGS = {
   chunkSize: 250,
   maxConcurrentFlushes: 1,
   lazyLoading: true,
-  rootMargin: '10px',
-  priorityThreshold: 1,
-  poolDelay: 200
+  rootMargin: '150px',
+  priorityThreshold: 1
 };
 
 /**
@@ -68,5 +67,8 @@ export const PAGE_TRANSLATION_TIMING = {
   CONCURRENCY_RETRY_DELAY: 300,
   
   // DOM stability delays
-  DOM_STABILIZATION_DELAY: 50
+  DOM_STABILIZATION_DELAY: 50,
+  
+  // Scroll stop detection
+  VIEWPORT_BUFFER_PX: 100
 };

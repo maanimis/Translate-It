@@ -14,25 +14,11 @@ async function getActiveSelectElementManager() {
   let featureManager = window.featureManager;
 
   if (!featureManager) {
-    // FeatureManager might not be initialized yet, this can happen during startup
-    logger.info('FeatureManager not available - attempting to initialize it');
-
-    try {
-      // Try to initialize FeatureManager dynamically
-      const { loadCoreFeatures } = await import('@/core/content-scripts/chunks/lazy-features.js');
-      await loadCoreFeatures();
-
-      featureManager = window.featureManager;
-      if (featureManager) {
-        logger.info('FeatureManager initialized successfully');
-      } else {
-        logger.info('Failed to initialize FeatureManager after attempt');
-        return null;
-      }
-    } catch (error) {
-      logger.error('Error initializing FeatureManager:', error);
-      return null;
-    }
+    // DO NOT attempt to initialize FeatureManager here.
+    // This function is called during Keyboard interaction sync, and triggering
+    // a full feature load here causes race conditions and partial state initialization
+    // that locks the UI (SelectElementManager side effects).
+    return null;
   }
 
   return featureManager.getFeatureHandler('selectElement') || null;
@@ -133,7 +119,21 @@ export class RevertShortcut {
       const result = await revertHandler.executeRevert();
 
       if (result.success) {
-        logger.debug(`[RevertShortcut] ✅ Successfully reverted ${result.revertedCount} translations`);
+        logger.debug(`[RevertShortcut] Successfully reverted ${result.revertedCount} translations`);
+        
+        // CRITICAL: Notify background to broadcast revert to all other frames
+        // This ensures ESC key in Main frame also reverts translations in all IFrames
+        try {
+          const { sendMessage } = await import('@/shared/messaging/core/UnifiedMessaging.js');
+          const { MessageActions } = await import('@/shared/messaging/core/MessageActions.js');
+          
+          await sendMessage({
+            action: MessageActions.REVERT_SELECT_ELEMENT_MODE,
+            data: { source: 'esc_key', localResult: result }
+          });
+        } catch (msgError) {
+          logger.debug('[RevertShortcut] Failed to broadcast revert:', msgError);
+        }
       } else {
         logger.debug('[RevertShortcut] No translations found to revert');
       }

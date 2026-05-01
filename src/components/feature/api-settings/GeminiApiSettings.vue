@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="gemini-settings">
     <h3>{{ t('gemini_api_settings_title') || 'Gemini API Settings' }}</h3>
     <div class="setting-group api-key-info">
       <span class="setting-description">
@@ -15,6 +15,7 @@
       </a>
     </div>
     <ApiKeyInput
+      id="GEMINI_API_KEY"
       v-model="geminiApiKey"
       :label="t('custom_api_settings_api_key_label') || 'API Keys'"
       :placeholder="t('gemini_api_key_placeholder') || 'Enter your API keys (one per line)'"
@@ -23,7 +24,7 @@
       :test-result="testResult"
       @test="testKeys"
     />
-    <div class="setting-group">
+    <div class="setting-group vertical">
       <label>{{ t('PROVIDER_MODEL_LABEL') || 'Model' }}</label>
       <BaseSelect
         v-model="geminiModel"
@@ -34,37 +35,39 @@
     </div>
     <div
       v-if="selectedModelOption === 'custom'"
-      class="setting-group"
+      class="setting-group vertical"
     >
       <label>{{ t('gemini_api_settings_api_url_label') || 'API URL' }}</label>
       <BaseInput
+        id="GEMINI_API_URL"
         v-model="geminiApiUrl"
         :placeholder="t('gemini_api_url_placeholder') || 'Enter custom API URL'"
         class="api-url-input"
         dir="ltr"
       />
-      <span class="setting-description">
+      <p class="setting-description">
         {{ t('gemini_custom_api_url_info') || 'Enter the complete API URL including the model name' }}
-      </span>
+      </p>
     </div>
     <div
       v-if="isThinkingSupported"
-      class="setting-group"
+      class="setting-group vertical"
     >
       <BaseCheckbox
         v-model="geminiThinking"
         :disabled="!isThinkingControllable"
         :label="t('gemini_thinking_label') || 'Enable Thinking Mode'"
       />
-      <span class="setting-description">
+      <p class="setting-description">
         {{ t('gemini_thinking_description') || thinkingDescription }}
-      </span>
+      </p>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed, ref, onMounted, watch } from 'vue'
+import "./GeminiApiSettings.scss"
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/features/settings/stores/settings.js'
 import { CONFIG } from '@/shared/config/config.js'
@@ -115,19 +118,14 @@ const geminiThinking = computed({
   set: (value) => settingsStore.updateSettingLocally('GEMINI_THINKING_ENABLED', value)
 })
 
-// Get model options from CONFIG to maintain consistency
-const geminiModelOptions = ref(
-  CONFIG.GEMINI_MODELS?.map(model => ({
+// Get model options from settingsStore to maintain consistency with migrations
+const geminiModelOptions = computed(() => {
+  const models = settingsStore.settings?.GEMINI_MODELS || CONFIG.GEMINI_MODELS || []
+  return models.map(model => ({
     value: model.value,
-    label: model.name
-  })) || [
-    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
-    { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash-Lite' },
-    { value: 'custom', label: 'Custom Model' }
-  ]
-)
+    label: model.name || model.value
+  }))
+})
 
 // Track thinking mode properties for current model
 const isThinkingSupported = ref(false)
@@ -224,7 +222,3 @@ onMounted(() => {
   initializeModelSelection()
 })
 </script>
-
-<style lang="scss" scoped>
-@use "@/assets/styles/components/api-settings-common" as *;
-</style>

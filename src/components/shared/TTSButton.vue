@@ -91,6 +91,7 @@ import BaseActionButton from '@/features/text-actions/components/BaseActionButto
 import { useTTSSmart } from '@/features/tts/composables/useTTSSmart.js'
 import { getScopedLogger } from '@/shared/logging/logger.js'
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js'
+import { getLanguageNameFromCode } from '@/shared/config/languageConstants.js'
 
 const logger = getScopedLogger(LOG_COMPONENTS.UI, 'TTSButton')
 
@@ -144,15 +145,27 @@ const localTTSId = ref(null)
 
 // Check if this specific button instance is currently responsible for the active TTS
 const isThisButtonActive = computed(() => {
+  // If system is in error state, and this was the last button to trigger it
+  if (tts.ttsState.value === 'error' && tts.lastText.value === props.text) {
+    return true
+  }
+  
+  // Normal check via active ID
   return !!(localTTSId.value && tts.currentTTSId.value === localTTSId.value)
 })
 
 // The visual state for this specific button instance
 const effectiveState = computed(() => {
-  // If this button is active, show the global TTS state
+  // If this button is currently waiting for its own request to start
+  if (tts.ttsState.value === 'loading' && localTTSId.value?.startsWith('pending_')) {
+    return 'loading'
+  }
+
+  // If this button is active (playing or error), show the global TTS state
   if (isThisButtonActive.value) {
     return tts.ttsState.value
   }
+  
   // Otherwise, always show as idle
   return 'idle'
 })
@@ -167,15 +180,33 @@ const ttsButtonClasses = computed(() => [
 ])
 
 const buttonTitle = computed(() => {
+  // Get readable language name if it's not 'auto'
+  const displayLang = props.language && props.language !== 'auto' 
+    ? getLanguageNameFromCode(props.language) 
+    : '';
+  
+  // Capitalize first letter (e.g., 'english', 'persian')
+  const langName = displayLang 
+    ? displayLang.charAt(0).toUpperCase() + displayLang.slice(1) 
+    : '';
+    
+  const langSuffix = langName ? ` (${langName})` : '';
+
   switch (effectiveState.value) {
     case 'idle':
-      return t('action_speak_text')
+      return t('action_speak_text') + langSuffix
     case 'loading':
       return t('window_loading_alt')
     case 'playing':
-      return t('action_stop_speaking')
+      return t('action_stop_speaking') + langSuffix
     case 'error':
-      return `Error: ${tts.errorMessage.value || 'Click to retry'}`
+      // Try to get localized message from errorType key
+      if (tts.errorType.value) {
+        const key = tts.errorType.value.startsWith('ERRORS_') ? tts.errorType.value : `ERRORS_${tts.errorType.value}`;
+        const translated = t(key);
+        if (translated && translated !== key) return translated;
+      }
+      return tts.errorMessage.value || t('ERRORS_UNKNOWN')
     default:
       return 'Text to speech'
   }
@@ -207,17 +238,26 @@ const handleClick = async () => {
     return
   }
 
+  logger.debug(`[TTSButton] Clicked in state: ${effectiveState.value}, text length: ${props.text.length}`)
+
   try {
     let result = false
 
     // Use effectiveState to determine the action for this button
     switch (effectiveState.value) {
       case 'idle':
-        // Start new TTS and capture its ID
+        // Generate a temporary ID or use a marker to stay active during speak()
+        localTTSId.value = `pending_${Date.now()}`
+        
         result = await tts.speak(props.text, props.language)
+        
         if (result) {
+          // Sync with the actual ID from the store after success
           localTTSId.value = tts.currentTTSId.value
           emit('tts-started', { text: props.text, language: props.language })
+        } else {
+          // Failure: we don't clear localTTSId yet, so isThisButtonActive can detect 'error' state
+          logger.debug('[TTSButton] Speak failed, error state should be visible')
         }
         break
 
@@ -225,12 +265,18 @@ const handleClick = async () => {
       case 'playing':
         // Stop current TTS
         result = await tts.stop()
-        if (result) emit('tts-stopped')
+        if (result) {
+          localTTSId.value = null
+          emit('tts-stopped')
+        }
         break
 
       case 'error':
-        // Retry failed TTS and update ID
-        result = await tts.retry()
+        // Priority: Use speak() with current text instead of rigid retry()
+        // This allows user to change text/language and try again
+        localTTSId.value = `pending_retry_${Date.now()}`
+        result = await tts.speak(props.text, props.language)
+        
         if (result) {
           localTTSId.value = tts.currentTTSId.value
           emit('tts-started', { text: props.text, language: props.language })
@@ -241,11 +287,13 @@ const handleClick = async () => {
 
       default:
         logger.warn('[TTSButton] Unknown effective state:', effectiveState.value)
-        result = await tts.stop()
+        await tts.stop()
+        localTTSId.value = null
         if (result) emit('tts-stopped')
     }
   } catch (error) {
     logger.error('[TTSButton] Action failed:', error)
+    localTTSId.value = null
     emit('tts-error', error instanceof Error ? error : new Error(error?.message || 'TTS action failed'))
   }
 }
@@ -258,8 +306,6 @@ watch(() => tts.ttsState.value, (newState, oldState) => {
     emit('state-changed', { 
       from: oldState, 
       to: newState,
-      canPause: tts.canPause.value,
-      canResume: tts.canResume.value,
       canStop: tts.canStop.value
     })
   }

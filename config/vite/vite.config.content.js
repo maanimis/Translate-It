@@ -60,10 +60,7 @@ export const createContentConfig = (browser) => {
           ...baseConfig.build.rollupOptions.output,
           // Content script chunks - new lazy loading architecture
           manualChunks: (id) => {
-            // Content script entry point
-            if (id.includes('src/core/content-scripts/index')) {
-              return 'content/content-entry';
-            }
+            // Shared content script logic
             if (id.includes('src/core/content-scripts/ContentScriptCore')) {
               return 'content/content-core';
             }
@@ -108,6 +105,12 @@ export const createContentConfig = (browser) => {
             // Utility chunks for content scripts
             if (id.includes('src/utils') && !id.includes('src/utils/i18n/locales')) {
               return 'content/utils';
+            }
+
+            // 4. Large Language Data (Keeps the main bundle small)
+            if (id.includes('src/utils/i18n/locales/')) {
+              const localeMatch = id.match(/locales\/([a-z0-9-]+)\.json$/);
+              if (localeMatch) return `locales/${localeMatch[1]}`;
             }
 
             // Store chunks for content scripts

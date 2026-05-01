@@ -1,0 +1,407 @@
+@use "@/assets/styles/base/variables" as *;
+
+/* 
+  Activation Tab - Main Container
+*/
+.activation-tab {
+  max-width: 100% !important;
+  width: 100% !important;
+  display: block !important;
+
+  .setting-group {
+    margin-bottom: 0 !important; /* Fieldset handles the bottom space */
+    gap: 0 !important; /* Use margins on items for more control */
+
+    // Only add margin if there's a previous setting-group
+    & + .setting-group {
+      margin-top: $spacing-lg !important;
+    }
+
+    // Special spacing for the main toggle at the top
+    &.extension-enabled-group {
+      margin-bottom: $spacing-xl !important;
+    }
+  }
+
+  .base-fieldset {
+    max-width: 100% !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+    margin-right: 0 !important;
+    margin-left: 0 !important;
+  }
+
+  /* 
+    The base components (BaseCheckbox, BaseRadio) now handle their own 
+    internal alignment and centering globally.
+  */
+  .ti-checkbox, 
+  .base-radio, 
+  .base-checkbox {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+}
+
+/* 
+  RTL Adjustments 
+*/
+.rtl .activation-tab {
+  .ti-checkbox, .base-radio, .base-checkbox {
+    flex-direction: row !important;
+  }
+
+  .fab-mode-select-wrapper .compact-select {
+    background-position: left 6px center !important;
+  }
+}
+
+.setting-row {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: $spacing-md !important;
+  width: 100% !important;
+  flex-wrap: wrap !important;
+  box-sizing: border-box !important;
+
+  .ti-checkbox, .base-radio {
+    flex: 1 1 200px !important;
+  }
+
+  .setting-label {
+    font-weight: 600 !important;
+    color: var(--color-text) !important;
+    min-width: 150px !important;
+  }
+
+  .shortcut-picker-animated-wrapper {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    overflow: hidden !important;
+    max-width: 0 !important;
+    opacity: 0 !important;
+    transform: translateX(-10px) scale(0.95) !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    pointer-events: none !important;
+    flex-shrink: 0 !important;
+
+    &.open {
+      max-width: 220px !important;
+      width: 100% !important;
+      opacity: 1 !important;
+      transform: translateX(0) scale(1) !important;
+      pointer-events: auto !important;
+      margin-inline-start: $spacing-sm !important;
+      overflow: visible !important;
+      flex-shrink: 1 !important;
+    }
+  }
+
+  .fab-mode-select-wrapper {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    overflow: hidden !important;
+    max-width: 0 !important;
+    opacity: 0 !important;
+    transform: translateX(-10px) scale(0.95) !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    pointer-events: none !important;
+    flex-shrink: 0 !important;
+
+    &.open {
+      max-width: 160px !important;
+      width: 100% !important;
+      opacity: 1 !important;
+      transform: translateX(0) scale(1) !important;
+      pointer-events: auto !important;
+      margin-inline-start: $spacing-sm !important;
+      overflow: visible !important;
+      flex-shrink: 1 !important;
+    }
+
+    .compact-select {
+      height: 32px !important;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+      padding-inline-start: $spacing-sm !important;
+      padding-inline-end: 28px !important;
+      font-size: $font-size-sm !important;
+      background-color: var(--color-background-alt, var(--color-surface)) !important;
+      background-position: right 6px center !important;
+      background-size: 1.2em 1.2em !important;
+      width: auto !important;
+      min-width: 120px !important;
+      border: 1px solid var(--color-border) !important;
+      border-radius: $border-radius-base !important;
+    }
+  }
+}
+
+.whole-page-trigger-group {
+  margin-top: 0 !important;
+  margin-bottom: $spacing-xl !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+
+  .trigger-modes-container, .delay-setting-container {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: $spacing-sm $spacing-md !important;
+    margin-bottom: $spacing-sm !important;
+    width: 100% !important;
+
+    &.trigger-modes-container {
+      margin-bottom: $spacing-xl !important;
+    }
+    
+    .delay-label {
+      font-size: $font-size-sm !important;
+      font-weight: 500 !important;
+      color: var(--color-text) !important;
+      max-width: 100% !important;
+      margin-top: 0 !important;
+      &.is-disabled { opacity: 0.6 !important; }
+      flex: none !important;
+      min-width: 0 !important;
+      align-self: center !important;
+    }
+    
+    .radio-group-horizontal {
+      display: flex !important;
+      flex-wrap: wrap !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: $spacing-md 48px !important;
+      flex: none !important;
+      min-width: 0 !important;
+
+      .base-radio {
+        width: auto !important;
+        min-width: max-content !important;
+        white-space: nowrap !important;
+        overflow: visible !important;
+        gap: 4px !important;
+
+        .radio-label, .radio-label-content {
+          padding-inline: 12px !important;
+        }
+      }
+    }
+
+    &.delay-setting-container {
+      justify-content: flex-start !important;
+      gap: $spacing-sm !important;
+    }
+  }
+
+  .setting-description {
+    text-align: start !important;
+    padding-inline-start: 0 !important;
+    width: 100% !important;
+  }
+}
+
+.number-input-container {
+  display: flex !important;
+  align-items: center !important;
+  gap: $spacing-xs !important;
+
+  .base-number-input {
+    width: 80px !important;
+    padding: 6px 10px !important;
+    border-radius: $border-radius-sm !important;
+    border: 1px solid var(--color-border) !important;
+    background-color: var(--color-surface) !important;
+    color: var(--color-text) !important;
+    outline: none !important;
+
+    &.compact-input {
+      width: 65px !important;
+      padding: 3px 6px !important;
+      height: 26px !important;
+      text-align: center !important;
+    }
+  }
+
+  .unit-label {
+    font-size: 0.9em !important;
+    color: var(--color-text-secondary) !important;
+  }
+}
+
+.setting-description {
+  padding-inline-start: 32px !important;
+  margin-top: $spacing-xs !important;
+  max-width: 100% !important;
+  display: block !important;
+  white-space: normal !important;
+  word-break: break-word !important;
+  box-sizing: border-box !important;
+  color: var(--color-text-secondary) !important;
+  font-size: $font-size-sm !important;
+}
+
+// Ensure ProviderSelector in legend looks good
+.base-fieldset__header-actions {
+  .legend-actions-wrapper {
+    display: flex;
+    align-items: center;
+    gap: $spacing-sm;
+
+    .legend-action-label {
+      font-size: $font-size-xs !important;
+      color: var(--color-text-secondary) !important;
+      white-space: nowrap !important;
+      font-weight: normal !important;
+
+      &.is-disabled {
+        opacity: 0.5 !important;
+      }
+    }
+  }
+
+  .ti-provider-button-container {
+    .ti-provider-button {
+      padding: 4px 8px !important;
+      height: 28px !important;
+      font-size: $font-size-xs !important;
+      background: var(--color-surface) !important;
+      
+      .ti-api-provider-icon {
+        width: 14px !important;
+        height: 14px !important;
+      }
+      
+      .dropdown-arrow {
+        width: 12px !important;
+        height: 12px !important;
+      }
+    }
+  }
+}
+
+.sub-options-group {
+  display: grid !important;
+  grid-template-rows: 0fr !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  opacity: 0 !important;
+  overflow: hidden !important;
+  margin-inline-start: $spacing-md !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  border-inline-start: 2px solid transparent !important;
+  width: auto !important;
+
+  &.open {
+    grid-template-rows: 1fr !important;
+    opacity: 1 !important;
+    margin-top: $spacing-md !important;
+    margin-bottom: 0 !important;
+    border-inline-start-color: var(--color-border) !important;
+  }
+
+  // Allow highlight spotlight to overflow the container without being clipped
+  &:has(.is-highlighting) {
+    overflow: visible !important;
+  }
+
+  .sub-options-inner {
+    min-height: 0 !important;
+    padding-inline-start: $spacing-lg !important;
+    padding-inline-end: $spacing-md !important;
+    padding-top: $spacing-xs !important;
+    padding-bottom: $spacing-sm !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: $spacing-sm !important;
+  }
+  
+  .radio-group {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: $spacing-xl !important;
+    margin-bottom: $spacing-xl !important;
+    flex-wrap: wrap !important;
+    width: 100% !important;
+
+    .base-radio {
+      width: auto !important;
+      max-width: none !important;
+    }
+  }
+}
+
+// Mobile responsive overrides
+@media (max-width: #{$breakpoint-md}) {
+  .activation-tab {
+    .base-fieldset {
+      padding: $spacing-sm !important;
+    }
+  }
+
+  .setting-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: $spacing-sm !important;
+
+    .ti-checkbox, .base-radio {
+      flex: 0 0 auto !important;
+    }
+
+    &.fab-setting-row {
+      flex-direction: row !important;
+      flex-wrap: nowrap !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      gap: $spacing-sm !important;
+
+      .ti-checkbox {
+        flex: 1 !important;
+        min-width: 0 !important;
+      }
+
+      .fab-mode-select-wrapper {
+        margin-inline-start: 0 !important;
+        flex-shrink: 0 !important;
+
+        &.open {
+          max-width: 140px !important;
+        }
+
+        .compact-select {
+          min-width: 100px !important;
+          height: 30px !important;
+          font-size: $font-size-xs !important;
+        }
+      }
+    }
+  }
+
+  .setting-description {
+    padding-inline-start: 0 !important;
+  }
+  
+  .sub-options-group {
+    padding-inline-start: $spacing-base !important;
+    margin-inline-start: $spacing-sm !important;
+    
+    .radio-group {
+      flex-direction: row !important;
+      flex-wrap: wrap !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: $spacing-sm $spacing-xl !important;
+    }
+  }
+}

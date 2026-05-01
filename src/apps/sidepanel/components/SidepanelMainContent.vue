@@ -11,6 +11,8 @@
         <LanguageSelector
           v-model:source-language="sourceLanguage"
           v-model:target-language="targetLanguage"
+          :provider="currentProviderLocal"
+          :beta="settingsStore.settings.DEEPL_BETA_LANGUAGES_ENABLED"
           :source-title="t('SIDEPANEL_SOURCE_LANGUAGE_TITLE', 'زبان مبدا')"
           :target-title="t('SIDEPANEL_TARGET_LANGUAGE_TITLE', 'زبان مقصد')"
           :swap-title="t('SIDEPANEL_SWAP_LANGUAGES_TITLE', 'جابجایی زبان‌ها')"
@@ -39,8 +41,9 @@
             mode="split"
             :is-global="false"
             :show-sync="true"
-            :disabled="!canTranslateFromForm"
+            :loading="isTranslating"
             @translate="handleTranslate"
+            @cancel="cancelTranslation"
           />
         </div>
       </div>
@@ -67,8 +70,9 @@
             mode="split"
             :is-global="false"
             :show-sync="true"
-            :disabled="!canTranslateFromForm"
+            :loading="isTranslating"
             @translate="handleTranslate"
+            @cancel="cancelTranslation"
           />
         </div>
         <div class="end-spacer" />
@@ -86,8 +90,9 @@
         ref="sourceInputRef"
         v-model="sourceText"
         :placeholder="t('SIDEPANEL_SOURCE_TEXT_PLACEHOLDER', 'Type Here')"
-        :language="currentSourceLanguage"
-        :source-language="currentSourceLanguage"
+        :language="actualSourceLanguage"
+        :detected-source-language="actualSourceLanguage"
+        :last-translation="lastTranslation"
         :rows="6"
         :tabindex="1"
         :copy-title="t('SIDEPANEL_COPY_SOURCE_TITLE_ICON', 'Copy source text')"
@@ -105,8 +110,9 @@
         <TranslationDisplay
           ref="translationResultRef"
           :content="translatedText"
-          :language="currentTargetLanguage"
-          :target-language="currentTargetLanguage"
+          :language="actualTargetLanguage"
+          :target-language="actualTargetLanguage"
+          :last-translation="lastTranslation"
           :is-loading="isTranslating"
           :error="translationError"
           :error-type="errorType"
@@ -125,10 +131,12 @@
 </template>
 
 <script setup>
+import './SidepanelMainContent.scss'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useUnifiedTranslation } from '@/features/translation/composables/useUnifiedTranslation.js'
 import { useErrorHandler } from '@/composables/shared/useErrorHandler.js'
 import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js'
+import { useSettingsStore } from '@/features/settings/stores/settings.js'
 
 // Components
 import LanguageSelector from '@/components/shared/LanguageSelector.vue'
@@ -144,6 +152,7 @@ const logger = getScopedLogger(LOG_COMPONENTS.UI, 'SidepanelMainContent');
 // Resource tracker for automatic cleanup
 
 // Stores
+const settingsStore = useSettingsStore()
 
 // Composables
 const { t } = useUnifiedI18n();
@@ -156,7 +165,11 @@ const {
   translationError,
   errorType,
   canTranslate,
+  actualSourceLanguage,
+  actualTargetLanguage,
+  lastTranslation,
   triggerTranslation,
+  cancelTranslation,
   clearTranslation,
   loadLastTranslation
 } = useUnifiedTranslation('sidepanel');
@@ -259,35 +272,42 @@ const currentTargetLanguage = computed(() => {
 })
 
 // Methods
-const handleTranslate = async () => {
-  logger.debug("Translation button clicked", { provider: currentProviderLocal.value });
+/**
+ * Handle translation requests
+ * @param {Object} data - Optional data from ProviderSelector (contains provider ID)
+ */
+const handleTranslate = async (data) => {
+  // Use the provider from event data if available, otherwise use local state
+  const providerId = data?.provider || currentProviderLocal.value;
+  
+  logger.debug("Translation button clicked", { provider: providerId });
   
   if (!canTranslate.value) {
-    logger.warn("⚠️ Translation blocked - canTranslate is false");
+    logger.debug("Translation skipped - input is empty or invalid");
     return;
   }
   
   try {
-    logger.info("🗳️ Starting translation process...");
+    logger.debug("Starting translation process...");
     
-    // Use ref to trigger translation if available, otherwise fallback to composable
-    if (sourceInputRef.value && typeof sourceInputRef.value.triggerTranslation === 'function') {
-      await sourceInputRef.value.triggerTranslation();
+    let success = false;
+    // Fallback to direct composable call (already handles languages)
+    success = await triggerTranslation(currentSourceLanguage.value, currentTargetLanguage.value, providerId);
+    
+    if (success) {
+      logger.info("Translation completed successfully");
     } else {
-      // Fallback to direct composable call (already handles languages)
-      await triggerTranslation(currentSourceLanguage.value, currentTargetLanguage.value, currentProviderLocal.value);
+      logger.debug("Translation failed (handled internally)");
     }
-    
-    logger.info("✅ Translation completed successfully");
 
   } catch (error) {
-    logger.error("❌ Translation failed:", error);
+    logger.error("Translation failed (unexpected):", error);
     await handleError(error, 'sidepanel-translation')
   }
 }
 
 const clearFields = async () => {
-  logger.debug("🧹 Clearing fields and resetting languages");
+  logger.debug("Clearing fields and resetting languages");
   await clearTranslation();
 };
 
@@ -316,251 +336,3 @@ onUnmounted(() => {
   cleanupResizeObserver()
 });
 </script>
-
-<style lang="scss" scoped>
-@use "@/assets/styles/base/mixins" as *;
-
-.sidepanel-wrapper {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  position: relative;
-}
-
-.main-content {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  flex: 1;
-}
-
-.language-controls {
-  display: flex;
-  flex-direction: column;
-  padding: 12px;
-  margin: 0;
-  gap: 12px;
-  background: var(--language-controls-bg-color);
-  box-sizing: border-box;
-  flex-shrink: 0;
-  position: relative;
-  z-index: 10; /* Restored to original priority */
-}
-
-/* Wide layout: Translate button alongside language selectors */
-.language-controls--wide {
-  flex-direction: column;
-}
-
-.language-controls--wide .language-selector-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  flex-wrap: nowrap;
-}
-
-.language-controls--wide .translate-button-inline {
-  flex: 1;
-  margin-left: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.language-controls--wide .inline-clear-btn {
-  margin-right: auto;
-}
-
-.language-controls--wide .translate-button-inline :deep(.provider-selector) {
-  min-width: auto;
-  max-width: none;
-}
-
-.language-selector-row {
-  align-items: center;
-  justify-content: flex-start;
-  width: 100%;
-  max-width: 100%;
-  overflow: visible;
-  position: relative;
-  z-index: 11;
-  min-height: 40px;
-  box-sizing: border-box;
-  padding: 0 8px;
-}
-
-.language-selector-row :deep(.language-controls) {
-  width: 100%;
-  max-width: calc(100% - 16px);
-  display: flex !important;
-  flex-direction: row !important;
-  align-items: center !important;
-  gap: 8px;
-  padding: 8px 0;
-  margin: 0;
-  background: transparent;
-  height: auto;
-  justify-content: flex-start;
-  flex-wrap: nowrap !important;
-}
-
-.language-selector-row :deep(.language-select) {
-  flex: 1 1 auto !important;
-  min-width: 70px;
-  max-width: 120px !important;
-  opacity: 1 !important;
-  visibility: visible !important;
-  display: block !important;
-  position: relative !important;
-  box-sizing: border-box !important;
-}
-
-/* In wide layout, make language selects slightly smaller to make room for Translate button */
-.language-controls--wide .language-selector-row :deep(.language-select) {
-  max-width: 100px !important;
-  min-width: 65px;
-}
-
-.language-selector-row :deep(.swap-button) {
-  flex: 0 0 32px !important;
-  width: 32px;
-  height: 32px;
-  opacity: 1 !important;
-  visibility: visible !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  position: relative !important;
-  z-index: 12 !important;
-  background: var(--color-bg-secondary) !important;
-  border: 1px solid var(--color-border) !important;
-  border-radius: 4px !important;
-  box-sizing: border-box !important;
-}
-
-.language-selector-row :deep(.swap-button img) {
-  opacity: 1 !important;
-  visibility: visible !important;
-  display: block !important;
-  width: 16px !important;
-  height: 16px !important;
-}
-
-.translate-button-row {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  position: relative;
-  z-index: 5;
-  min-height: 40px;
-  box-sizing: border-box;
-  margin-top: 8px;
-  padding: 0 8px;
-}
-
-.center-spacer {
-  flex: 1;
-  display: flex;
-  justify-content: center;
-}
-
-.end-spacer {
-  width: 20px; /* Same as clear button width to keep Translate perfectly centered */
-}
-
-.translate-button-row :deep(.provider-selector) {
-  min-width: auto;
-}
-
-.ti-icon-button {
-  @include toolbar-button-minimal;
-}
-
-.ti-toolbar-icon {
-  width: 16px;
-  height: 16px;
-  opacity: var(--icon-opacity, 0.6);
-  filter: var(--icon-filter);
-  transition: opacity 0.2s ease-in-out;
-}
-
-.ti-icon-button:hover .ti-toolbar-icon {
-  opacity: var(--icon-hover-opacity, 1);
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.translation-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  height: 100%;
-  flex: 1;
-}
-
-/* Sidepanel-specific adjustments (similar to popup) */
-.translation-form :deep(.textarea-container) {
-  position: relative;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  background-color: var(--color-textarea-background);
-  padding: 5px;
-  margin: 6px 12px;
-}
-
-.translation-form :deep(.translation-textarea) {
-  min-height: 120px;
-  max-height: 200px;
-  font-size: 13px;
-  padding: 42px 8px 8px 8px;
-}
-
-
-.output-container {
-  margin: 6px 12px;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-
-.translation-form :deep(.result-content) {
-  flex: 1;
-  min-height: 0;
-  max-height: none;
-  font-size: 13px;
-  height: 100%;
-  margin: 6px 12px;
-}
-
-.translation-form :deep(.translation-textarea) {
-  min-height: 120px;
-  max-height: 200px;
-  font-size: 13px;
-  padding: 42px 8px 8px 8px;
-}
-
-
-.output-container {
-  margin: 6px 12px;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-
-.translation-form :deep(.result-content) {
-  flex: 1;
-  min-height: 0;
-  max-height: none;
-  font-size: 13px;
-  height: 100%;
-}
-
-</style>

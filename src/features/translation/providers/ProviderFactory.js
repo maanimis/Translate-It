@@ -7,6 +7,10 @@ export class ProviderFactory {
   }
 
   async getProvider(providerId) {
+    return this._getInternalProvider(providerId);
+  }
+
+  async _getInternalProvider(providerId) {
     if (this.providerInstances.has(providerId)) {
       return this.providerInstances.get(providerId);
     }

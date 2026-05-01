@@ -1,0 +1,46 @@
+@use "@/assets/styles/base/variables" as *;
+
+.appearance-tab {
+  .settings-container {
+    max-width: 100%;
+    width: 100%;
+  }
+
+  h2 {
+    margin-bottom: $spacing-xl;
+  }
+
+  .setting-description {
+    margin: 0 0 $spacing-md 0 !important;
+    color: var(--color-text-secondary);
+    font-size: $font-size-sm;
+    line-height: 1.5;
+  }
+
+  .font-selector-wrapper {
+    margin-top: $spacing-md;
+    padding-inline-start: $spacing-xs; // ایجاد تراز عمودی با توضیحات بالا
+  }
+
+  .validation-error {
+    margin-top: $spacing-md;
+    padding: $spacing-sm;
+    background-color: var(--color-error-alpha);
+    color: var(--color-error);
+    border-radius: $border-radius-sm;
+    font-size: $font-size-sm;
+  }
+}
+
+// Mobile responsive
+@media (max-width: #{$breakpoint-md}) {
+  .appearance-tab {
+    .settings-container {
+      max-width: 100%;
+    }
+    
+    .font-selector-wrapper {
+      padding-inline-start: 0;
+    }
+  }
+}

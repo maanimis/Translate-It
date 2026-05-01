@@ -1,11 +1,12 @@
 <template>
   <div
-    v-show="!isFullscreen"
+    v-if="isReady && !isFullscreen"
     ref="fabContainerRef"
     class="desktop-fab-container notranslate"
     :class="[
       settingsStore.isDarkTheme ? 'theme-dark' : 'theme-light',
-      side === 'right' ? 'is-right' : 'is-left'
+      side === 'right' ? 'is-right' : 'is-left',
+      { 'is-positioning': isPositioning }
     ]"
     translate="no"
     :style="containerStyle"
@@ -13,7 +14,10 @@
     @mouseleave="handleMouseLeave"
   >
     <!-- Revert Action (Small Badge Button) -->
-    <Transition name="fade-scale" :duration="{ enter: ANIMATION_CONFIG.MENU_ENTER }">
+    <Transition
+      name="fade-scale"
+      :duration="{ enter: ANIMATION_CONFIG.MENU_ENTER }"
+    >
       <div 
         v-if="mobileStore.hasElementTranslations && (isHovered || isMenuOpen)" 
         class="fab-revert-badge"
@@ -23,16 +27,31 @@
         @mouseenter="isRevertHovered = true"
         @mouseleave="isRevertHovered = false"
       >
-        <img :src="IconRevert" :alt="t('desktop_fab_revert_tooltip')">
+        <img
+          :src="IconRevert"
+          :alt="t('desktop_fab_revert_tooltip')"
+        >
       </div>
     </Transition>
 
     <!-- Menu -->
-    <Transition name="fab-menu" :duration="{ enter: ANIMATION_CONFIG.MENU_ENTER }">
-      <div v-if="isMenuOpen" class="desktop-fab-menu">
-        <template v-for="(item, index) in menuItems" :key="item.id">
+    <Transition
+      name="fab-menu"
+      :duration="{ enter: ANIMATION_CONFIG.MENU_ENTER }"
+    >
+      <div
+        v-if="isMenuOpen"
+        class="desktop-fab-menu"
+      >
+        <template
+          v-for="(item, index) in menuItems"
+          :key="item.id"
+        >
           <!-- Divider -->
-          <div v-if="index > 0" class="fab-menu-divider"></div>
+          <div
+            v-if="index > 0"
+            class="fab-menu-divider"
+          />
 
           <div 
             class="fab-menu-item"
@@ -44,17 +63,21 @@
             @mouseenter="hoveredItemIndex = index"
             @mouseleave="hoveredItemIndex = -1"
           >
-            <div 
-              class="menu-icon-wrapper"
-              :style="{ 
-                marginRight: side === 'right' ? '10px !important' : '0 !important', 
-                marginLeft: side === 'left' ? '10px !important' : '0 !important', 
-                order: side === 'left' ? 2 : 0
-              }" 
-            >
+            <div class="menu-icon-wrapper">
               <!-- Circle Progress for Page Translation -->
-              <svg v-if="item.showProgress" class="fab-circle-progress" viewBox="0 0 32 32">
-                <circle class="progress-bg" cx="16" cy="16" r="14" fill="none" stroke-width="3" />
+              <svg
+                v-if="item.showProgress"
+                class="fab-circle-progress"
+                viewBox="0 0 32 32"
+              >
+                <circle
+                  class="progress-bg"
+                  cx="16"
+                  cy="16"
+                  r="14"
+                  fill="none"
+                  stroke-width="3"
+                />
                 <circle 
                   class="progress-fill" 
                   cx="16" 
@@ -75,10 +98,7 @@
                 :class="{ 'is-colored': item.id === 'translate_page' || item.id === 'translate_selection' }"
               >
             </div>
-            <span 
-              class="fab-menu-item-text"
-              :style="{ 'text-align': side === 'right' ? 'left' : 'right' }"
-            >
+            <span class="fab-menu-item-text">
               {{ item.label }}
             </span>
           </div>
@@ -97,12 +117,19 @@
       :title="t('desktop_fab_tooltip')"
       :style="mainButtonStyle"
       @mousedown="startDrag"
+      @touchstart.passive="startDrag"
       @click.stop="toggleMenu"
     >
-      <img :src="IconExtension" :alt="t('desktop_fab_alt')">
+      <img
+        :src="IconExtension"
+        :alt="t('desktop_fab_alt')"
+      >
 
       <!-- Page Translation Status Badge (Bottom) -->
-      <Transition name="fade-scale" :duration="{ enter: ANIMATION_CONFIG.MENU_ENTER }">
+      <Transition
+        name="fade-scale"
+        :duration="{ enter: ANIMATION_CONFIG.MENU_ENTER }"
+      >
         <PageTranslationStatus 
           v-if="pageTranslationStatus.isActive" 
           mode="desktop-fab" 
@@ -110,58 +137,102 @@
       </Transition>
 
       <!-- Pending Selection Badge (Top) -->
-      <Transition name="fade-scale" :duration="{ enter: ANIMATION_CONFIG.MENU_ENTER }">
+      <Transition
+        name="fade-scale"
+        :duration="{ enter: ANIMATION_CONFIG.MENU_ENTER }"
+      >
         <div 
           v-if="pendingSelection.hasSelection && (pendingSelection.mode === SelectionTranslationMode.ON_FAB_CLICK || !isTextSelectionEnabled)"
           class="fab-translate-badge"
           @click.stop="triggerTranslation"
         >
-          <div class="fab-badge-pulse-glow"></div>
-          <div style="width: 4px !important; height: 4px !important; background-color: white !important; border-radius: 50% !important; box-shadow: 0 0 2px rgba(255, 255, 255, 0.8) !important; z-index: 1;"></div>
+          <div class="fab-badge-pulse-glow" />
+          <div class="white-dot" />
         </div>
       </Transition>
     </div>
 
     <!-- Settings Button -->
-    <Transition name="fade-scale" :duration="{ enter: ANIMATION_CONFIG.MENU_ENTER }">
+    <Transition
+      name="fade-scale"
+      :duration="{ enter: ANIMATION_CONFIG.MENU_ENTER }"
+    >
       <div 
         v-if="isMenuOpen" 
         class="fab-settings-badge"
         :title="t('desktop_fab_settings_tooltip')"
         :style="{ 
-          'bottom': (isTTSActive && (isHovered || isMenuOpen) ? '-84px' : '-42px') + ' !important',
+          '--badge-bottom-offset': (isTTSActive && (isHovered || isMenuOpen) ? 'calc(-2 * var(--badge-offset))' : 'calc(-1 * var(--badge-offset))'),
           'transform': getBadgeTransform(isHovered || isMenuOpen, isSettingsHovered)
         }"
         @click.stop="handleOpenSettings"
         @mouseenter="isSettingsHovered = true"
         @mouseleave="isSettingsHovered = false"
       >
-        <img :src="IconSettings" :alt="t('desktop_fab_settings_tooltip')">
+        <img
+          :src="IconSettings"
+          :alt="t('desktop_fab_settings_tooltip')"
+        >
       </div>
     </Transition>
 
     <!-- TTS Button -->
-    <Transition name="fade-scale" :duration="{ enter: ANIMATION_CONFIG.MENU_ENTER }">
+    <Transition
+      name="fade-scale"
+      :duration="{ enter: ANIMATION_CONFIG.MENU_ENTER }"
+    >
       <div 
         v-if="isTTSActive && (isHovered || isMenuOpen)" 
         class="fab-tts-badge"
-        :class="{ 'is-playing': isThisTTSActive && tts.isPlaying.value }"
-        :title="(isThisTTSActive && tts.isPlaying.value) ? t('desktop_fab_tts_stop_tooltip') : t('desktop_fab_tts_play_tooltip')"
+        :class="{ 'is-playing': ttsState === 'playing', 'is-loading': ttsState === 'loading' }"
+        :title="ttsTooltip"
         :style="{ 
-          'bottom': '-42px !important', 
-          'transform': getBadgeTransform(isHovered || isMenuOpen, isTTSHovered),
-          'background-color': (isThisTTSActive && tts.isPlaying.value) ? '#fa5252 !important' : ''
+          '--badge-bottom-offset': 'calc(-1 * var(--badge-offset))', 
+          'transform': getBadgeTransform(isHovered || isMenuOpen, isTTSHovered)
         }"
         @click.stop="handleTTS"
         @mouseenter="isTTSHovered = true"
         @mouseleave="isTTSHovered = false"
       >
-        <div v-if="isThisTTSActive && tts.isLoading.value" class="fab-tts-loader"></div>
+        <!-- Loading Spinner SVG -->
+        <svg
+          v-if="ttsState === 'loading'"
+          class="fab-tts-icon ti-loading-spin"
+          viewBox="0 0 24 24"
+          width="16"
+          height="16"
+        >
+          <path
+            fill="currentColor"
+            d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"
+          />
+          <path
+            fill="currentColor"
+            opacity="0.5"
+            d="M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"
+          />
+        </svg>
+
+        <!-- Stop Icon SVG -->
+        <svg
+          v-else-if="ttsState === 'playing'"
+          class="fab-tts-icon"
+          viewBox="0 0 24 24"
+          width="16"
+          height="16"
+        >
+          <path
+            fill="currentColor"
+            d="M6 6h12v12H6z"
+          />
+        </svg>
+
+        <!-- Idle Speaker Icon -->
         <img
           v-else
           :src="IconTTS"
           :alt="t('desktop_fab_tts_tooltip')"
-          :style="{ filter: (isThisTTSActive && tts.isPlaying.value) ? 'brightness(0) invert(1) !important' : '' }"
+          class="fab-tts-icon"
         >
       </div>
     </Transition>
@@ -169,7 +240,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n';
 import { MessageActions } from '@/shared/messaging/core/MessageActions.js';
 import { getScopedLogger } from '@/shared/logging/logger.js';
@@ -177,14 +248,21 @@ import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { sendMessage } from '@/shared/messaging/core/UnifiedMessaging.js';
 import { useMobileStore } from '@/store/modules/mobile.js';
 import useSettingsStore from '@/features/settings/stores/settings.js';
+import ExtensionContextManager from '@/core/extensionContext.js';
 import { TRANSLATION_STATUS } from '@/shared/config/constants.js';
 import { useResourceTracker } from '@/composables/core/useResourceTracker';
 import { storageManager } from '@/shared/storage/core/StorageCore.js';
 import { getDesktopFabPositionAsync, SelectionTranslationMode } from '@/shared/config/config.js';
 import { pageEventBus } from '@/core/PageEventBus.js';
 import { useTTSSmart } from '@/features/tts/composables/useTTSSmart.js';
+import { useErrorHandler } from '@/composables/shared/useErrorHandler.js';
 import useFabSelection from '@/apps/content/composables/useFabSelection.js';
+import ExclusionChecker from '@/features/exclusion/core/ExclusionChecker.js';
 import PageTranslationStatus from '@/components/shared/PageTranslationStatus.vue';
+import { deviceDetector } from '@/utils/browser/compatibility.js';
+import { LanguageDetectionService } from '@/shared/services/LanguageDetectionService.js';
+import { getLanguageNameFromCode } from '@/shared/config/languageConstants.js';
+import './DesktopFabMenu.scss';
 
 import IconExtension from '@/icons/extension/extension_icon_64.svg';
 import IconSelectElement from '@/icons/ui/select.png';
@@ -200,8 +278,24 @@ const logger = getScopedLogger(LOG_COMPONENTS.DESKTOP_FAB, 'Menu');
 const mobileStore = useMobileStore();
 const settingsStore = useSettingsStore();
 const { t } = useUnifiedI18n();
+const { handleError } = useErrorHandler();
 const tracker = useResourceTracker('desktop-fab-menu');
 const tts = useTTSSmart();
+const exclusionChecker = ExclusionChecker.getInstance();
+
+const allowedFeatures = ref({
+  selectElement: true,
+  pageTranslation: true
+});
+
+const updateAllowedFeatures = async () => {
+  const status = await exclusionChecker.getFeatureStatus();
+  if (status.initialized) {
+    allowedFeatures.value.selectElement = status.features.selectElement?.allowed ?? true;
+    allowedFeatures.value.pageTranslation = status.features.pageTranslation?.allowed ?? true;
+    logger.debug('FAB allowed features updated', allowedFeatures.value);
+  }
+};
 
 const ANIMATION_CONFIG = {
   MOVE_IN: '0.4s',
@@ -221,6 +315,9 @@ const ANIMATION_CONFIG = {
 const isMenuOpen = ref(false);
 const isFaded = ref(true);
 const isHovered = ref(false);
+const isReady = ref(false);
+const isPositioning = ref(true);
+const isViewportUnstable = ref(false);
 const isRevertHovered = ref(false);
 const isSettingsHovered = ref(false);
 const isTTSHovered = ref(false);
@@ -229,11 +326,7 @@ const hoveredItemIndex = ref(-1);
 // Track the specific TTS request started by this component instance
 const localTTSId = ref(null);
 const isLocalLoading = ref(false);
-
-// Check if this specific instance is currently responsible for the active TTS
-const isThisTTSActive = computed(() => {
-  return isLocalLoading.value || (!!(localTTSId.value && tts.currentTTSId.value === localTTSId.value));
-});
+const detectedLanguage = ref('auto');
 
 const isFullscreen = computed(() => mobileStore.isFullscreen);
 const isTextSelectionEnabled = computed(() => settingsStore.settings?.TRANSLATE_ON_TEXT_SELECTION !== false);
@@ -241,15 +334,7 @@ const isTextSelectionEnabled = computed(() => settingsStore.settings?.TRANSLATE_
 const fabContainerRef = ref(null);
 let hoverTimerId = null;
 let fadeTimerId = null;
-
-// Initialize FAB selection logic
-const { pendingSelection, triggerTranslation } = useFabSelection({
-  onSelectionPending: (detail) => {
-    if (detail.mode === SelectionTranslationMode.ON_FAB_CLICK || !isTextSelectionEnabled.value) {
-      startFadeTimer();
-    }
-  }
-});
+let instabilityTimer = null;
 
 const startFadeTimer = (forceVisible = true) => {
   if (fadeTimerId) tracker.clearTimer(fadeTimerId);
@@ -260,11 +345,84 @@ const startFadeTimer = (forceVisible = true) => {
   }, ANIMATION_CONFIG.IDLE_TIMEOUT);
 };
 
+// Initialize FAB selection logic
+const { pendingSelection, triggerTranslation } = useFabSelection({
+  onSelectionPending: (detail) => {
+    if (detail.mode === SelectionTranslationMode.ON_FAB_CLICK || !isTextSelectionEnabled.value) {
+      startFadeTimer();
+    }
+  }
+});
+
+// Detect language whenever selection changes
+watch(() => pendingSelection.value.text, async (newText) => {
+  if (newText && newText.trim().length > 0) {
+    try {
+      const lang = await LanguageDetectionService.detect(newText);
+      if (lang) detectedLanguage.value = lang;
+    } catch (err) {
+      logger.debug('Failed to detect language for FAB TTS tooltip:', err);
+      detectedLanguage.value = 'auto';
+    }
+  } else {
+    detectedLanguage.value = 'auto';
+  }
+});
+
+// Check if this specific instance is currently responsible for the active TTS
+const isThisTTSActive = computed(() => {
+  return isLocalLoading.value || (!!(localTTSId.value && tts.currentTTSId.value === localTTSId.value));
+});
+
+const ttsState = computed(() => {
+  if (isThisTTSActive.value) return tts.ttsState.value;
+  return 'idle';
+});
+
+const ttsTooltip = computed(() => {
+  const langName = detectedLanguage.value && detectedLanguage.value !== 'auto'
+    ? getLanguageNameFromCode(detectedLanguage.value)
+    : '';
+  
+  const capitalizedLang = langName ? langName.charAt(0).toUpperCase() + langName.slice(1) : '';
+  const langSuffix = capitalizedLang ? ` (${capitalizedLang})` : '';
+
+  if (ttsState.value === 'playing') return t('desktop_fab_tts_stop_tooltip') + langSuffix;
+  if (ttsState.value === 'loading') return t('window_loading_alt');
+  return t('desktop_fab_tts_play_tooltip') + langSuffix;
+});
+
+const updateViewport = () => {
+  if (typeof window === 'undefined') return;
+  
+  // Only hide FAB on scroll for actual mobile devices (where toolbars hide/show)
+  if (deviceDetector.isMobile()) {
+    isViewportUnstable.value = true;
+  }
+  
+  checkBounds();
+  
+  if (instabilityTimer) {
+    tracker.clearTimer(instabilityTimer);
+    instabilityTimer = null;
+  }
+  
+  instabilityTimer = tracker.trackTimeout(() => {
+    isViewportUnstable.value = false;
+    instabilityTimer = null;
+  }, 250);
+};
+
 const handleMouseEnter = () => {
   if (hoverTimerId) { tracker.clearTimer(hoverTimerId); hoverTimerId = null; }
   if (fadeTimerId) { tracker.clearTimer(fadeTimerId); fadeTimerId = null; }
   isHovered.value = true;
   isFaded.value = false;
+
+  // Reset error status when interacting with FAB
+  if (pageTranslationStatus.value.isError) {
+    pageEventBus.emit(MessageActions.PAGE_TRANSLATE_RESET_ERROR);
+  }
 };
 
 const handleMouseLeave = () => {
@@ -282,36 +440,49 @@ const menuItems = computed(() => {
       id: 'translate_selection',
       label: t('desktop_fab_translate_selection_label'),
       icon: IconTranslateSelection,
-      closeMenu: true,
+      closeMenu: false,
       action: () => triggerTranslation()
     });
   }
 
-  items.push({
-    id: 'select_element',
-    label: t('desktop_fab_select_element_label'),
-    icon: IconSelectElement,
-    closeMenu: true,
-    action: async () => {
-      try {
-        await sendMessage({ action: MessageActions.ACTIVATE_SELECT_ELEMENT_MODE });
-      } catch (err) {
-        logger.error('Failed to trigger select element from FAB:', err);
+  if (allowedFeatures.value.selectElement) {
+    items.push({
+      id: 'select_element',
+      label: t('desktop_fab_select_element_label'),
+      icon: IconSelectElement,
+      closeMenu: true,
+      action: async () => {
+        try {
+          await sendMessage({ action: MessageActions.ACTIVATE_SELECT_ELEMENT_MODE });
+        } catch (err) {
+          if (ExtensionContextManager.isContextError(err)) {
+            ExtensionContextManager.handleContextError(err, 'desktop-fab:select-element');
+          } else {
+            await handleError(err, { 
+              context: 'desktop-fab:select-element',
+              showToast: true 
+            });
+          }
+        }
       }
-    }
-  });
+    });
+  }
 
   const status = pageTranslationStatus.value;
+  const isPageTranslationAllowed = allowedFeatures.value.pageTranslation;
 
-  if (status.isTranslating || status.isAuto) {
+  if (status.isAuto || status.isTranslating) {
     items.push({
-      id: 'page_translating',
-      label: status.isTranslating ? t('desktop_fab_translating_label') : t('desktop_fab_stop_auto_translating_label'),
+      id: 'page_translating_stop',
+      label: t('desktop_fab_stop_auto_translating_label'),
       icon: IconHourglass,
-      showProgress: true,
+      showProgress: status.isTranslating,
       percent: status.percent,
       closeMenu: false,
-      action: () => pageEventBus.emit(MessageActions.PAGE_TRANSLATE_STOP_AUTO)
+      action: () => {
+        logger.info('Stopping page translation from FAB');
+        pageEventBus.emit(MessageActions.PAGE_TRANSLATE_STOP_AUTO);
+      }
     });
   } else if (status.isCompleted) {
     items.push({
@@ -321,7 +492,7 @@ const menuItems = computed(() => {
       closeMenu: true,
       action: () => pageEventBus.emit(MessageActions.PAGE_RESTORE)
     });
-  } else {
+  } else if (isPageTranslationAllowed) {
     items.push({
       id: 'translate_page',
       label: t('desktop_fab_translate_page_label'),
@@ -369,45 +540,53 @@ const verticalPos = ref(-1);
 const userPreferredY = ref(null);
 const side = ref('right');
 const isDragging = ref(false);
+const wasDragged = ref(false);
 let startY = 0;
 let startX = 0;
 
 const checkBounds = () => {
   if (typeof window === 'undefined' || userPreferredY.value === null) return;
-  const maxY = window.innerHeight - 60;
+  
+  // Dynamically calculate maxY based on window height and a safe margin
+  // (using a slightly larger margin to account for responsive scaling)
+  const maxY = window.innerHeight - 80;
   verticalPos.value = Math.max(10, Math.min(userPreferredY.value, maxY));
 };
 
 const containerStyle = computed(() => {
   let opacityValue = ANIMATION_CONFIG.OPACITY_FULL;
-  if (isFaded.value && !isHovered.value && !isMenuOpen.value && !isDragging.value) {
+  let pointerEvents = 'auto';
+
+  if (isViewportUnstable.value && !isDragging.value) {
+    opacityValue = 0;
+    pointerEvents = 'none';
+  } else if (isFaded.value && !isHovered.value && !isMenuOpen.value && !isDragging.value) {
     opacityValue = ANIMATION_CONFIG.OPACITY_DIMMED; 
   }
 
   const isActive = isHovered.value || isMenuOpen.value || isDragging.value;
   const moveDuration = isActive ? ANIMATION_CONFIG.MOVE_IN : ANIMATION_CONFIG.MOVE_OUT;
   const easing = ANIMATION_CONFIG.SOFT_EASING;
-  
-  const transitions = [
-    `transform ${moveDuration} ${easing}`,
-    `left ${moveDuration} ${easing}`,
-    `right ${moveDuration} ${easing}`
-  ];
 
-  const opacityDuration = isMenuOpen.value ? ANIMATION_CONFIG.QUICK_FADE : (opacityValue === ANIMATION_CONFIG.OPACITY_FULL ? ANIMATION_CONFIG.FADE_IN : ANIMATION_CONFIG.FADE_OUT);
-  transitions.push(`opacity ${opacityDuration} ${easing}`);
+  // Build transition string dynamically
+  let transitionStr = 'none';
+  if (!isPositioning.value && !isViewportUnstable.value) {
+    const opacityDuration = isMenuOpen.value ? ANIMATION_CONFIG.QUICK_FADE : (opacityValue === ANIMATION_CONFIG.OPACITY_FULL ? ANIMATION_CONFIG.FADE_IN : ANIMATION_CONFIG.FADE_OUT);
+    transitionStr = `transform ${moveDuration} ${easing}, left ${moveDuration} ${easing}, right ${moveDuration} ${easing}, opacity ${opacityDuration} ${easing}`;
+  }
 
   const style = {
-    'transition': `${transitions.join(', ')} !important`,
-    'opacity': `${opacityValue} !important`
+    '--fab-opacity': opacityValue,
+    '--fab-pointer-events': pointerEvents,
+    '--fab-transition': transitionStr
   };
 
   if (verticalPos.value === -1) {
-    style.bottom = '150px !important';
-    style.top = 'auto !important';
+    style['--fab-top'] = '50%';
+    style['--fab-transform'] = 'translateY(-50%)';
   } else {
-    style.top = `${verticalPos.value}px !important`;
-    style.bottom = 'auto !important';
+    style['--fab-top'] = `${verticalPos.value}px`;
+    style['--fab-transform'] = 'none';
   }
 
   return style;
@@ -418,33 +597,46 @@ const mainButtonStyle = computed(() => {
   const isActive = isHovered.value || isMenuOpen.value || isDragging.value;
   const moveDuration = isActive ? ANIMATION_CONFIG.MOVE_IN : ANIMATION_CONFIG.MOVE_OUT;
   
+  const translateValue = isActive 
+    ? (isRight ? 'calc(-1 * var(--fab-active-translate))' : 'var(--fab-active-translate)') 
+    : '0px';
+
   return {
-    'transform': (isActive ? (isRight ? 'translateX(-18px)' : 'translateX(18px)') : 'translateX(0)'),
-    'transition': `transform ${moveDuration} ${ANIMATION_CONFIG.SOFT_EASING}, background-color 0.2s ease, box-shadow 0.3s ease !important`
+    'transform': `translateX(${translateValue})`,
+    'transition': `transform ${moveDuration} ${ANIMATION_CONFIG.SOFT_EASING}, background-color 0.2s ease, box-shadow 0.3s ease`
   };
 });
 
 const getBadgeTransform = (isHoveredOrOpen, isIndividualHovered) => {
   const isRight = side.value === 'right';
-  const translateAmount = isRight ? -18 : 18;
+  // Use CSS variables for responsive translate amount
+  const translateValue = isHoveredOrOpen 
+    ? (isRight ? 'calc(-1 * var(--fab-active-translate))' : 'var(--fab-active-translate)') 
+    : '0px';
+    
   const scale = isIndividualHovered ? 1.15 : 1;
-  return `translateX(${isHoveredOrOpen ? translateAmount : 0}px) scale(${scale})`;
+  return `translateX(${translateValue}) scale(${scale})`;
 };
 
 const toggleMenu = () => {
-  if (isDragging.value) return;
+  if (isDragging.value || wasDragged.value) return;
   const isOnFabClickMode = pendingSelection.value.hasSelection && pendingSelection.value.mode === SelectionTranslationMode.ON_FAB_CLICK;
-  
+
   if (isOnFabClickMode) {
     logger.info('Translation triggered via Desktop FAB click');
     triggerTranslation();
     isMenuOpen.value = false;
   } else {
     isMenuOpen.value = !isMenuOpen.value;
+
+    // Reset error when menu is opened
+    if (isMenuOpen.value && pageTranslationStatus.value.isError) {
+      pageEventBus.emit(MessageActions.PAGE_TRANSLATE_RESET_ERROR);
+    }
+
     logger.debug(isMenuOpen.value ? 'Desktop FAB menu opened' : 'Desktop FAB menu closed');
   }
 };
-
 const handleMenuItemClick = async (item) => {
   logger.info('Desktop FAB menu item clicked', { id: item.id });
   if (item.closeMenu) isMenuOpen.value = false;
@@ -457,7 +649,14 @@ const handleOpenSettings = async () => {
     await sendMessage({ action: MessageActions.OPEN_OPTIONS_PAGE });
     isMenuOpen.value = false;
   } catch (err) {
-    logger.error('Failed to open settings from FAB:', err);
+    if (ExtensionContextManager.isContextError(err)) {
+      ExtensionContextManager.handleContextError(err, 'desktop-fab:open-settings');
+    } else {
+      await handleError(err, { 
+        context: 'desktop-fab:open-settings',
+        showToast: true 
+      });
+    }
   }
 };
 
@@ -467,19 +666,26 @@ const handleRevert = async () => {
     mobileStore.setHasElementTranslations(false);
     await sendMessage({ action: MessageActions.REVERT_SELECT_ELEMENT_MODE });
   } catch (err) {
-    logger.error('Failed to revert translations from FAB:', err);
+    if (ExtensionContextManager.isContextError(err)) {
+      ExtensionContextManager.handleContextError(err, 'desktop-fab:revert');
+    } else {
+      await handleError(err, { 
+        context: 'desktop-fab:revert',
+        showToast: true 
+      });
+    }
   }
 };
 
 const handleTTS = async () => {
-  if (isThisTTSActive.value && (tts.isPlaying.value || tts.isLoading.value)) {
+  if (ttsState.value === 'playing' || ttsState.value === 'loading') {
     logger.info('Stopping TTS from Desktop FAB');
     await tts.stop();
   } else if (pendingSelection.value.hasSelection) {
-    logger.info('Starting TTS from Desktop FAB');
+    logger.info('Starting TTS from Desktop FAB', { language: detectedLanguage.value });
     isLocalLoading.value = true;
     try {
-      const result = await tts.speak(pendingSelection.value.text);
+      const result = await tts.speak(pendingSelection.value.text, detectedLanguage.value);
       if (result) {
         localTTSId.value = tts.currentTTSId.value;
       }
@@ -490,53 +696,83 @@ const handleTTS = async () => {
 };
 
 const startDrag = (e) => {
-  if (e.button !== 0) return;
+  const isMouseEvent = e.type === 'mousedown';
+  if (isMouseEvent && e.button !== 0) return;
+  
   if (verticalPos.value === -1) {
     const rect = fabContainerRef.value.getBoundingClientRect();
     verticalPos.value = rect.top;
   }
+  
+  const point = isMouseEvent ? e : e.touches[0];
   isDragging.value = false;
-  startY = e.clientY - verticalPos.value;
-  startX = e.clientX;
-  tracker.addEventListener(window, 'mousemove', onDrag);
-  tracker.addEventListener(window, 'mouseup', stopDrag);
+  startY = point.clientY - verticalPos.value;
+  startX = point.clientX;
+  
+  if (isMouseEvent) {
+    tracker.addEventListener(window, 'mousemove', onDrag);
+    tracker.addEventListener(window, 'mouseup', stopDrag);
+  } else {
+    tracker.addEventListener(window, 'touchmove', onDrag, { passive: false });
+    tracker.addEventListener(window, 'touchend', stopDrag);
+  }
 };
 
 const onDrag = (e) => {
+  const isMouseEvent = e.type === 'mousemove';
+  const point = isMouseEvent ? e : e.touches[0];
+
   if (!isDragging.value) {
-    const dy = e.clientY - startY - verticalPos.value;
-    const dx = e.clientX - startX;
-    if (Math.abs(dy) > 5 || Math.abs(dx) > 10) {
+    const dy = point.clientY - (startY + verticalPos.value);
+    const dx = point.clientX - startX;
+    
+    // Only start dragging if moved beyond threshold
+    if (Math.abs(dy) > 5 || Math.abs(dx) > 5) {
       isDragging.value = true;
-      isFaded.value = false; // Stay visible while dragging
-      // Do not force close the menu here
+      wasDragged.value = true;
+      isFaded.value = false;
+      
+      // Re-sync startY to current point to ensure smooth transition from threshold
+      startY = point.clientY - verticalPos.value;
     }
   }
+
   if (isDragging.value) {
-    e.preventDefault();
-    let newY = e.clientY - startY;
-    const maxY = window.innerHeight - 60;
+    if (!isMouseEvent && e.cancelable) e.preventDefault();
+
+    let newY = point.clientY - startY;
+    const maxY = window.innerHeight - 80;
     newY = Math.max(10, Math.min(newY, maxY));
     verticalPos.value = newY;
 
     const screenWidth = window.innerWidth;
-    const currentSide = e.clientX > screenWidth / 2 ? 'right' : 'left';
+    const currentSide = point.clientX > screenWidth / 2 ? 'right' : 'left';
     if (currentSide !== side.value) {
       side.value = currentSide;
     }
   }
 };
 
-const stopDrag = () => {
-  tracker.removeEventListener(window, 'mousemove', onDrag);
-  tracker.removeEventListener(window, 'mouseup', stopDrag);
+const stopDrag = (e) => {
+  const isMouseEvent = e && e.type === 'mouseup';
+  if (isMouseEvent) {
+    tracker.removeEventListener(window, 'mousemove', onDrag);
+    tracker.removeEventListener(window, 'mouseup', stopDrag);
+  } else {
+    tracker.removeEventListener(window, 'touchmove', onDrag);
+    tracker.removeEventListener(window, 'touchend', stopDrag);
+  }
   
   if (isDragging.value) {
     logger.debug('Desktop FAB drag ended', { side: side.value, y: verticalPos.value });
   }
 
+  // Use a slightly longer delay to ensure ghost clicks are swallowed
   setTimeout(async () => { 
     isDragging.value = false; 
+    // Small extra delay for wasDragged to ensure toggleMenu doesn't fire
+    setTimeout(() => { wasDragged.value = false; }, 150);
+    
     try {
       userPreferredY.value = verticalPos.value;
       const position = { side: side.value, y: verticalPos.value };
@@ -544,10 +780,25 @@ const stopDrag = () => {
     } catch (err) {
       logger.info('Failed to save FAB state:', err);
     }
+
+    // Restart fade timer after drag ends
+    startFadeTimer(false);
   }, 100);
 };
 
 onMounted(async () => {
+  // Inject FAB-specific styles lazily into shadow root
+  try {
+    const { fabUiStyles } = await import('@/core/content-scripts/chunks/lazy-styles.js');
+    const { injectStylesToShadowRoot } = await import('@/utils/ui/styleInjector.js');
+    
+    if (fabUiStyles && injectStylesToShadowRoot) {
+      injectStylesToShadowRoot(fabUiStyles, 'vue-fab-specific-styles');
+    }
+  } catch (error) {
+    console.warn('[DesktopFabMenu] Failed to load lazy styles:', error);
+  }
+
   try {
     const position = await getDesktopFabPositionAsync();
     if (position) {
@@ -558,11 +809,41 @@ onMounted(async () => {
       if (position.side) side.value = position.side;
     }
     checkBounds();
+    
+    // Initial check for allowed features
+    await updateAllowedFeatures();
+    
+    // Listen for settings and exclusion changes to re-evaluate allowed features
+    tracker.trackResource('exclusion-sync', pageEventBus.on('FEATURE_STATUS_CHANGED', updateAllowedFeatures));
+    tracker.trackResource('exclusion-re-sync', pageEventBus.on('sync-interaction-listeners', updateAllowedFeatures));
   } catch (err) {
     logger.info('Failed to load FAB state:', err);
   }
 
-  tracker.addEventListener(window, 'resize', checkBounds);
+  tracker.addEventListener(window, 'resize', updateViewport);
+  tracker.addEventListener(window, 'scroll', updateViewport, { passive: true });
+  
+  // Settle position before showing to prevent jumps
+  setTimeout(() => {
+    isReady.value = true;
+    
+    // Settling pixel position on first mount if not already set
+    // We do this in a double requestAnimationFrame or nextTick to ensure the DOM is ready
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (verticalPos.value === -1 && fabContainerRef.value) {
+          const rect = fabContainerRef.value.getBoundingClientRect();
+          verticalPos.value = rect.top;
+          userPreferredY.value = rect.top;
+        }
+        
+        setTimeout(() => {
+          isPositioning.value = false;
+        }, 150);
+      });
+    });
+  }, 100);
+
   startFadeTimer(false);
 
   const handleClickOutside = (e) => {

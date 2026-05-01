@@ -4,26 +4,32 @@
 
 The **Whole Page Translation** system is responsible for the recursive translation of all text content within a web page. Utilizing the `domtranslator` library and a specialized layered architecture, it provides a smooth, optimized, and fault-tolerant translation experience.
 
-**Architecture Status:** Refactored & Optimized
-**Performance:** Lazy Loading + Smart Batching
+**Performance:** Lazy Loading + Dual-Mode Filtering + Modular Management
 **Reliability:** Circuit Breaker for Rate Limits
 
 ## Architecture
 
-The system is divided into 6 distinct parts to adhere to the Single Responsibility Principle:
+The system is divided into 10 distinct parts to adhere to the Single Responsibility Principle and ensure maintainability:
 
 
 ```
 
 PageTranslationManager (Orchestrator)
 ↓
+├─→ PageTranslationSettingsLoader (Settings Logic)
+├─→ PageTranslationEventManager (Event & Bus Handling)
+│
 ├─→ PageTranslationBridge (Library Wrapper)
 │       └─→ domtranslator (External Lib)
 │
-├─→ PageTranslationBatcher (Queue & Scheduling)
+├─→ PageTranslationScheduler (Batching Engine)
+│       ├─→ PageTranslationQueueFilter (On-Stop Filtering)
+│       ├─→ PageTranslationFluidFilter (Fluid/Score Filtering)
 │       └─→ UnifiedMessaging → Translation Engine
 │
-├─→ PageTranslationHoverManager (Interaction Manager)
+├─→ PageTranslationScrollTracker (Motion Detection)
+│
+├─→ HoverPreviewManager (Shared Interaction Manager)
 │       └─→ PageEventBus → PageTranslationTooltip (Vue UI)
 │
 ├─→ PageTranslationHelper (Static Utilities)
@@ -32,101 +38,89 @@ PageTranslationManager (Orchestrator)
 ```
 
 ### 1. PageTranslationManager
-The main coordinator of the page translation lifecycle.
-- **Responsibilities**: Feature activation/deactivation, settings management, and coordination between the Bridge and Batcher.
-- **Key Methods**: `translatePage()`, `restorePage()`, `cleanup()`.
+The main coordinator of the page translation lifecycle. It orchestrates activation, deactivation, and high-level commands (Translate/Restore). It delegates specialized tasks to dedicated utilities to maintain a clean core.
 
-### 2. PageTranslationBatcher
-The engine for queue management and batch request dispatching.
-- **Responsibilities**: Collecting text segments, batching based on character limits, prioritizing visible elements (Viewport), and managing the Circuit Breaker.
-- **Smart Feature**: Elements within the user's view are translated first.
+### 2. PageTranslationSettingsLoader
+A specialized utility for loading, formatting, and resolving translation settings.
+- **Responsibilities**: Parallel fetching of settings from storage, formatting DOM margins (e.g., `rootMargin`), and resolving the effective provider based on global vs. mode-specific settings.
 
-### 3. PageTranslationBridge
-The communication bridge between the extension and the `domtranslator` library.
-- **Responsibilities**: Initializing the DOM translator, node tracking to map text to actual elements, and managing the `MutationObserver` for dynamic pages.
+### 3. PageTranslationEventManager
+Centralizes all external event listeners for the system.
+- **Responsibilities**: Manages `PageEventBus` listeners (Translate, Stop, Cancel) and `storageManager` observers. It bridges external signals to internal manager actions.
 
-### 4. PageTranslationHoverManager
-Handles user interactions with translated content.
-- **Responsibilities**: Detecting `mouseover` events on translated elements, retrieving original text from `PageTranslationLookup`, and coordinating with the UI Host.
-- **Key Flow**: Emits `page-translation-show-tooltip` events via `PageEventBus` to be rendered by the Vue-based Shadow DOM.
+### 4. PageTranslationScheduler
+The core engine for queue management and batch request dispatching. It is deeply integrated with the **Optimization Levels** system.
+- **Dynamic Chunk Scaling**: Automatically adjusts the number of text segments per request based on the provider's optimization level (e.g., larger batches for "Economy" mode to save AI tokens, smaller batches for "Turbo" mode for faster progressive updates).
+- **Concurrency Control**: Synchronizes its parallel processing limits with the global `RateLimitManager` settings for the active provider.
+- **Memory Safety**: Inherits from `ResourceTracker`; automatically clears the queue on cleanup.
+- **Prioritization**: Forces immediate flush for high-priority items if capacity is reached.
 
-### 5. PageTranslationHelper
-Contains pure and static methods for DOM calculations.
-- **Responsibilities**: Checking element visibility in the Viewport, determining frame suitability (filtering out ads and small iframes), and text normalization.
+### 5. PageTranslationFiltering Engines
+Specialized engines for batch selection:
+- **PageTranslationQueueFilter**: Used for "On-Stop" mode. Focuses on visibility and **memory-safe purging** (ejecting distant nodes during long scrolls).
+- **PageTranslationFluidFilter**: Used for "Fluid" mode. Focuses on visibility + element importance (Score).
 
-### 6. PageTranslationConstants
-System constants and shared configurations.
-- **Content**: RTL language codes, safe text tags, and default settings (Chunk Size, Root Margin).
-- **Timing**: Centralized timing constants (`PAGE_TRANSLATION_TIMING`) for toasts, scheduler delays, and DOM stabilization.
+### 6. PageTranslationScrollTracker
+Activity and motion detection utility. Detects scroll events and **dynamic DOM changes** to signal the Scheduler when the page has "stabilized" for translation.
+
+### 7. PageTranslationBridge
+The communication bridge between the extension and the `domtranslator` library. Intercepts nodes to provide visibility data.
+
+### 8. HoverPreviewManager
+Handles user interactions (Original Text Preview) via `PageEventBus`. Shared with Select Element mode.
+
+### 9. PageTranslationHelper & Constants
+Static utilities for DOM calculations and shared system values.
 
 ## Technical Flow
 
-1.  **Suitability Check**: The system first verifies if the current frame is worth translating (e.g., iframes smaller than 50px or ads are ignored).
-2.  **Activation**: Settings are loaded, and the `domtranslator` library is activated on `document.documentElement`.
-3.  **Traversal**: The library extracts all text and hands it over to the `Bridge`.
-4.  **Enqueue**: Text segments are queued in the `Batcher` with priority scoring.
-5.  **Smart Flush**: 
-    - Flushes are scheduled using centralized delays (e.g., 50ms for high-priority Viewport content).
-    - Text is sent to the background in batches of 250 (configurable) to prevent overload.
-6.  **Application**: Upon receiving the translation, text direction (RTL/LTR) is intelligently applied using the **shared `DomDirectionManager`**, and the text is replaced in the DOM. This ensures that mixed-language pages maintain correct structural alignment.
+1.  **Activation**: The `Manager` uses `SettingsLoader` to fetch configuration and initializes the `EventManager`.
+2.  **Capture**: `domtranslator` is activated; the `Bridge` enqueues nodes into the `Scheduler`.
+3.  **Scheduling**:
+    - **Optimization Level Alignment**: The `Scheduler` queries the active provider's optimization level (1-5) and adjusts its internal `chunkSize` and `maxConcurrent` limits accordingly.
+    - **Fluid Mode**: Automatic flushes using `FluidFilter`.
+    - **On Stop Mode**: Deferred flushes triggered by `ScrollTracker` via `QueueFilter`.
+4.  **Application**: Directionality (RTL/LTR) is applied, and text is replaced in the DOM.
 
 ## Smart Features
 
-### Circuit Breaker & Error Handling
-If the system encounters a **Fatal Error** (e.g., Rate Limit, Auth issue):
-1.  **Centralized Detection**: The `Scheduler` uses `ErrorMatcher` to identify fatal errors immediately.
-2.  **Stop & Cleanup**: Whole-page translation is halted, and all observers are disconnected.
-3.  **UI Feedback**: A localized warning is shown via `NotificationManager` (using `PAGE_TRANSLATION_TIMING.FATAL_ERROR_DURATION`).
-4.  **Logging**: Detailed error info (with stack traces) is logged to the console via `ErrorHandler`.
+### Optimization Level Integration
+The system is "Optimization-Aware." It respects the user's preference for **Speed vs. Cost** by dynamically reconfiguring its scheduling strategy:
+- **Level 1 (Economy/Stable)**: Uses larger chunks (up to 80 segments for AI) and lower concurrency. This is highly efficient for LLMs as it reduces the frequency of System Prompt repetition and stays within IP-based rate limits for traditional providers.
+- **Level 5 (Turbo/Fast)**: Uses smaller chunks (as small as 15 segments) and higher concurrency. This provides a "progressive rendering" experience where the page translates in rapid, small bursts.
 
-### Lazy Loading
-Using an `IntersectionScheduler` and a `rootMargin` setting (default 300px), only content that the user is currently viewing or about to reach is translated. This significantly reduces API consumption on long pages.
+### Modular Event Management
+By isolating event handling into `PageTranslationEventManager`, the system prevents "Listener Leaks" and ensures that global signals (like conflict resolution with Select Element mode) are handled consistently.
 
-### RTL/LTR Directionality Management
-The system shares the same DOM-level logic as the **Select Element** feature:
-- **Surgical Application**: Uses `applyNodeDirection` to find the smallest safe container for a text node, avoiding layout breakage in complex grids or flexboxes.
-- **State Preservation**: Saves original `dir`, `textAlign`, and `direction` styles into `data-` attributes before modification, ensuring perfect restoration.
-- **Shared Logic**: Centralized in `@/utils/dom/DomDirectionManager.js`.
+### Memory-Safe Scrolling (Smart Purge)
+To prevent memory exhaustion during infinite scrolling, the `QueueFilter` implements a **Smart Purge** policy. Nodes that move significantly far from the viewport (e.g., > 3000px) are automatically ejected from the queue. These nodes remain eligible for translation if the user scrolls back to them, ensuring a balance between RAM usage and persistence.
 
-### Original Text Preview (Hover)
-To improve transparency, users can hover over translated text to see the original content.
-- **Event-Driven**: Decoupled from the translation engine using `PageEventBus`.
-- **UI Isolation**: Rendered via `PageTranslationTooltip.vue` inside the **Shadow DOM** UI Host to prevent website CSS from interfering with the tooltip's appearance.
-- **RTL Support**: Automatically detects and applies the correct text direction for the original content.
+### Activity-Aware Scheduling
+The system treats both scrolling and significant DOM mutations as "activity." Translation is deferred until all activity ceases for the duration of the `SCROLL_STOP_DELAY`, preventing fragmented translation batches during heavy content loading.
 
-### Provider Selection Behavior
-Whole Page Translation is **Settings-Isolated**. It strictly follows the setting in `MODE_PROVIDERS.page` and ignores any temporary dropdown selection in the Popup or Sidepanel.
+### Dual-Mode Modular Filtering
+The system provides optimized behavior for different scrolling patterns (Fluid vs. On-Stop), ensuring the most efficient use of API requests.
 
-- **Inheritance**: Falls back directly to the Global Default (`TRANSLATION_API`) if the mode setting is `default`.
-- **Reasoning**: Ensures stable performance for batch translations.
-- **Reference**: See [Translation Provider Logic](./TRANSLATION_PROVIDER_LOGIC.md) for detailed waterfall logic.
+### Memory Management
+The system is fully integrated with `ResourceTracker`. All queues, observers, and event listeners are automatically reclaimed when the page is restored or the extension is disabled.
 
 ## Configuration
 
-Core settings are managed in the `config.js` file, while internal timings are in `PageTranslationConstants.js`:
-
 | Setting | Default | Description |
 | :--- | :--- | :--- |
-| `chunkSize` | 250 | Number of segments per API request |
-| `rootMargin` | 300px | Margin around the Viewport for pre-loading |
-| `lazyLoading` | true | Enables translation only for visible content |
-| `maxConcurrentFlushes` | 1 | Number of simultaneous requests to the background |
-
-## Integration Points
-
--   **FeatureManager**: This module is registered as an `ESSENTIAL` feature.
--   **NotificationManager**: Used for all user-facing alerts (warnings, status updates).
--   **ErrorHandler**: Integrated for consistent error classification and logging.
--   **UnifiedMessaging**: All translation batches are sent to the background via a unified messaging protocol.
--   **DomDirectionManager**: Core utility shared with Select Element for text alignment and directionality.
--   **UI Host (Vue)**: Centralized rendering engine for the interaction tooltips.
-
-## Best Practices for Developers
-
-1.  **No Direct DOM Manipulation**: To change the display, always proceed through the `Bridge` and the direction application logic.
-2.  **Maintain Node Tracking**: Since translation is asynchronous, nodes may move; the `NodeTrackingQueue` in the `Batcher` is designed to prevent race conditions.
-3.  **Memory Management**: Always call `cleanup()` when destroying a component so the `ResourceTracker` can clear all listeners and observers.
+| `chunkSize` | 250 | Number of segments per API request (Base value, scaled by Optimization Level) |
+| `WHOLE_PAGE_SCROLL_STOP_DELAY` | 500ms | User-configurable debounce time after scrolling stops |
+| `VIEWPORT_BUFFER_PX` | 100px | Safety margin for batch-filling |
+| `rootMargin` | 150px | Recognition margin for node detection |
 
 ---
 
-**Last Updated**: March 2026
+## References
+- [Optimization Levels System](./OPTIMIZATION_LEVELS.md)
+- [Translation Provider System](./PROVIDERS.md)
+- [Messaging System](./MessagingSystem.md)
+- [UI Host System](./UI_HOST_SYSTEM.md)
+
+---
+
+**Last Updated**: April 2026

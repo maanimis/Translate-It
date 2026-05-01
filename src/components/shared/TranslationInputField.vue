@@ -6,7 +6,8 @@
     <!-- Enhanced Text Actions Toolbar -->
     <ActionToolbar
       :text="modelValue"
-      :language="sourceLanguage"
+      :language="lastTranslation?.sourceLanguage || detectedSourceLanguage || language"
+      :detected-language="lastTranslation?.sourceLanguage || detectedSourceLanguage"
       mode="input"
       :show-copy="true"
       :show-tts="true"
@@ -97,10 +98,14 @@ const props = defineProps({
     type: String,
     default: 'Paste'
   },
-  // Language for TTS
-  sourceLanguage: {
+  // Language for TTS (inherited from translation)
+  detectedSourceLanguage: {
     type: String,
-    default: 'auto'
+    default: undefined
+  },
+  lastTranslation: {
+    type: Object,
+    default: null
   },
   // Auto-translate on paste
   autoTranslateOnPaste: {
@@ -132,12 +137,6 @@ const handleInput = (event) => {
   emit('update:modelValue', value)
   emit('input', event)
   
-  // Auto-resize textarea if needed
-  if (textareaRef.value) {
-    textareaRef.value.style.height = 'auto'
-    textareaRef.value.style.height = textareaRef.value.scrollHeight + 'px'
-  }
-  
   // Text direction correction
   nextTick(() => {
     if (textareaRef.value) {
@@ -164,11 +163,9 @@ const handlePaste = async (data) => {
     if (pastedText) {
       emit('update:modelValue', pastedText)
       
-      // Auto-resize and correct direction
+      // Correct text direction
       nextTick(() => {
         if (textareaRef.value) {
-          textareaRef.value.style.height = 'auto'
-          textareaRef.value.style.height = textareaRef.value.scrollHeight + 'px'
           correctTextDirection(textareaRef.value, pastedText)
         }
       })
@@ -188,12 +185,10 @@ const handlePaste = async (data) => {
 
 // Lifecycle
 onMounted(async () => {
-  // Auto-resize initial content
+  // Initialize initial content
   if (textareaRef.value && props.modelValue) {
     nextTick(() => {
       if (textareaRef.value) {
-        textareaRef.value.style.height = 'auto'
-        textareaRef.value.style.height = textareaRef.value.scrollHeight + 'px'
         correctTextDirection(textareaRef.value, props.modelValue)
       }
     })

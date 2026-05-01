@@ -34,6 +34,7 @@
 </template>
 
 <script setup>
+import './SidepanelApp.scss'
 import { ref, computed, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/features/settings/stores/settings.js'
 import { useTranslationStore } from '@/features/translation/stores/translation'
@@ -47,7 +48,8 @@ import { utilsFactory } from '@/utils/UtilsFactory.js'
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { TTSGlobalManager } from '@/features/tts/core/TTSGlobalManager.js'
-import { MessageActions } from '@/shared/messaging/core/MessageActions.js'
+import { MessageActions } from '@/shared/messaging/core/MessageActions.js';
+import { matchErrorToType } from '@/shared/error-management/ErrorMatcher.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.UI, 'SidepanelApp');
 
@@ -127,15 +129,15 @@ const handleSystemThemeChange = (event) => {
 };
 
 const initialize = async () => {
-  logger.debug('🗳️ SidepanelApp mounting...')
+  logger.debug('SidepanelApp mounting...')
   try {
     // Step 1: Set loading text
-    logger.debug('📝 Setting loading text...')
+    logger.debug('Setting loading text...')
     loadingText.value = (browser.i18n?.getMessage ? browser.i18n.getMessage('sidepanel_loading') : null) || 'Loading Sidepanel...'
-    logger.debug('✅ Loading text set')
+    logger.debug('Loading text set')
 
     // Step 2: Load settings store and preload essential data
-    logger.debug('⚙️ Loading settings store and preloading data...')
+    logger.debug('Loading settings store and preloading data...')
     await Promise.race([
       Promise.all([
         settingsStore.loadSettings(),
@@ -144,7 +146,7 @@ const initialize = async () => {
       ]),
       new Promise((_, reject) => setTimeout(() => reject(new Error('Settings loading timeout')), 10000))
     ])
-    logger.debug('✅ Settings store loaded and languages preloaded')
+    logger.debug('Settings store loaded and languages preloaded')
 
     // Step 3: Apply theme
     const settings = settingsStore.settings
@@ -210,10 +212,9 @@ const initialize = async () => {
     hasError.value = true
     errorMessage.value = error.message || 'Unknown error occurred'
     // Extract error type for reactive translation
-    const { matchErrorToType } = await import('@/shared/error-management/ErrorMatcher.js')
     errorType.value = matchErrorToType(error)
   } finally {
-    logger.debug('✅ SidepanelApp initialization complete')
+    logger.debug('SidepanelApp initialization complete')
     isLoading.value = false
   }
 };
@@ -255,7 +256,7 @@ onUnmounted(() => {
 });
 
 const retryLoading = () => {
-  logger.debug('🔄 Retrying sidepanel loading...')
+  logger.debug('Retrying sidepanel loading...')
   hasError.value = false
   errorMessage.value = ''
   isLoading.value = true
@@ -267,60 +268,3 @@ const retryLoading = () => {
   setTimeout(() => { initialize() }, 100)
 }
 </script>
-
-<style scoped>
-.loading-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
-  gap: 1rem;
-  padding: 2rem;
-}
-
-.loading-text {
-  font-size: var(--font-size-base);
-  color: var(--color-text-secondary);
-}
-
-.error-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1rem;
-  padding: 3rem;
-  max-width: 500px;
-  text-align: center;
-}
-
-.error-icon {
-  font-size: 3rem;
-}
-
-.error-container h2 {
-  color: var(--color-error, #ef4444);
-  margin: 0;
-}
-
-.error-message {
-  color: var(--color-text-secondary, #666);
-  margin: 0;
-}
-
-.retry-button {
-  padding: 0.75rem 1.5rem;
-  background-color: var(--color-primary, #3b82f6);
-  color: var(--color-background, white);
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 500;
-  transition: background-color 0.2s;
-}
-
-.retry-button:hover {
-  background-color: var(--color-primary-dark, #2563eb);
-}
-</style>

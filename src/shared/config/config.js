@@ -1,15 +1,13 @@
 // src/config.js
-import { ErrorHandler } from '@/shared/error-management/ErrorHandler.js';
-import { ErrorTypes } from '@/shared/error-management/ErrorTypes.js';
+import { ProviderRegistryIds, nameToRegistryId } from '@/features/translation/providers/ProviderConstants.js';
 import { storageManager } from '../storage/core/StorageCore.js';
+import ExtensionContextManager from '@/core/extensionContext.js';
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
-import { ProviderRegistryIds } from '@/features/translation/providers/ProviderConstants.js';
 import { MessageContexts } from '@/shared/messaging/core/MessagingConstants.js';
-import { TRANSLATION_HTML, MOBILE_CONSTANTS } from './constants.js';
+import { TRANSLATION_HTML, MOBILE_CONSTANTS, TTS_ENGINES } from './constants.js';
+import { isMobile } from '@/shared/utils/device.js';
 
-// NOTE: Avoid importing LOG_COMPONENTS here to reduce risk of circular/TDZ during very early store initialization.
-// Using literal 'Core' keeps semantics intact.
 const logger = getScopedLogger(LOG_COMPONENTS.CONFIG, 'config');
 logger.info('Config module initialized');
 
@@ -59,15 +57,24 @@ export const TRANSLATION_ERRORS = {
 
 // Detect environment
 const isFirefox = typeof __BROWSER__ !== 'undefined' ? __BROWSER__ === 'firefox' : false;
+export { isMobile } from '@/shared/utils/device.js';
 
 // Shared configuration (initial defaults)
 export const CONFIG = {
   APP_NAME: "Translate It",
   // --- Core Settings ---
   DEBUG_MODE: false,
+  COMPONENT_LOG_LEVELS: {}, // Custom log levels per component
+  ENABLE_TRANSLATION_HISTORY: true, // Enable/disable translation history
   APPLICATION_LOCALIZE: "en",
-  SOURCE_LANGUAGE: "en",
-  TARGET_LANGUAGE: "fa",
+  SOURCE_LANGUAGE: "auto",
+  TARGET_LANGUAGE: "en",
+  LANGUAGE_DETECTION_PREFERENCES: {
+    "arabic-script": "fa", // پیش‌فرض: وقتی اسکریپت عربی تشخیص داده شد، اولویت با فارسی باشد
+    "chinese-script": "zh-cn", // پیش‌فرض: چینی ساده‌شده
+    "devanagari-script": "hi", // پیش‌فرض: هندی
+    "latin-script": "none" // پیش‌فرض: هیچکدام (اجازه به تشخیص خودکار پرووایدر)
+  },
   THEME: "auto",
   TIMEOUT: 30000,
   selectionTranslationMode: SelectionTranslationMode.ON_CLICK,
@@ -78,7 +85,7 @@ export const CONFIG = {
 
 
   // --- API Settings ---
-  TRANSLATION_API: isFirefox ? ProviderRegistryIds.GOOGLE : ProviderRegistryIds.GOOGLE_V2, // gemini, webai, openai, openrouter, deepseek, custom, google, browserapi
+  TRANSLATION_API: isFirefox ? ProviderRegistryIds.YANDEX : ProviderRegistryIds.GOOGLE_V2, // gemini, webai, openai, openrouter, deepseek, custom, google, browserapi
 
   // --- Mode Specific Provider Settings (Generated Dynamically) ---
   MODE_PROVIDERS: Object.fromEntries(
@@ -91,7 +98,11 @@ export const CONFIG = {
   GEMINI_MODEL: "gemini-2.5-flash", // Selected Gemini model
   GEMINI_THINKING_ENABLED: false, // Enable/disable thinking for supported models
   GEMINI_MODELS: [
-    // Gemini 3 Series (NEW - Latest & Most Advanced)
+    // Gemini 3.1 Series (NEW - Latest & Most Advanced)
+    { value: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent", thinking: { supported: true, controllable: false, defaultEnabled: false } },
+    { value: "gemini-3.1-flash-lite-preview", name: "Gemini 3.1 Flash-Lite Preview", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
+
+    // Gemini 3.0 Series (Advanced)
     { value: "gemini-3-pro-preview", name: "Gemini 3 Pro Preview", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent", thinking: { supported: true, controllable: false, defaultEnabled: false } },
     { value: "gemini-3-flash-preview", name: "Gemini 3 Flash Preview", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
 
@@ -99,15 +110,6 @@ export const CONFIG = {
     { value: "gemini-2.5-pro", name: "Gemini 2.5 Pro", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent", thinking: { supported: true, controllable: false, defaultEnabled: false } },
     { value: "gemini-2.5-flash", name: "Gemini 2.5 Flash", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
     { value: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
-
-    // Gemini 2.5 Series (Preview Versions)
-    { value: "gemini-2.5-flash-preview-09-2025", name: "Gemini 2.5 Flash Preview (09-2025)", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
-    { value: "gemini-2.5-flash-lite-preview-09-2025", name: "Gemini 2.5 Flash-Lite Preview (09-2025)", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
-
-    // Gemini 2.0 Series (Second Generation)
-    { value: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash Exp", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent", thinking: { supported: true, controllable: true, defaultEnabled: false } },
-    { value: "gemini-2.0-flash", name: "Gemini 2.0 Flash", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", thinking: { supported: false, controllable: false, defaultEnabled: false } },
-    { value: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash-Lite", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent", thinking: { supported: false, controllable: false, defaultEnabled: false } },
 
     { value: "custom", name: "Custom Model", custom: true, thinking: { supported: true, controllable: true, defaultEnabled: false } }
   ],
@@ -124,39 +126,69 @@ export const CONFIG = {
   WEBAI_API_MODEL: "gemini-2.5-flash",
   OPENAI_API_KEY: "",
   OPENAI_API_URL: "https://api.openai.com/v1/chat/completions",
-  OPENAI_API_MODEL: "gpt-4o",
+  OPENAI_API_MODEL: "gpt-4o-mini",
   OPENAI_MODELS: [
-    { value: "gpt-4.1", name: "GPT-4.1" },
-    { value: "gpt-4.1-mini", name: "GPT-4.1 Mini" },
-    { value: "gpt-4.1-nano", name: "GPT-4.1 Nano" },
-    { value: "gpt-4o", name: "GPT-4o" },
-    { value: "gpt-4o-mini", name: "GPT-4o Mini" },
+    // --- OpenAI Reasoning Models (برای حل مسائل پیچیده، ریاضیات و کدنویسی) ---
+    { value: "o1", name: "o1" },
+    { value: "o1-mini", name: "o1-mini" },
+    { value: "o3-mini", name: "o3-mini" },
+
+    // --- OpenAI Omni Series (مدل‌های سریع، ارزان و چندمنظوره) ---
     { value: "gpt-4.5-preview", name: "GPT-4.5 Preview" },
-    { value: "gpt-3.5-turbo", name: "GPT-3.5 Turbo" },
+    { value: "gpt-4o", name: "GPT-4o" },
+    { value: "chatgpt-4o-latest", name: "ChatGPT-4o Latest" },
+    { value: "gpt-4o-mini", name: "GPT-4o Mini" },
     { value: "custom", name: "Custom Model" }
   ],
   OPENROUTER_API_KEY: "",
   OPENROUTER_API_URL: "https://openrouter.ai/api/v1/chat/completions",
   OPENROUTER_API_MODEL: "openai/gpt-4o",
-  OPENROUTER_MODELS: [
+    OPENROUTER_MODELS: [
+    // --- OpenAI ---
+    { value: "openai/o1", name: "OpenAI o1 (Reasoning)" },
+    { value: "openai/o3-mini", name: "OpenAI o3-mini (Reasoning)" },
+    { value: "openai/gpt-4.5-preview", name: "OpenAI GPT-4.5 Preview" },
     { value: "openai/gpt-4o", name: "OpenAI GPT-4o" },
     { value: "openai/gpt-4o-mini", name: "OpenAI GPT-4o Mini" },
-    { value: "openai/gpt-4.1", name: "OpenAI GPT-4.1" },
-    { value: "openai/gpt-4.1-mini", name: "OpenAI GPT-4.1 Mini" },
-    { value: "anthropic/claude-3.5-sonnet", name: "Claude 3.5 Sonnet" },
+
+    // --- Anthropic ---
+    { value: "anthropic/claude-3.7-sonnet", name: "Claude 3.7 Sonnet" },
     { value: "anthropic/claude-3.5-haiku", name: "Claude 3.5 Haiku" },
+
+    // --- DeepSeek ---
+    { value: "deepseek/deepseek-r1", name: "DeepSeek R1 (Reasoning)" },
+    { value: "deepseek/deepseek-chat", name: "DeepSeek V3 (Chat)" },
+
+    // --- Google ---
+    { value: "google/gemini-3.1-pro-preview", name: "Google Gemini 3.1 Pro" },
+    { value: "google/gemini-3.1-flash-lite-preview", name: "Google Gemini 3.1 Flash-Lite" },
     { value: "google/gemini-2.5-pro", name: "Google Gemini 2.5 Pro" },
     { value: "google/gemini-2.5-flash", name: "Google Gemini 2.5 Flash" },
+
+    // --- Meta & Mistral ---
     { value: "meta-llama/llama-3.3-70b-instruct", name: "Meta Llama 3.3 70B" },
     { value: "mistralai/mistral-large", name: "Mistral Large" },
+
+    // --- Free Models (Zero Cost / Rate Limited) ---
+    { value: "openrouter/free", name: "OpenRouter Auto-Free" }, // انتخاب خودکار بهترین مدل رایگان
+    { value: "nvidia/nemotron-3-super-120b-a12b:free", name: "Nvidia Nemotron 120B (Free)" }, // قدرتمند و عمومی
+    { value: "openai/gpt-oss-120b:free", name: "OpenAI OSS 120B (Free)" }, // استدلال و توابع
+    { value: "mistralai/devstral-2-2512:free", name: "Mistral Devstral (Free Coding)" }, // تخصصی کدنویسی
+    { value: "xiaomi/mimo-v2-flash:free", name: "Xiaomi Mimo V2 (Free Coding)" }, // تخصصی کدنویسی و سریع
+    { value: "meta-llama/llama-3.3-70b-instruct:free", name: "Llama 3.3 70B (Free)" }, // عمومی و محبوب
+    { value: "liquidai/lfm-2.5-1.2b-thinking:free", name: "Liquid LFM 2.5 Thinking (Free)" }, // استدلالی و بسیار سریع
+
+    // --- Custom ---
     { value: "custom", name: "Custom Model" }
   ],
   DEEPSEEK_API_KEY: "",
   DEEPSEEK_API_URL: "https://api.deepseek.com/chat/completions",
   DEEPSEEK_API_MODEL: "deepseek-chat",
   DEEPSEEK_MODELS: [
-    { value: "deepseek-chat", name: "DeepSeek Chat (V3)" },
-    { value: "deepseek-reasoner", name: "DeepSeek Reasoner (R1)" },
+    // --- DeepSeek Official Models ---
+    { value: "deepseek-chat", name: "DeepSeek V3 (Chat & Code)" },
+    { value: "deepseek-reasoner", name: "DeepSeek R1 (Reasoner)" },
+
     { value: "custom", name: "Custom Model" }
   ],
   CUSTOM_API_URL: "",
@@ -186,7 +218,11 @@ export const CONFIG = {
 
   // --- Translation Activation Settings ---
   EXTENSION_ENABLED: true, // فعال بودن افزونه (کلی)
+  TTS_ENGINE: TTS_ENGINES.EDGE, // موتور پیش‌فرض تلفظ صوتی (google یا edge)
+  TTS_FALLBACK_ENABLED: true, // استفاده از صدای جایگزین (مثل عربی برای فارسی) در صورت عدم پشتیبانی موتور
+  TTS_AUTO_DETECT_ENABLED: true, // تشخیص خودکار زبان متن قبل از پخش صوتی
   SHOW_DESKTOP_FAB: true, // نمایش دکمه دسترسی سریع در دسکتاپ
+  SHOW_MOBILE_FAB: true, // نمایش دکمه دسترسی سریع در موبایل
   DESKTOP_FAB_POSITION: { 
     side: 'right', 
     y: -1 
@@ -198,7 +234,7 @@ export const CONFIG = {
   TRANSLATE_ON_TEXT_FIELDS: false, // نمایش آیکون ترجمه در فیلدهای متنی
   ENABLE_SHORTCUT_FOR_TEXT_FIELDS: true, // فعال کردن شورتکات Ctrl+/ برای فیلدهای متنی
   TRANSLATE_WITH_SELECT_ELEMENT: true, // فعال کردن ترجمه با انتخاب المان (مثلاً از منوی راست‌کلیک)
-  TRANSLATE_ON_TEXT_SELECTION: true, // فعال کردن ترجمه با انتخاب متن در صفحه
+  TRANSLATE_ON_TEXT_SELECTION: !isMobile, // فعال کردن ترجمه با انتخاب متن در صفحه (غیرفعال در موبایل)
   REQUIRE_CTRL_FOR_TEXT_SELECTION: false, // نیاز به نگه داشتن Ctrl هنگام انتخاب متن
   ENHANCED_TRIPLE_CLICK_DRAG: false, // فعال کردن پشتیبانی پیشرفته از triple-click + drag
   ENABLE_DICTIONARY: true, // با مکانیزم تشخیص کلمه، بعنوان دیکشنری پاسخ را نمایش میدهد
@@ -208,7 +244,28 @@ export const CONFIG = {
   MOBILE_UI_MODE: MOBILE_CONSTANTS.UI_MODE.AUTO, // حالت رابط کاربری موبایل: auto, mobile, desktop
   MOBILE_PAGE_TRANSLATION_AUTO_CLOSE: false, // بستن خودکار شیت پس از شروع ترجمه صفحه در موبایل
 
-  // --- Whole Page Translation Settings (NEW) ---
+  // --- Versioning ---
+  PROMPTS_VERSION: 3, // Version of the prompt templates (localized labels for dictionary)
+
+  // --- AI Optimization Settings ---
+  OPTIMIZATION_LEVEL: 3, // Default global optimization level (1-5: Cost vs Speed)
+  PROVIDER_OPTIMIZATION_LEVELS: {}, // Per-provider level overrides { Gemini: 5, OpenAI: 2 }
+  AI_CONTEXT_TRANSLATION_ENABLED: true, // ارسال کانتکست (عنوان صفحه، تیتر بخش) به پرووایدرهای هوشمند
+  AI_CONVERSATION_HISTORY_ENABLED: false, // ارسال تاریخچه ترجمه‌های قبلی برای حفظ استایل (مخصوص Select Element)
+  BILINGUAL_TRANSLATION: true, // ترجمه دوطرفه: اگر متن ورودی به زبان مقصد بود، آن را به زبان مبدا ترجمه کن
+  BILINGUAL_TRANSLATION_MODES: {
+    [TranslationMode.Popup_Translate]: true,
+    [TranslationMode.Sidepanel_Translate]: true,
+    [TranslationMode.Select_Element]: true,
+    [TranslationMode.Field]: true,
+    [TranslationMode.Selection]: true, // WindowsManager
+    [TranslationMode.Page]: false,     // Default disabled for whole page to prevent checkerboarding
+    [TranslationMode.Dictionary_Translation]: true,
+    [TranslationMode.ScreenCapture]: true
+  },
+
+  // --- Whole Page Translation Settings Getters ---
+  SMART_CONTEXT_TRANSLATION_ENABLED: true, // Enable/disable smart context and logical batching
   WHOLE_PAGE_TRANSLATION_ENABLED: true, // فعال بودن ترجمه کل صفحه
   WHOLE_PAGE_LAZY_LOADING: true, // فقط translate کردن قسمت‌های visible صفحه
   WHOLE_PAGE_AUTO_TRANSLATE_ON_DOM_CHANGES: true, // ترجمه خودکار وقتی صفحه تغییر می‌کند
@@ -231,6 +288,9 @@ export const CONFIG = {
   WHOLE_PAGE_MAX_CONCURRENT_REQUESTS: 1, // حداکثر تعداد درخواست‌های همزمان برای ترجمه صفحه
   WHOLE_PAGE_PROGRESS_UPDATE_INTERVAL: 100, // فاصله بین progress updates (ms)
   WHOLE_PAGE_SHOW_ORIGINAL_ON_HOVER: false, // نمایش متن اصلی هنگام hover روی متن ترجمه شده
+  SELECT_ELEMENT_SHOW_ORIGINAL_ON_HOVER: false, // نمایش متن اصلی هنگام hover در حالت انتخاب المان
+  WHOLE_PAGE_TRANSLATE_AFTER_SCROLL_STOP: false, // ترجمه فقط پس از توقف اسکرول
+  WHOLE_PAGE_SCROLL_STOP_DELAY: 500, // تاخیر برای توقف اسکرول (ms)
 
   // --- Proxy Settings ---
   PROXY_ENABLED: false, // فعال بودن proxy
@@ -241,6 +301,13 @@ export const CONFIG = {
   PROXY_PASSWORD: "", // رمز عبور proxy (اختیاری)
 
   // --- UI & Styling ---
+  CONTEXT_MENU_VISIBILITY: {
+    PAGE_CONTEXT_SELECT_ELEMENT: true,    // نمایش در کلیک‌راست صفحات
+    ACTION_CONTEXT_SELECT_ELEMENT: true,  // نمایش در منوی آیکون افزونه (Action)
+    ACTION_CONTEXT_OPTIONS: true,         // نمایش گزینه تنظیمات در منوی آیکون
+    ACTION_CONTEXT_SHORTCUTS: true,       // نمایش میانبرهای کیبورد در منوی آیکون
+    ACTION_CONTEXT_HELP: true             // نمایش راهنما در منوی آیکون
+  },
 
   // --- Font Settings ---
   TRANSLATION_FONT_FAMILY: "auto", // Auto-detect based on target language or custom font
@@ -257,8 +324,6 @@ export const CONFIG = {
   // --- Regex & Language Specific ---
   // Matches Hebrew, Arabic and Persian ranges
   RTL_REGEX: /[\u0591-\u07FF\u0600-\u06FF]/,
-  PERSIAN_REGEX:
-    /^(?=.*[\u0600-\u06FF])[\u0600-\u06FF\u0660-\u0669\u06F0-\u06F9\u0041-\u005A\u0061-\u007A\u0030-\u0039\s.,:;؟!()«»@#\n\t\u200C]+$/,
 
   // --- Prompt Templates ---
 
@@ -266,12 +331,7 @@ export const CONFIG = {
   PROMPT_BASE_FIELD: `You are a professional translation service. Your task is to accurately and fluently translate text between $_{SOURCE} and $_{TARGET}, or from any other language into $_{TARGET}, depending on the input.
 
 Strictly follow these instructions:
-
-- Detect the input language.
-- If the input is in $_{SOURCE}, translate it into $_{TARGET}.
-- If the input is in $_{TARGET}, translate it into $_{SOURCE}.
-- If the input is in any other language, translate it into $_{TARGET}.
-- If the input is grammatically incorrect but written in $_{TARGET}, translate it into $_{SOURCE}, preserving the intended meaning.
+$_{PROMPT_INSTRUCTIONS}
 
 Translation quality requirements:
 - Produce fluent, natural, and idiomatic translations as if written by a native speaker.
@@ -285,32 +345,46 @@ $_{TEXT}
 `,
 /*--- End PROMPT_BASE_FIELD ---*/
 
+/*--- Start PROMPT_BASE_FIELD_AUTO ---*/
+  PROMPT_BASE_FIELD_AUTO: `You are a professional translation service. Your task is to accurately and fluently translate text into $_{TARGET}, or from $_{TARGET} into $_{SOURCE}, depending on the input.
+
+Strictly follow these instructions:
+$_{PROMPT_INSTRUCTIONS}
+
+Translation quality requirements:
+- Produce fluent, natural, and idiomatic translations as if written by a native speaker.
+- Prioritize clarity, tone, and readability over literal or word-for-word translation.
+- Maintain the original formatting, structure, and line breaks exactly.
+- Do **not** include any additional explanations, comments, markdown, or extra content.
+
+Output only the translated text:
+
+$_{TEXT}
+`,
+/*--- End PROMPT_BASE_FIELD_AUTO ---*/
+
 /*--- Start PROMPT_BASE_SELECT ---*/
-  PROMPT_BASE_SELECT: `Act as a fluent and natural JSON translation service. The input is a JSON array where each object contains a "text" property.
+  PROMPT_BASE_SELECT: `Act as a professional JSON translation service. Your task is to accurately and fluently translate text from $_{SOURCE} into $_{TARGET}.
 
-Your task:
-  1. Translate each "text" value according to the following user rules: $_{USER_RULES}
-  2. Preserve all fields. **Do not omit, modify, or skip any entries.**
-  3. If translation is unnecessary (e.g., for numbers, hashtags, URLs), **return the original value unchanged.**
-  4. Retain exact formatting, structure, and line breaks.
-  5. Ensure translations are fluent, idiomatic, and natural — not literal or robotic.
-  6. Prioritize meaning and readability over strict word-for-word translation.
+The input is a JSON array of objects with abbreviated keys: "t" (text to translate), "i" (unique ID), "b" (block ID), and "r" (element role).
 
-CRITICAL - Placeholder Preservation Instructions:
-  If the text contains special placeholders in the format [[AIWC-0]], [[AIWC-1]], [[AIWC-2]], etc.:
-  1. These placeholders represent inline elements (links, emphasis, code) that MUST be preserved exactly
-  2. Copy these placeholders to your translation WITHOUT any changes
-  3. DO NOT translate the numbers inside the placeholders
-  4. DO NOT renumber, modify, or reformat the placeholders
-  5. DO NOT add spaces inside or around the placeholders
-  6. Ensure each placeholder appears exactly once in your translation
+Strictly follow these instructions:
+$_{PROMPT_INSTRUCTIONS}
 
-Examples:
-  - Input: "Click [[AIWC-0]] to learn more"
-  - Correct: "روی [[AIWC-0]] کلیک کنید تا بیشتر بدانید"
-  - Wrong: "روی [0] کلیک کنید" or "روی [[AIWC-1]] کلیک کنید"
+Specific JSON Rules:
+  1. Return a valid JSON array. Do not omit any entries.
+  2. Ensure translations are natural and idiomatic.
+  3. KEEP "i", "b", and "r" keys and their values UNCHANGED.
 
-Return **only** the translated JSON array. Do not include explanations, markdown, or any extra content.
+Example:
+Input: [{"t": "Hello", "i": "n1", "b": "b1", "r": "h1"}]
+Output: [{"t": "سلام", "i": "n1", "b": "b1", "r": "h1"}]
+
+CRITICAL - Placeholder Preservation:
+  1. Preserve [[AIWC-0]], [[AIWC-1]] exactly.
+  2. DO NOT translate placeholders or renumber them.
+
+Return **only** the translated JSON array. No explanations or markdown.
 
 $_{TEXT}
 `,
@@ -318,7 +392,10 @@ $_{TEXT}
 
 
 /*--- Start PROMPT_BASE_BATCH ---*/
-  PROMPT_BASE_BATCH: `You are an expert translation service. Your task is to translate a batch of texts from auto-detect language to $_{TARGET}.
+  PROMPT_BASE_BATCH: `You are an expert translation service. Your task is to translate a batch of texts from $_{SOURCE} to $_{TARGET}.
+
+Strictly follow these instructions:
+$_{PROMPT_INSTRUCTIONS}
 
 You will receive a series of texts separated by a unique delimiter:
 "
@@ -338,7 +415,6 @@ Your response must adhere to these strict rules:
 4.  Do NOT add any extra explanations, comments, or markdown.
 5.  Maintain the original tone and formatting for each segment.
 6.  If translation is unnecessary (e.g., for numbers, hashtags, URLs), **return the original value unchanged.**
-7.  Ensure translations are fluent, idiomatic, and natural — not literal or robotic.
 
 Example Input:
 Hello
@@ -364,55 +440,87 @@ $_{TEXT}
 /*--- End PROMPT_BASE_BATCH ---*/
 
 /*--- Start PROMPT_BASE_AI_BATCH ---*/
-  PROMPT_BASE_AI_BATCH: `You are an expert translation service. Ensure that the translation is fluent, natural, and idiomatic — not literal or mechanical. Translate the following JSON array of texts from $_{SOURCE} to $_{TARGET}.
-  Your response MUST be a valid JSON array with the exact same number of items, each containing the translated text.
-  Maintain the original JSON structure.
+  PROMPT_BASE_AI_BATCH: `You are an expert translation service. Translate the following JSON data from $_{SOURCE} to $_{TARGET}.
 
-CRITICAL - Placeholder Preservation Instructions:
-  If the text contains special placeholders in the format [[AIWC-0]], [[AIWC-1]], [[AIWC-2]], etc.:
-  1. These placeholders represent inline elements (links, emphasis, code) that MUST be preserved exactly
-  2. Copy these placeholders to your translation WITHOUT any changes
-  3. DO NOT translate the numbers inside the placeholders
-  4. DO NOT renumber, modify, or reformat the placeholders
-  5. DO NOT add spaces inside or around the placeholders
-  6. Ensure each placeholder appears exactly once in your translation
+Strictly follow these instructions:
+$_{PROMPT_INSTRUCTIONS}
 
-Examples:
-  - Input: "Click [[AIWC-0]] to learn more"
-  - Correct: "روی [[AIWC-0]] کلیک کنید تا بیشتر بدانید"
-  - Wrong: "روی [0] کلیک کنید" or "روی [[AIWC-1]] کلیک کنید"
+Your response MUST be a valid JSON object containing a "translations" array with the exact same number of items as the input. 
+Each item MUST contain the "id" and the translated "text".
 
-Important: Return only the JSON array with translated texts, no additional text or explanations.
+CRITICAL - Placeholder Preservation:
+  If the text contains placeholders like [[AIWC-0]], copy them exactly as is.
+
+Return ONLY the JSON object, no additional text or markdown.
 
 $_{TEXT}
 `,
 /*--- End PROMPT_BASE_AI_BATCH ---*/
 
+/*--- Start PROMPT_BASE_AI_BATCH_AUTO ---*/
+  PROMPT_BASE_AI_BATCH_AUTO: `You are an expert translation service. Translate the following JSON data into $_{TARGET}.
+
+Strictly follow these instructions:
+$_{PROMPT_INSTRUCTIONS}
+
+Your response MUST be a valid JSON object containing a "translations" array with the exact same number of items as the input. 
+Each item MUST contain the "id" and the translated "text".
+
+CRITICAL - Placeholder Preservation:
+  If the text contains placeholders like [[AIWC-0]], copy them exactly as is.
+
+Return ONLY the JSON object, no additional text or markdown.
+
+$_{TEXT}
+`,
+/*--- End PROMPT_BASE_AI_BATCH_AUTO ---*/
+
 /*--- Start PROMPT_BASE_AI_FOLLOWUP ---*/
-  PROMPT_BASE_AI_FOLLOWUP: `You are a professional translation service. Continue translating the following JSON array from $_{SOURCE} to $_{TARGET} using the same JSON format and placeholder preservation rules as established in the first turn of this session.
-  Return only the JSON array with translated texts, no additional text.`,
+  PROMPT_BASE_AI_FOLLOWUP: `Continue translating the following JSON data from $_{SOURCE} to $_{TARGET}.
+  
+Strictly follow these instructions:
+$_{PROMPT_INSTRUCTIONS}
+
+Maintain the exact same JSON structure (Object with "translations" array) as the previous batch.
+Return only the JSON object, no additional text.`,
 /*--- End PROMPT_BASE_AI_FOLLOWUP ---*/
+
+/*--- Start PROMPT_BASE_AI_FOLLOWUP_AUTO ---*/
+  PROMPT_BASE_AI_FOLLOWUP_AUTO: `Continue translating the following JSON data into $_{TARGET}.
+
+Strictly follow these instructions:
+$_{PROMPT_INSTRUCTIONS}
+
+Maintain the exact same JSON structure (Object with "translations" array) as the previous batch.
+Return only the JSON object, no additional text.`,
+/*--- End PROMPT_BASE_AI_FOLLOWUP_AUTO ---*/
 
 
 /*--- Start PROMPT_BASE_DICTIONARY ---*/
-  PROMPT_BASE_DICTIONARY: `You are a concise dictionary service. Translate the word/phrase into $_{TARGET} and provide only essential information.
+  PROMPT_BASE_DICTIONARY: `You are a professional dictionary service. Your task is to accurately translate the word or phrase from $_{SOURCE} into $_{TARGET}.
 
-Format your response as:
-- Main translation
-- Part of speech (if relevant): noun, verb, adjective, etc.
-- 2-3 most common synonyms or alternative meanings (if any)
+Format your response exactly as follows using Markdown:
+[Primary meaning in $_{TARGET} directly on the first line]
 
-Keep it brief and useful. Do not include examples, long definitions, or explanations.
+- **[Noun in $_{TARGET}]**: Meanings, separated by comma
+- **[Verb in $_{TARGET}]**: Meanings, separated by comma
+- **[Adjective in $_{TARGET}]**: Meanings, separated by comma
+- **[Synonyms label in $_{TARGET}]**: 2-3 common synonyms
 
-Now, please translate the following texts:
+Keep it very brief. All labels and content MUST be in $_{TARGET}. No examples or explanations.
+
+Now, please translate:
 $_{TEXT}
 `,
 /*--- End PROMPT_BASE_DICTIONARY ---*/
 
   /*--- Start PROMPT_BASE_POPUP_TRANSLATE ---*/
-  PROMPT_BASE_POPUP_TRANSLATE: `You are a translation service. Your task is to translate the input text into $_{TARGET}, while strictly preserving its structure, formatting, and line breaks.
+  PROMPT_BASE_POPUP_TRANSLATE: `You are a professional translation service. Your task is to accurately and fluently translate the input text into $_{TARGET}, while strictly preserving its structure, formatting, and line breaks.
 
-Instructions:
+Strictly follow these instructions:
+$_{PROMPT_INSTRUCTIONS}
+
+Translation quality requirements:
   - Automatically detect the input language.
   - Translate the content into $_{TARGET}.
   - Ensure that the translation is fluent, natural, and idiomatic — not literal or mechanical.
@@ -437,6 +545,7 @@ $_{TEXT}
    - Any other textual information visible in the image
 
 2. **Translation Guidelines:**
+   - Strictly follow these instructions: $_{PROMPT_INSTRUCTIONS}
    - Automatically detect the language of extracted text
    - Translate all extracted text into $_{TARGET}
    - Maintain **natural, fluent, and idiomatic** translations
@@ -460,11 +569,18 @@ $_{TEXT}
   /*--- End PROMPT_BASE_SCREEN_CAPTURE ---*/
 
   /*--- Start PROMPT_TEMPLATE ---*/
-  PROMPT_TEMPLATE: `- If the input is in $_{SOURCE}, translate it into $_{TARGET} using fluent and natural language, while preserving the original intent.
-- If the input is in $_{TARGET}, translate it into $_{SOURCE} with the same level of fluency and clarity.
-- If the input is in any other language, translate it into $_{TARGET}, focusing on readability, tone, and meaning rather than literal translation.
-- If the input contains grammatical errors but is in $_{TARGET}, translate it into $_{SOURCE}, correcting and expressing the intended meaning in a clear, natural way.`,
+  PROMPT_TEMPLATE: `- Translate the input text from $_{SOURCE} (or any other language) into $_{TARGET}.
+- Ensure the translation is fluent, natural, and idiomatic as if written by a native speaker.
+- Prioritize clarity, tone, and readability while preserving the original intent and formatting.
+- If the input is already in $_{TARGET}, keep it unchanged or provide a natural refinement if necessary.`,
   /*--- End PROMPT_TEMPLATE ---*/
+
+  /*--- Start PROMPT_TEMPLATE_AUTO ---*/
+  PROMPT_TEMPLATE_AUTO: `- Translate the input text into $_{TARGET}.
+- Ensure the translation is fluent, natural, and idiomatic as if written by a native speaker.
+- Prioritize clarity, tone, and readability while preserving the original intent and formatting.
+- If the input is already in $_{TARGET}, translate it into $_{SOURCE} only if the entire context suggests a reverse translation is intended.`,
+  /*--- End PROMPT_TEMPLATE_AUTO ---*/
 };
 
 export const state = {
@@ -487,8 +603,11 @@ export const getSettingsAsync = async () => {
     // Combine fetched items with defaults to ensure all keys exist
     return { ...CONFIG, ...items };
   } catch (error) {
-    const handler = ErrorHandler.getInstance();
-    handler.handle(error, { type: ErrorTypes.SERVICE, context: 'config-getSettingsAsync' });
+    if (ExtensionContextManager.isContextError(error)) {
+      ExtensionContextManager.handleContextError(error, 'config-getSettings');
+    } else {
+      logger.error('config-getSettingsAsync error:', error);
+    }
     return { ...CONFIG }; // Use defaults on error
   }
 };
@@ -519,7 +638,11 @@ export const initializeSettingsListener = async () => {
     
     return listener; // Return listener for cleanup if needed
   } catch (error) {
-    logger.error('[config.js] Failed to setup storage listener:', error);
+    if (ExtensionContextManager.isContextError(error)) {
+      ExtensionContextManager.handleContextError(error, 'config-initListener');
+    } else {
+      logger.error('[config.js] Failed to setup storage listener:', error);
+    }
     return null;
   }
 };
@@ -535,21 +658,17 @@ const getSettingValueAsync = async (key, defaultValue) => {
     // logger.debug(`[config] Retrieved value for ${key}:`, result[key] ? 'present' : 'not present');
     return result[key];
   } catch (error) {
-    const handler = ErrorHandler.getInstance();
-    handler.handle(error, { type: ErrorTypes.SERVICE, context: `config-getSettingValueAsync-${key}` });
+    if (ExtensionContextManager.isContextError(error)) {
+      ExtensionContextManager.handleContextError(error, `config-get-${key}`);
+    } else {
+      logger.error(`config-getSettingValueAsync-${key} error:`, error);
+    }
     return defaultValue;
   }
 };
 
 export const getDebugModeAsync = async () => {
   const debugMode = await getSettingValueAsync("DEBUG_MODE", CONFIG.DEBUG_MODE);
-  // Update ErrorHandler with current debug mode
-  try {
-    const errorHandler = ErrorHandler.getInstance();
-    errorHandler.setDebugMode(debugMode);
-  } catch {
-    // Ignore errors during ErrorHandler setup
-  }
   return debugMode;
 };
 
@@ -665,6 +784,10 @@ export const getPromptAsync = async () => {
   return getSettingValueAsync("PROMPT_TEMPLATE", CONFIG.PROMPT_TEMPLATE);
 };
 
+export const getPromptAutoAsync = async () => {
+  return getSettingValueAsync("PROMPT_TEMPLATE_AUTO", CONFIG.PROMPT_TEMPLATE_AUTO);
+};
+
 export const getPromptDictionaryAsync = async () => {
   return getSettingValueAsync(
     "PROMPT_BASE_DICTIONARY",
@@ -691,12 +814,24 @@ export const getPromptBASEAIBatchAsync = async () => {
   return getSettingValueAsync("PROMPT_BASE_AI_BATCH", CONFIG.PROMPT_BASE_AI_BATCH);
 };
 
+export const getPromptBASEAIBatchAutoAsync = async () => {
+  return getSettingValueAsync("PROMPT_BASE_AI_BATCH_AUTO", CONFIG.PROMPT_BASE_AI_BATCH_AUTO);
+};
+
 export const getPromptBASEAIFollowupAsync = async () => {
   return getSettingValueAsync("PROMPT_BASE_AI_FOLLOWUP", CONFIG.PROMPT_BASE_AI_FOLLOWUP);
 };
 
+export const getPromptBASEAIFollowupAutoAsync = async () => {
+  return getSettingValueAsync("PROMPT_BASE_AI_FOLLOWUP_AUTO", CONFIG.PROMPT_BASE_AI_FOLLOWUP_AUTO);
+};
+
 export const getPromptBASEFieldAsync = async () => {
   return getSettingValueAsync("PROMPT_BASE_FIELD", CONFIG.PROMPT_BASE_FIELD);
+};
+
+export const getPromptBASEFieldAutoAsync = async () => {
+  return getSettingValueAsync("PROMPT_BASE_FIELD_AUTO", CONFIG.PROMPT_BASE_FIELD_AUTO);
 };
 
 export const getPromptBASEScreenCaptureAsync = async () => {
@@ -730,6 +865,10 @@ export const getDeepSeekApiKeyAsync = async () => {
 
 export const getDeepSeekApiModelAsync = async () => {
   return getSettingValueAsync("DEEPSEEK_API_MODEL", CONFIG.DEEPSEEK_API_MODEL);
+};
+
+export const getDeepSeekApiUrlAsync = async () => {
+  return getSettingValueAsync("DEEPSEEK_API_URL", CONFIG.DEEPSEEK_API_URL);
 };
 
 // Custom Provider Specific
@@ -797,6 +936,13 @@ export const getShowDesktopFabAsync = async () => {
   );
 };
 
+export const getShowMobileFabAsync = async () => {
+  return getSettingValueAsync(
+    "SHOW_MOBILE_FAB",
+    CONFIG.SHOW_MOBILE_FAB
+  );
+};
+
 export const getDesktopFabPositionAsync = async () => {
   return getSettingValueAsync(
     "DESKTOP_FAB_POSITION",
@@ -836,6 +982,13 @@ export const getTranslateOnTextSelectionAsync = async () => {
   return getSettingValueAsync(
     "TRANSLATE_ON_TEXT_SELECTION",
     CONFIG.TRANSLATE_ON_TEXT_SELECTION
+  );
+};
+
+export const getContextMenuVisibilityAsync = async () => {
+  return getSettingValueAsync(
+    "CONTEXT_MENU_VISIBILITY",
+    CONFIG.CONTEXT_MENU_VISIBILITY
   );
 };
 
@@ -973,7 +1126,70 @@ export const getCustomApiKeysAsync = async () => {
   return ApiKeyManager.getKeys('CUSTOM_API_KEY');
 };
 
+// --- AI Optimization Settings Getters ---
+export const getAIContextTranslationEnabledAsync = async () => {
+  return getSettingValueAsync(
+    "AI_CONTEXT_TRANSLATION_ENABLED",
+    CONFIG.AI_CONTEXT_TRANSLATION_ENABLED
+  );
+};
+
+export const getAIConversationHistoryEnabledAsync = async () => {
+  return getSettingValueAsync(
+    "AI_CONVERSATION_HISTORY_ENABLED",
+    CONFIG.AI_CONVERSATION_HISTORY_ENABLED
+  );
+};
+
+export const getBilingualTranslationEnabledAsync = async () => {
+  return getSettingValueAsync(
+    "BILINGUAL_TRANSLATION",
+    CONFIG.BILINGUAL_TRANSLATION
+  );
+};
+
+export const getBilingualTranslationModesAsync = async () => {
+  return getSettingValueAsync(
+    "BILINGUAL_TRANSLATION_MODES",
+    CONFIG.BILINGUAL_TRANSLATION_MODES
+  );
+};
+
+export const getLanguageDetectionPreferencesAsync = async () => {
+  return getSettingValueAsync(
+    "LANGUAGE_DETECTION_PREFERENCES",
+    CONFIG.LANGUAGE_DETECTION_PREFERENCES
+  );
+};
+
+/**
+ * Get optimization level for a specific provider (1-5)
+ * @param {string} providerName 
+ * @returns {Promise<number>}
+ */
+export const getProviderOptimizationLevelAsync = async (providerName) => {
+  try {
+    const registryId = nameToRegistryId(providerName) || providerName.toLowerCase();
+    
+    const levels = await getSettingValueAsync("PROVIDER_OPTIMIZATION_LEVELS", CONFIG.PROVIDER_OPTIMIZATION_LEVELS);
+    if (levels && levels[registryId]) return parseInt(levels[registryId]);
+    if (levels && levels[providerName]) return parseInt(levels[providerName]);
+    
+    // Fallback to global setting
+    return await getSettingValueAsync("OPTIMIZATION_LEVEL", CONFIG.OPTIMIZATION_LEVEL);
+  } catch {
+    return CONFIG.OPTIMIZATION_LEVEL;
+  }
+};
+
 // --- Whole Page Translation Settings Getters (NEW) ---
+export const getSmartContextTranslationEnabledAsync = async () => {
+  return getSettingValueAsync(
+    "SMART_CONTEXT_TRANSLATION_ENABLED",
+    CONFIG.SMART_CONTEXT_TRANSLATION_ENABLED
+  );
+};
+
 export const getWholePageTranslationEnabledAsync = async () => {
   return getSettingValueAsync(
     "WHOLE_PAGE_TRANSLATION_ENABLED",
@@ -1048,5 +1264,26 @@ export const getWholePageShowOriginalOnHoverAsync = async () => {
   return getSettingValueAsync(
     "WHOLE_PAGE_SHOW_ORIGINAL_ON_HOVER",
     CONFIG.WHOLE_PAGE_SHOW_ORIGINAL_ON_HOVER
+  );
+};
+
+export const getSelectElementShowOriginalOnHoverAsync = async () => {
+  return getSettingValueAsync(
+    "SELECT_ELEMENT_SHOW_ORIGINAL_ON_HOVER",
+    CONFIG.SELECT_ELEMENT_SHOW_ORIGINAL_ON_HOVER
+  );
+};
+
+export const getWholePageTranslateAfterScrollStopAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_TRANSLATE_AFTER_SCROLL_STOP",
+    CONFIG.WHOLE_PAGE_TRANSLATE_AFTER_SCROLL_STOP
+  );
+};
+
+export const getWholePageScrollStopDelayAsync = async () => {
+  return getSettingValueAsync(
+    "WHOLE_PAGE_SCROLL_STOP_DELAY",
+    CONFIG.WHOLE_PAGE_SCROLL_STOP_DELAY
   );
 };

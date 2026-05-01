@@ -9,8 +9,6 @@ import pkg from '../package.json' with { type: 'json' };
  * @returns {Object} Generated manifest object
  */
 export function generateManifest(browser = 'chrome') {
-  const isMobile = process.env.IS_MOBILE === 'true';
-
   // Base manifest shared across browsers
   const baseManifest = {
     name: browser === 'firefox' ? '__MSG_nameFirefox__' : '__MSG_nameChrome__',
@@ -32,13 +30,15 @@ export function generateManifest(browser = 'chrome') {
     host_permissions: ['<all_urls>', 'file://*/*'],
     
     // Content scripts
+    // Note: The iframe-only entry is built as an additional input and injected
+    // programmatically for subframes so it does not also hit the top frame.
     content_scripts: [
       {
-        js: ['src/core/content-scripts/index.js'],
-        // CSS files will be manually copied and injected via JS
-        matches: ['<all_urls>', 'file://*/*'],
+        js: ['src/core/content-scripts/index-main.js'],
+        // Main content script only for the top frame
+        matches: [ '<all_urls>', 'file:///*', '*://*/*' ],
         run_at: 'document_idle',
-        all_frames: true
+        all_frames: false
       }
     ],
     
@@ -75,12 +75,10 @@ export function generateManifest(browser = 'chrome') {
       32: 'icons/extension/extension_icon_32.png',
       48: 'icons/extension/extension_icon_48.png',
       128: 'icons/extension/extension_icon_128.png'
-    }
-  };
+    },
 
-  // Add commands (Desktop only)
-  if (!isMobile) {
-    baseManifest.commands = {
+    // Commands (Supported on Desktop, ignored on Mobile)
+    commands: {
       'SELECT-ELEMENT-COMMAND': {
         suggested_key: {
           default: 'Alt+A',
@@ -88,8 +86,8 @@ export function generateManifest(browser = 'chrome') {
         },
         description: 'Activate the \'Select Element\' mode for translation.'
       }
-    };
-  }
+    }
+  };
 
   // browser-specific configurations
   if (browser === 'firefox') {
@@ -104,8 +102,6 @@ export function generateManifest(browser = 'chrome') {
  * @private
  */
 function generateChromeManifest(baseManifest) {
-  const isMobile = process.env.IS_MOBILE === 'true';
-
   const manifest = {
     ...baseManifest,
     manifest_version: 3,
@@ -121,7 +117,9 @@ function generateChromeManifest(baseManifest) {
       ...baseManifest.permissions,
       'tts',
       'offscreen',
-      'proxy'
+      'proxy',
+      'contextMenus',
+      'sidePanel'
     ],
     
     // Chrome action (popup)
@@ -139,20 +137,16 @@ function generateChromeManifest(baseManifest) {
     // Options page
     options_page: 'html/options.html',
     
+    // Side panel configuration
+    side_panel: {
+      default_path: 'html/sidepanel.html'
+    },
+    
     // Content Security Policy for Chrome MV3 (with Vue 3 compatibility)
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; trusted-types default vue dompurify;"
     }
   };
-
-  // Add contextMenus and sidePanel permission (Desktop only)
-  if (!isMobile) {
-    manifest.permissions.push('contextMenus');
-    manifest.permissions.push('sidePanel');
-    manifest.side_panel = {
-      default_path: 'html/sidepanel.html'
-    };
-  }
 
   return manifest;
 }
@@ -162,8 +156,6 @@ function generateChromeManifest(baseManifest) {
  * @private
  */
 function generateFirefoxManifest(baseManifest) {
-  const isMobile = process.env.IS_MOBILE === 'true';
-
   const manifest = {
     ...baseManifest,
     manifest_version: 3,
@@ -221,7 +213,16 @@ function generateFirefoxManifest(baseManifest) {
     },
     
     // Firefox doesn't support offscreen API yet, so remove from permissions
-    permissions: baseManifest.permissions,
+    permissions: [
+      ...baseManifest.permissions,
+      'contextMenus'
+    ],
+    
+    // Firefox sidebar action
+    sidebar_action: {
+      default_panel: 'html/sidepanel.html',
+      default_title: '__MSG_name__'
+    },
     
     // Firefox-specific web accessible resources format
     web_accessible_resources: [
@@ -249,15 +250,6 @@ function generateFirefoxManifest(baseManifest) {
     ]
   };
 
-  // Firefox uses sidebar_action instead of side_panel (Desktop only)
-  if (!isMobile) {
-    manifest.permissions.push('contextMenus');
-    manifest.sidebar_action = {
-      default_panel: 'html/sidepanel.html',
-      default_title: '__MSG_name__'
-    };
-  }
-
   // Ensure no persistent key is present for Firefox MV3
   if (manifest.background && manifest.background.persistent) {
     delete manifest.background.persistent;
@@ -272,11 +264,9 @@ function generateFirefoxManifest(baseManifest) {
  * @returns {Object} browser-specific fields
  */
 export function getbrowserSpecificFields(browser) {
-  const isMobile = process.env.IS_MOBILE === 'true';
-
   if (browser === 'firefox') {
     return {
-      panelKey: isMobile ? null : 'sidebar_action',
+      panelKey: 'sidebar_action',
       backgroundType: 'service-worker', // Firefox MV3 with service worker
       hasOffscreen: false,
       hasSidePanel: false,
@@ -285,10 +275,10 @@ export function getbrowserSpecificFields(browser) {
     };
   } else {
     return {
-      panelKey: isMobile ? null : 'side_panel',
+      panelKey: 'side_panel',
       backgroundType: 'service-worker',
       hasOffscreen: true,
-      hasSidePanel: !isMobile, 
+      hasSidePanel: true, 
       hasTTS: true,
       manifestVersion: 3
     };

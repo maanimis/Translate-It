@@ -2,7 +2,11 @@
  * Provider Registry for UI - Dynamic provider information derived from ProviderManifest
  */
 
-import { PROVIDER_MANIFEST, ProviderCategories } from '@/features/translation/providers/ProviderManifest.js';
+import {
+  PROVIDER_MANIFEST,
+  ProviderCategories,
+} from "@/features/translation/providers/ProviderManifest.js";
+import { CONFIG } from "@/shared/config/config.js";
 
 /**
  * Re-export ProviderCategories for UI components
@@ -13,7 +17,7 @@ export const PROVIDER_CATEGORIES = ProviderCategories;
  * Complete provider registry with metadata for UI
  * Automatically generated from ProviderManifest
  */
-export const PROVIDER_REGISTRY = PROVIDER_MANIFEST.map(provider => ({
+export const PROVIDER_REGISTRY = PROVIDER_MANIFEST.map((provider) => ({
   id: provider.id,
   name: provider.displayName,
   description: provider.descriptionKey, // Will be used with i18n
@@ -23,28 +27,48 @@ export const PROVIDER_REGISTRY = PROVIDER_MANIFEST.map(provider => ({
   supported: provider.supported,
   features: provider.features,
   // These can be moved to manifest later for full control
-  languages: provider.type === 'ai' ? 100 : (provider.id === 'deepl' ? 35 : 100),
+  languages: provider.type === "ai" ? 100 : provider.id === "deepl" ? 35 : 100,
   rateLimit: provider.needsApiKey ? "API dependent" : "None",
-  quality: provider.type === 'ai' ? "Very High" : "High",
-  speed: provider.id === 'browser' ? "Very Fast" : "Fast",
+  quality: provider.type === "ai" ? "Very High" : "High",
+  speed: provider.id === "browser" ? "Very Fast" : "Fast",
 }));
 
 // For backward compatibility and easy access
 const FALLBACK_PROVIDERS = PROVIDER_REGISTRY;
 
+/**
+ * Filter providers based on system state (e.g. hide Mock in production)
+ */
+const filterProviders = (providers, debugMode = null) => {
+  const isDebug = debugMode !== null ? debugMode : CONFIG.DEBUG_MODE;
+
+  return providers.filter((p) => {
+    // Basic support check
+    if (!p.supported) return false;
+
+    // Hide Mock provider if not in debug mode
+    if (p.id === "mock" && !isDebug) return false;
+
+    return true;
+  });
+};
+
 // Export functions for compatibility
-export const getProvidersForDropdown = () => FALLBACK_PROVIDERS.filter(p => p.supported);
-export const getProviderById = (id) => FALLBACK_PROVIDERS.find(p => p.id === id);
-export const getSupportedProviders = () => FALLBACK_PROVIDERS.filter(p => p.supported);
+export const getProvidersForDropdown = (debugMode = null) =>
+  filterProviders(FALLBACK_PROVIDERS, debugMode);
+export const getProviderById = (id) =>
+  FALLBACK_PROVIDERS.find((p) => p.id === id);
+export const getSupportedProviders = (debugMode = null) =>
+  filterProviders(FALLBACK_PROVIDERS, debugMode);
 
 // Export class for compatibility
 export class ProviderRegistry {
-  static getAll() {
-    return FALLBACK_PROVIDERS.filter(p => p.supported);
+  static getAll(debugMode = null) {
+    return filterProviders(FALLBACK_PROVIDERS, debugMode);
   }
-  
+
   static getById(id) {
-    return FALLBACK_PROVIDERS.find(p => p.id === id);
+    return FALLBACK_PROVIDERS.find((p) => p.id === id);
   }
 }
 

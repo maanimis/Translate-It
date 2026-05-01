@@ -2,8 +2,11 @@ import { BaseTranslateProvider } from "@/features/translation/providers/BaseTran
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
+import { TraditionalTextProcessor } from "./utils/TraditionalTextProcessor.js";
 import { TRANSLATION_CONSTANTS } from "@/shared/config/translationConstants.js";
-import { LANGUAGE_NAME_TO_CODE_MAP } from "@/shared/config/languageConstants.js";
+import {
+  getProviderLanguageCode
+} from "@/shared/config/languageConstants.js";
 import { AUTO_DETECT_VALUE } from "@/shared/config/constants.js";
 import { getBrowserInfoSync } from "@/utils/browser/compatibility.js";
 import {
@@ -31,7 +34,14 @@ export class GoogleTranslateV2Provider extends BaseTranslateProvider {
   static displayName = "Google Translate";
   static reliableJsonMode = false;
   static supportsDictionary = true;
-  static CHAR_LIMIT = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.GOOGLE;
+
+  // BaseTranslateProvider capabilities (Default values)
+  // NOTE: Character limits and chunk sizes are now dynamically managed 
+  // by ProviderConfigurations.js based on the active Optimization Level.
+  static supportsStreaming = TRANSLATION_CONSTANTS.SUPPORTS_STREAMING.GOOGLE;
+  static chunkingStrategy = TRANSLATION_CONSTANTS.CHUNKING_STRATEGIES.GOOGLE;
+  static characterLimit = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.GOOGLE;
+  static maxChunksPerBatch = TRANSLATION_CONSTANTS.MAX_CHUNKS_PER_BATCH.GOOGLE;
 
   constructor() {
     super(ProviderNames.GOOGLE_TRANSLATE_V2);
@@ -39,8 +49,7 @@ export class GoogleTranslateV2Provider extends BaseTranslateProvider {
 
   _getLangCode(lang) {
     if (!lang || lang === AUTO_DETECT_VALUE) return "auto";
-    const lowerCaseLang = lang.toLowerCase();
-    return LANGUAGE_NAME_TO_CODE_MAP[lowerCaseLang] || lowerCaseLang;
+    return getProviderLanguageCode(lang, 'GOOGLE');
   }
 
   /**
@@ -76,7 +85,7 @@ export class GoogleTranslateV2Provider extends BaseTranslateProvider {
   /**
    * Implement translation for a single chunk
    */
-  async _translateChunk(chunkTexts, sourceLang, targetLang, translateMode, abortController) {
+  async _translateChunk(chunkTexts, sourceLang, targetLang, translateMode, abortController, retryAttempt, segmentCount, chunkIndex, totalChunks, options = {}) {
     const info = getBrowserInfoSync();
     const isStableClient = info.isFirefox || info.isMobile;
     
@@ -151,34 +160,94 @@ export class GoogleTranslateV2Provider extends BaseTranslateProvider {
           return { translatedText: "", candidateText: "" };
         }
 
-        // Combine segments back
-        const translatedText = data[0].map(segment => segment[0] || "").join('');
-        
-        let candidateText = "";
-        if (shouldIncludeDictionary && data[1]) {
-          candidateText = data[1].map((dict) => {
-            const pos = dict[0] || "";
-            const terms = dict[1] || [];
-            return `${pos}${pos !== "" ? ": " : ""}${terms.join(", ")}\n`;
-          }).join("");
+        // Capture detected source language if available (usually at index 2 or index 8)
+        this._setDetectedLanguage(data[2] || (data[8] && data[8][0] && data[8][0][0]));
+
+        // For single segments, keep existing stable behavior
+        if (chunkTexts.length === 1) {
+          const translatedText = data[0].map(segment => segment[0] || "").join('');
+          
+          let candidateText = "";
+          if (shouldIncludeDictionary && data[1]) {
+            candidateText = data[1].map((dict) => {
+              const pos = dict[0] || "";
+              const terms = dict[1] || [];
+              return `${pos}${pos !== "" ? ": " : ""}${terms.join(", ")}\n`;
+            }).join("");
+          }
+
+          return { translatedText, candidateText: candidateText.trim() };
         }
 
-        return { translatedText, candidateText: candidateText.trim() };
+        // For multiple segments, reconstruct the array to prevent delimiter leakage.
+        // Google often splits our delimiters ([[---]]) and attaches brackets to adjacent text.
+        const segments = data[0];
+        const results = new Array(chunkTexts.length).fill("");
+        let currentIdx = 0;
+        let inDelimiterZone = false;
+
+        for (const segment of segments) {
+          const trans = segment[0] || "";
+          const orig = segment[1] || "";
+          
+          // Identify if this segment is part of the delimiter pattern
+          // Includes artifacts from all major providers: Bing (—–…ـ), Google (·・), and common dashes/dots
+          const isDelimiterPart = /^[[\]\s\n\r.——–…ـ·・-]+$/.test(orig) && 
+                                  (orig.includes('-') || orig.includes('.') || orig.includes('[') || orig.includes(']') || 
+                                   orig.includes('—') || orig.includes('–') || orig.includes('…') || orig.includes('ـ') || 
+                                   orig.includes('·') || orig.includes('・'));
+          
+          if (isDelimiterPart) {
+            if (!inDelimiterZone) {
+              currentIdx++;
+              inDelimiterZone = true;
+            }
+            continue;
+          }
+
+          inDelimiterZone = false;
+          if (currentIdx < results.length) {
+            // Clean any delimiter remnants using centralized BIDI scrubbing
+            const cleanTrans = TraditionalTextProcessor.scrubBidiArtifacts(trans);
+            results[currentIdx] += cleanTrans;
+          }
+        }
+
+        // Fallback: If reconstruction resulted in empty segments for non-empty originals
+        // (which means Google merged segments unpredictably), fallback to joined string 
+        // and let the robust SegmentMapper handle it.
+        const hasEmpty = results.some((r, i) => !r.trim() && chunkTexts[i] && chunkTexts[i].trim());
+        if (hasEmpty) {
+          const joinedResult = data[0].map(segment => segment[0] || "").join('');
+          return { translatedText: joinedResult, candidateText: "" };
+        }
+
+        return { translatedText: results, candidateText: "" };
       },
       context: 'googlev2-translate-chunk',
-      abortController
+      abortController,
+      sessionId: options.sessionId,
+      charCount: this._calculateTraditionalCharCount(chunkTexts),
+      originalCharCount: options.originalCharCount || TraditionalTextProcessor.calculateTraditionalCharCount(chunkTexts)
     });
-
-    // Use robust split logic from base class OUTSIDE extractResponse
-    const translatedSegments = await this._robustSplit(responseObj.translatedText, chunkTexts);
 
     // Handle dictionary formatting for single segment
     if (chunkTexts.length === 1 && responseObj?.candidateText) {
       const formattedDictionary = this._formatDictionaryAsMarkdown(responseObj.candidateText);
-      return [`${translatedSegments[0]}\n\n${formattedDictionary}`];
+      const translatedWithDict = `${responseObj.translatedText}\n\n${formattedDictionary}`;
+      
+      logger.info(`[GoogleV2] Translation with dictionary completed successfully`);
+      return translatedWithDict;
     }
 
-    return translatedSegments || chunkTexts;
+    // Return translated text. Coordinator will handle robust splitting for multiple segments.
+    const finalResult = responseObj?.translatedText || chunkTexts.join(TRANSLATION_CONSTANTS.TEXT_DELIMITER);
+
+    if (finalResult) {
+      logger.info(`[GoogleV2] Translation completed successfully`);
+    }
+
+    return finalResult;
   }
 
   _formatDictionaryAsMarkdown(candidateText) {
@@ -204,4 +273,3 @@ export class GoogleTranslateV2Provider extends BaseTranslateProvider {
     return markdownOutput.trim();
   }
 }
-

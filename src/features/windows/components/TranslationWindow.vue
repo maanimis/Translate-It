@@ -13,8 +13,7 @@
     @click.stop
   >
     <LoadingSpinner
-      :type="'animated'"
-      size="lg"
+      size="sm"
       class="ti-loading-spinner-wrapper"
     />
   </div>
@@ -65,34 +64,15 @@
             />
           </svg>
         </button>
-        <button
-          class="ti-action-btn ti-smart-tts-btn"
-          :class="{ 'ti-original-mode': ttsMode === 'original' }"
-          :disabled="!hasTTSContent || isTTSLoading"
-          :title="getEnhancedTTSButtonTitle"
-          @click.stop="handleSmartTTS"
+        <TTSButton
+          :text="currentTTSText"
+          :language="currentTTSLang"
+          size="sm"
+          variant="secondary"
+          class="ti-smart-tts-btn"
           @mousedown.stop
           @touchstart.stop
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            class="ti-smart-tts-icon"
-            :class="{ 'ti-original-icon': ttsMode === 'original' }"
-          >
-            <path
-              v-if="!isSpeaking"
-              fill="currentColor"
-              :d="ttsMode === 'original' ? originalTextTTSIcon : translatedTextTTSIcon"
-            />
-            <path
-              v-else
-              fill="currentColor"
-              d="M6 6h12v12H6z"
-            />
-          </svg>
-        </button>
+        />
         <button
           class="ti-action-btn"
           :class="{ 'ti-original-visible': showOriginal }"
@@ -114,6 +94,12 @@
         </button>
       </div>
       <div class="ti-header-close">
+        <span
+          v-if="detectedLanguageName"
+          class="ti-detected-language-label"
+        >
+          {{ detectedLanguageName }}
+        </span>
         <button
           class="ti-action-btn"
           :title="t('window_close')"
@@ -176,6 +162,7 @@ import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js';
 import { usePositioning } from '@/composables/ui/usePositioning.js';
 import { WindowsConfig } from '@/features/windows/managers/core/WindowsConfig.js';
 import { useTTSSmart } from '@/features/tts/composables/useTTSSmart.js';
+import TTSButton from '@/components/shared/TTSButton.vue';
 import TranslationDisplay from '@/components/shared/TranslationDisplay.vue';
 import ProviderSelector from '@/components/shared/ProviderSelector.vue';
 import LoadingSpinner from '@/components/base/LoadingSpinner.vue';
@@ -184,6 +171,8 @@ import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { useResourceTracker } from '@/composables/core/useResourceTracker.js';
 import { useMobileStore } from '@/store/modules/mobile.js';
+import { SimpleMarkdown } from '@/shared/utils/text/markdown.js';
+import { getLanguageNameFromCode } from '@/shared/config/languageConstants.js';
 
 // Import adjacent SCSS
 import './TranslationWindow.scss';
@@ -204,6 +193,8 @@ const props = defineProps({
   needsSettings: { type: Boolean, default: false },
   initialSize: { type: String, default: 'normal' }, 
   targetLanguage: { type: String, default: 'auto' }, 
+  sourceLanguage: { type: String, default: 'auto' },
+  detectedSourceLanguage: { type: String, default: undefined },
   provider: { type: String, default: '' } 
 });
 
@@ -229,36 +220,35 @@ const translatedText = computed(() => props.isError ? '' : props.initialTranslat
 const originalText = ref(props.selectedText);
 const errorMessage = computed(() => props.isError ? props.initialTranslatedText : '');
 
-// Track the specific TTS request started by this window instance
-const localTTSId = ref(null);
-
-// Check if this specific window instance is currently responsible for the active TTS
-const isThisWindowActive = computed(() => {
-  return !!(localTTSId.value && tts.currentTTSId.value === localTTSId.value);
+const detectedLanguageName = computed(() => {
+  const code = props.detectedSourceLanguage;
+  if (!code || code === 'auto') return '';
+  const name = getLanguageNameFromCode(code);
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : '';
 });
 
-const isSpeaking = computed(() => isThisWindowActive.value && tts.ttsState.value === 'playing');
-const isTTSLoading = computed(() => isThisWindowActive.value && tts.ttsState.value === 'loading');
+// Watch for prop changes to sync internal state
+watch(() => props.selectedText, (newText) => {
+  if (newText) {
+    logger.debug('selectedText updated:', newText);
+    originalText.value = newText;
+  }
+});
+
+watch(() => props.sourceLanguage, (newLang) => {
+  logger.debug('sourceLanguage prop updated:', newLang);
+});
+
+watch(() => props.targetLanguage, (newLang) => {
+  logger.debug('targetLanguage prop updated:', newLang);
+});
 
 const ttsMode = computed(() => showOriginal.value ? 'original' : 'translated');
-const hasTTSContent = computed(() => {
-  const hasOriginal = showOriginal.value && originalText.value && originalText.value.trim().length > 0;
-  const hasTranslated = !showOriginal.value && translatedText.value && translatedText.value.trim().length > 0;
-  return hasOriginal || hasTranslated;
-});
 
 const currentTTSText = computed(() => ttsMode.value === 'original' ? originalText.value || '' : translatedText.value || '');
-
-const getEnhancedTTSButtonTitle = computed(() => {
-  if (!hasTTSContent.value) return t('window_tts_no_text');
-  if (isSpeaking.value) return t('window_tts_stop');
-  return ttsMode.value === 'original' ? t('window_tts_speak_original') : t('window_tts_speak_translation');
-});
+const currentTTSLang = computed(() => ttsMode.value === 'original' ? props.sourceLanguage : props.targetLanguage);
 
 const getOriginalButtonTitle = computed(() => showOriginal.value ? t('window_hide_original') : t('window_show_original'));
-
-const originalTextTTSIcon = "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z";
-const translatedTextTTSIcon = "M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z";
 
 const handleRetry = () => {
   pageEventBus.emit('translation-window-retry', { id: props.id });
@@ -273,8 +263,8 @@ const handleProviderChange = (newProvider) => {
 };
 
 const showOriginal = ref(false);
-const currentWidth = computed(() => currentSize.value === 'small' ? 60 : null);
-const currentHeight = computed(() => currentSize.value === 'small' ? 40 : null);
+const currentWidth = computed(() => currentSize.value === 'small' ? 28 : null);
+const currentHeight = computed(() => currentSize.value === 'small' ? 28 : null);
 
 const {
   currentPosition,
@@ -312,7 +302,19 @@ watch(() => props.initialSize, (newSize) => {
 
 const windowStyle = computed(() => ({ ...positionStyle.value }));
 
-onMounted(() => {
+onMounted(async () => {
+  // Inject Windows-specific styles lazily
+  try {
+    const { windowsUiStyles } = await import('@/core/content-scripts/chunks/lazy-styles.js');
+    const { injectStylesToShadowRoot } = await import('@/utils/ui/styleInjector.js');
+    
+    if (windowsUiStyles && injectStylesToShadowRoot) {
+      injectStylesToShadowRoot(windowsUiStyles, 'vue-windows-specific-styles');
+    }
+  } catch (error) {
+    console.warn('[TranslationWindow] Failed to load lazy styles:', error);
+  }
+
   requestAnimationFrame(() => {
     isVisible.value = true;
   });
@@ -330,25 +332,11 @@ const toggleShowOriginal = () => { showOriginal.value = !showOriginal.value; };
 const handleCopy = async () => {
   if (!translatedText.value) return;
   try {
-    await navigator.clipboard.writeText(translatedText.value);
+    const textToCopy = SimpleMarkdown.getCleanTranslation(translatedText.value);
+    await navigator.clipboard.writeText(textToCopy);
+    logger.debug(`Text copied successfully (cleaned)`);
   } catch (error) {
     logger.error(`Failed to copy:`, error);
-  }
-};
-
-const handleSmartTTS = async () => {
-  if (!hasTTSContent.value) return;
-  try {
-    if (isSpeaking.value) {
-      await tts.stop();
-    } else {
-      const result = await tts.speak(currentTTSText.value, 'auto');
-      if (result) {
-        localTTSId.value = tts.currentTTSId.value;
-      }
-    }
-  } catch (error) {
-    logger.error(`Smart TTS failed:`, error);
   }
 };
 

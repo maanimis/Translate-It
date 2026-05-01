@@ -1,10 +1,10 @@
 <template>
-  <div>
+  <div class="deepseek-settings">
     <h3>{{ t('deepseek_api_settings_title') || 'DeepSeek API Settings' }}</h3>
-    <div class="setting-group api-key-info">
-      <span class="setting-description">
+    <div class="setting-group vertical api-key-info">
+      <p class="setting-description">
         {{ t('deepseek_api_key_info') || 'Get your DeepSeek API key from' }}
-      </span>
+      </p>
       <a
         class="api-link"
         href="https://platform.deepseek.com/api-keys"
@@ -15,6 +15,7 @@
       </a>
     </div>
     <ApiKeyInput
+      id="DEEPSEEK_API_KEY"
       v-model="deepseekApiKey"
       :label="t('custom_api_settings_api_key_label') || 'API Keys'"
       :placeholder="t('deepseek_api_key_placeholder') || 'Enter your API keys (one per line)'"
@@ -23,7 +24,7 @@
       :test-result="testResult"
       @test="testKeys"
     />
-    <div class="setting-group">
+    <div class="setting-group vertical">
       <label>{{ t('PROVIDER_MODEL_LABEL') || 'Model' }}</label>
       <BaseSelect
         v-model="deepseekApiModel"
@@ -34,7 +35,7 @@
     </div>
     <div
       v-if="selectedModelOption === 'custom'"
-      class="setting-group"
+      class="setting-group vertical"
     >
       <label>{{ t('deepseek_custom_model_label') || 'Custom Model Name' }}</label>
       <BaseInput
@@ -48,8 +49,10 @@
 
 <script setup>
 import { computed, ref, onMounted } from 'vue'
+import "./DeepseekApiSettings.scss"
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/features/settings/stores/settings.js'
+import { CONFIG } from '@/shared/config/config.js'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BaseSelect from '@/components/base/BaseSelect.vue'
 import ApiKeyInput from './ApiKeyInput.vue'
@@ -98,11 +101,13 @@ const deepseekCustomModel = computed({
   }
 })
 
-const deepseekApiModelOptions = ref([
-  { value: 'deepseek-chat', label: 'DeepSeek Chat (V3)' },
-  { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner (R1)' },
-  { value: 'custom', label: 'Custom Model' }
-])
+const deepseekApiModelOptions = computed(() => {
+  const models = settingsStore.settings?.DEEPSEEK_MODELS || CONFIG.DEEPSEEK_MODELS || []
+  return models.map(model => ({
+    value: model.value,
+    label: model.name || model.value
+  }))
+})
 
 // Test keys functionality
 const testingKeys = ref(false)
@@ -150,7 +155,3 @@ onMounted(() => {
   initializeModelSelection()
 })
 </script>
-
-<style lang="scss" scoped>
-@use "@/assets/styles/components/api-settings-common" as *;
-</style>

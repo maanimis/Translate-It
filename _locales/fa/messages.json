@@ -83,6 +83,9 @@
   "api_provider_deepl": {
     "message": "DeepL"
   },
+  "api_provider_mock": {
+    "message": "شبیه‌ساز توسعه"
+  },
   "provider_default": {
     "message": "پیش‌فرض"
   },
@@ -170,6 +173,12 @@
   "provider_custom_description": {
     "message": "استفاده از APIهای سازگار با OpenAI. آدرس سرور و کلید اختصاصی خود را وارد کنید."
   },
+  "provider_mock_title": {
+    "message": "شبیه‌ساز توسعه"
+  },
+  "provider_mock_description": {
+    "message": "یک پرووایدر شبیه‌سازی شده برای اهداف توسعه و تست."
+  },
   "options_page_title": {
     "message": "تنظیمات"
   },
@@ -221,6 +230,36 @@
   "advance_tab_title": {
     "message": "پیش‌رفته"
   },
+  "tts_tab_title": {
+    "message": "تبدیل متن به گفتار"
+  },
+  "tts_tab_desc": {
+    "message": "تنظیمات مربوط به صدا و موتورهای تلفظ متن را در اینجا مدیریت کنید."
+  },
+  "tts_engine_label": {
+    "message": "موتور تلفظ (TTS)"
+  },
+  "tts_engine_google": {
+    "message": "مترجم گوگل (استاندارد)"
+  },
+  "tts_engine_edge": {
+    "message": "مایکروسافت اج (طبیعی - Neural)"
+  },
+  "tts_engine_desc": {
+    "message": "موتور پیش‌فرض برای تلفظ متن را انتخاب کنید. موتور Edge صداهای بسیار باکیفیت و طبیعی ارائه می‌دهد."
+  },
+  "tts_fallback_label": {
+    "message": "فعال‌سازی موتور جایگزین"
+  },
+  "tts_fallback_desc": {
+    "message": "در صورتی که موتور انتخابی از زبان متن پشتیبانی نکند، به طور خودکار از موتور جایگزین استفاده می‌شود."
+  },
+  "tts_autodetect_label": {
+    "message": "تشخیص هوشمند زبان"
+  },
+  "tts_autodetect_desc": {
+    "message": "قبل از پخش صدا، زبان متن را به طور هوشمند شناسایی می‌کند تا از صدای صحیح برای آن زبان استفاده شود."
+  },
   "import_success": {
     "message": "تنظیمات با موفقیت وارد شد."
   },
@@ -231,7 +270,10 @@
     "message": "کلید اصلی"
   },
   "activation_group_fab_title": {
-    "message": "دکمه عملیات سریع (FAB)"
+    "message": "دکمه دسترسی سریع (FAB)"
+  },
+  "activation_group_select_element_title": {
+    "message": "انتخاب المان"
   },
   "activation_group_text_fields_title": {
     "message": "ترجمه فیلدهای متنی"
@@ -407,11 +449,14 @@
   "translate_with_select_element_description": {
     "message": "اجازه می‌دهد تا ترجمه با استفاده از یک روش انتخاب خاص (مانند انتخاب کل یک پاراگراف) فعال شود."
   },
+  "show_select_element_in_context_menu_label": {
+    "message": "نمایش در منوی کلیک‌راست"
+  },
+  "show_select_element_in_context_menu_description": {
+    "message": "گزینه «انتخاب المان» را در منوی کلیک‌راست مرورگر نمایش می‌دهد."
+  },
   "translate_on_text_selection_label": {
     "message": "فعال‌سازی ترجمه روی انتخاب متن"
-  },
-  "translate_on_text_selection_description": {
-    "message": "امکان فعال شدن ترجمه به‌صورت خودکار یا با آیکون پس از انتخاب متن در صفحه را فراهم می‌کند."
   },
   "translate_on_text_selection_description": {
     "message": "امکان فعال‌سازی ترجمه به صورت خودکار یا از طریق آیکون پس از انتخاب متن در صفحه."
@@ -460,9 +505,6 @@
   },
   "mobile_selection_copied_message": {
     "message": "ترجمه در حافظه کپی شد"
-  },
-  "mobile_page_dashboard_btn": {
-    "message": "داشبورد"
   },
   "mobile_page_error_encountered": {
     "message": "خطایی رخ داد"
@@ -514,9 +556,6 @@
   },
   "mobile_fab_alt": {
     "message": "ترجمه"
-  },
-  "mobile_back_button_alt": {
-    "message": "بازگشت"
   },
   "mobile_close_button_alt": {
     "message": "بستن"
@@ -572,14 +611,8 @@
   "mobile_ui_mode_mobile": {
     "message": "همیشه موبایل"
   },
-  "mobile_ui_mode_mobile_desc": {
-    "message": "بهینه شده برای لمسی"
-  },
   "mobile_ui_mode_desktop": {
     "message": "همیشه دسکتاپ"
-  },
-  "mobile_ui_mode_desktop_desc": {
-    "message": "پنجره شناور"
   },
   "mobile_input_header_title": {
     "message": "ورودی دستی"
@@ -598,9 +631,6 @@
   },
   "mobile_input_no_result_error": {
     "message": "ترجمه‌ای یافت نشد. دوباره تلاش کنید."
-  },
-  "mobile_input_default_error": {
-    "message": "ترجمه با خطا مواجه شد."
   },
   "mobile_input_copied_message": {
     "message": "کپی شد"
@@ -624,13 +654,13 @@
     "message": "حالت ترجمه متن انتخابی"
   },
   "options_selection_mode_immediate": {
-    "message": "ترجمه فوری"
+    "message": "بلافاصله"
   },
   "options_selection_mode_onclick": {
-    "message": "نمایش آیکون بجای ترجمه فوری"
+    "message": "نمایش آیکون"
   },
   "options_selection_mode_onfabclick": {
-    "message": "استفاده از دکمه شناور دسکتاپ برای ترجمه"
+    "message": "FAB"
   },
   "require_ctrl_for_text_selection_label": {
     "message": "الزام استفاده از کلید Ctrl برای ترجمه متن"
@@ -672,7 +702,7 @@
     "message": "رابط ترجمه (API)"
   },
   "translation_api_label": {
-    "message": "ارائه‌دهنده سرویس API"
+    "message": "سرویس دهنده"
   },
   "provider_label": {
     "message": "سرویس‌دهنده"
@@ -941,6 +971,9 @@
   "advance_debug_mode_label": {
     "message": "حالت اشکال‌زدایی (Debug Mode)"
   },
+  "debug_section_description": {
+    "message": "فعال‌سازی لاگ‌های جزئی برای بخش‌های مختلف. این تنظیم بر سطح کلی لاگ غلبه می‌کند."
+  },
   "proxy_section_title": {
     "message": "تنظیمات پروکسی"
   },
@@ -975,13 +1008,22 @@
     "message": "تست اتصال پروکسی"
   },
   "proxy_test_success": {
-    "message": "اتصال پروکسی موفقیت‌آمیز بود!"
+    "message": "اتصال پروکسی با موفقیت برقرار شد!"
+  },
+  "direct_test_success": {
+    "message": "اتصال مستقیم با موفقیت برقرار شد!"
   },
   "proxy_test_failed": {
     "message": "اتصال پروکسی ناموفق. تنظیمات را بررسی کنید."
   },
+  "direct_test_failed": {
+    "message": "اتصال مستقیم ناموفق. لطفا اینترنت خود را بررسی کنید."
+  },
   "proxy_test_error": {
     "message": "تست با خطا مواجه شد."
+  },
+  "proxy_not_enabled": {
+    "message": "لطفاً ابتدا پروکسی را فعال کنید تا بتوانید اتصال را تست کنید."
   },
   "proxy_warning_title": {
     "message": "محدودیت افزونه مرورگر"
@@ -1067,8 +1109,8 @@
   "popup_translate_button_title": {
     "message": "ترجمه"
   },
-  "popup_translate_button_alt_icon": {
-    "message": "ترجمه"
+  "popup_stop_button_title": {
+    "message": "توقف ترجمه"
   },
   "popup_exclude_toggle_title": {
     "message": "فعال/غیرفعال کردن در این سایت"
@@ -1127,11 +1169,21 @@
   "popup_open_side_panel_title": {
     "message": "پنل کناری"
   },
-  "page_translation_btn_translate": { "message": "ترجمه صفحه" },
-  "page_translation_btn_stop": { "message": "توقف ترجمه" },
-  "page_translation_btn_restore": { "message": "بازگشت به اصلی" },
-  "sync_page_label": { "message": "همگام صفحه" },
-  "sync_element_label": { "message": "همگام المان" },
+  "page_translation_btn_translate": {
+    "message": "ترجمه صفحه"
+  },
+  "page_translation_btn_stop": {
+    "message": "توقف ترجمه"
+  },
+  "page_translation_btn_restore": {
+    "message": "بازگشت به اصلی"
+  },
+  "sync_page_label": {
+    "message": "همگام صفحه"
+  },
+  "sync_element_label": {
+    "message": "همگام المان"
+  },
   "api_key_show": {
     "message": "نمایش"
   },
@@ -1360,7 +1412,9 @@
   "ERRORS_BROWSER_API_UNAVAILABLE": {
     "message": "سرویس ترجمه کروم (Built-in) در دسترس نیست. این قابلیت به کروم ۱۳۸ یا بالاتر نیاز دارد."
   },
-  "ERRORS_API_KEY_MISSING": { "message": "کلید API وارد نشده است." },
+  "ERRORS_API_KEY_MISSING": {
+    "message": "کلید API وارد نشده است."
+  },
   "ERRORS_API_KEY_INVALID": {
     "message": "کلید API نامعتبر یا غیرمجاز است."
   },
@@ -1412,7 +1466,7 @@
   "ERRORS_PAGE_TRANSLATION_STOPPED": {
     "message": "{error}"
   },
-  "ERRORS_USER_CANCELLED": { 
+  "ERRORS_USER_CANCELLED": {
     "message": "ترجمه توسط کاربر لغو شد."
   },
   "gemini_thinking_label": {
@@ -1505,9 +1559,6 @@
   "SELECT_ELEMENT_CANCEL": {
     "message": "کنسل"
   },
-  "SELECT_ELEMENT_REVERT": {
-    "message": "بازگشت"
-  },
   "LINGVA_WPT_WARNING": {
     "message": "سرویس Lingva ممکن است در متن‌های طولانی دچار خطا شود."
   },
@@ -1516,12 +1567,6 @@
   },
   "click_to_set_shortcut": {
     "message": "برای تنظیم میانبر کلیک کنید"
-  },
-  "shortcut_recording_title": {
-    "message": "میانبر خود را فشار دهید"
-  },
-  "shortcut_recording_instruction": {
-    "message": "کلیدهایی که می‌خواهید برای این میانبر استفاده کنید را فشار دهید."
   },
   "shortcut_waiting": {
     "message": "منتظر فشردن کلیدها..."
@@ -1882,5 +1927,197 @@
   },
   "whole_page_show_original_on_hover_description": {
     "message": "هنگام نگه داشتن موس روی متن ترجمه شده، متن اصلی را در یک کادر کوچک نمایش می‌دهد."
+  },
+  "select_element_show_original_on_hover_label": {
+    "message": "نمایش متن اصلی هنگام نگه داشتن موس"
+  },
+  "select_element_show_original_on_hover_description": {
+    "message": "هنگام نگه داشتن موس روی المان‌های ترجمه شده در حالت انتخاب المان، متن اصلی را در یک کادر کوچک نمایش می‌دهد."
+  },
+  "whole_page_translate_after_scroll_stop_label": {
+    "message": "ترجمه با توقف اسکرول"
+  },
+  "whole_page_translate_after_scroll_stop_description": {
+    "message": "فقط زمانی که اسکرول متوقف شود، ترجمه انجام می‌شود. مناسب برای کارایی بیشتر و صرفه‌جویی در مصرف API."
+  },
+  "whole_page_translate_fluid_description": {
+    "message": "ترجمه به صورت مداوم با تاخیری اندک در حین اسکرول. پاسخگویی سریع‌تر اما ممکن است مصرف API را افزایش دهد."
+  },
+  "whole_page_trigger_mode_label": {
+    "message": "حالت شروع ترجمه"
+  },
+  "whole_page_trigger_on_stop": {
+    "message": "هنگام توقف اسکرول"
+  },
+  "whole_page_trigger_fluid": {
+    "message": "هنگام اسکرول"
+  },
+  "whole_page_delay_label": {
+    "message": "تاخیر در ترجمه"
+  },
+  "whole_page_scroll_stop_delay_unit": {
+    "message": "میلی ثانیه"
+  },
+  "ai_optimization_section_title": {
+    "message": "بهینه‌سازی هوش مصنوعی"
+  },
+  "ai_context_translation_label": {
+    "message": "درک هوشمند محیط (Context)"
+  },
+  "ai_context_translation_description": {
+    "message": "ارسال اطلاعات صفحه (عنوان و بخش‌ها) به مدل‌های AI برای افزایش دقت ترجمه در متن‌های کوتاه یا مبهم. (در DeepL همیشه فعال است)"
+  },
+  "ai_conversation_history_label": {
+    "message": "حافظه گفتگو"
+  },
+  "ai_conversation_history_description": {
+    "message": "در حالت Select Element بخشی از ترجمه‌های قبلی را به‌صورت موقت نگه می‌دارد تا یکپارچگی و درک متن بهتر شود. این کار می‌تواند کیفیت ترجمه را افزایش دهد، اما ممکن است مصرف توکن را کمی بیشتر کند."
+  },
+  "bilingual_translation_label": {
+    "message": "ترجمه دوطرفه (جابجایی زبان)"
+  },
+  "bilingual_translation_description": {
+    "message": "اگر زبان متن شناسایی شده با زبان مقصد یکی باشد، به طور خودکار به زبان مبدا (یا انگلیسی در صورت خودکار بودن مبدا) ترجمه می‌شود."
+  },
+  "bilingual_mode_selection_label": {
+    "message": "انتخاب متن"
+  },
+  "bilingual_mode_select_element_label": {
+    "message": "انتخاب المان"
+  },
+  "bilingual_mode_field_label": {
+    "message": "فیلدهای متنی"
+  },
+  "bilingual_mode_popup_label": {
+    "message": "پاپ‌آپ و سایدپنل"
+  },
+  "bilingual_mode_page_label": {
+    "message": "ترجمه کل صفحه"
+  },
+  "optimization_level_label": {
+    "message": "استراتژی ترجمه (سرعت در مقابل هزینه)"
+  },
+  "optimization_level_1": {
+    "message": "سطح ۱"
+  },
+  "optimization_level_2": {
+    "message": "سطح ۲"
+  },
+  "optimization_level_3": {
+    "message": "سطح ۳"
+  },
+  "optimization_level_4": {
+    "message": "سطح ۴"
+  },
+  "optimization_level_5": {
+    "message": "سطح ۵"
+  },
+  "opt_economy": {
+    "message": "اقتصادی"
+  },
+  "opt_stable": {
+    "message": "پایدار"
+  },
+  "opt_balanced": {
+    "message": "متعادل"
+  },
+  "opt_turbo": {
+    "message": "توربو"
+  },
+  "opt_fast": {
+    "message": "سریع"
+  },
+  "optimization_description_ai": {
+    "message": "انتخاب بین حالت 'اقتصادی' برای حداکثر بهره‌وری توکن‌ها، یا حالت 'توربو' برای سریع‌ترین زمان نمایش ترجمه."
+  },
+  "optimization_description_traditional": {
+    "message": "ایجاد توازن بین مصرف API و پایداری IP در مقابل سرعت ترجمه. کارایی بالاتر باعث کاهش تعداد درخواست‌ها و جلوگیری از مسدود شدن می‌شود."
+  },
+  "enable_translation_history_label": {
+    "message": "فعال‌سازی تاریخچه ترجمه"
+  },
+  "enable_translation_history_description": {
+    "message": "ثبت ترجمه‌ها در تاریخچه."
+  },
+  "language_detection_label": {
+    "message": "تشخیص زبان"
+  },
+  "language_detection_preferences_description": {
+    "message": "زبان اولویت را برای رسم‌الخط‌های مشترک تعیین کنید. این تنظیم مشخص می‌کند که در حالت «تشخیص خودکار»، متن شما با اولویت کدام زبان شناسایی شود (مثلا برای تشخیص صحیح زبان فارسی در میان زبان‌های مشابه)."
+  },
+  "arabic_script_priority_label": {
+    "message": "اولویت خط عربی"
+  },
+  "persian_language_name": {
+    "message": "فارسی"
+  },
+  "default_label": {
+    "message": "پیش‌فرض"
+  },
+  "arabic_language_name": {
+    "message": "عربی"
+  },
+  "urdu_language_name": {
+    "message": "اردو"
+  },
+  "pashto_language_name": {
+    "message": "پشتو"
+  },
+  "chinese_simplified_name": {
+    "message": "چینی (ساده‌شده)"
+  },
+  "chinese_traditional_name": {
+    "message": "چینی (سنتی)"
+  },
+  "chinese_classical_name": {
+    "message": "چینی (ادبی)"
+  },
+  "chinese_cantonese_name": {
+    "message": "کانتونی"
+  },
+  "chinese_script_priority_label": {
+    "message": "اولویت خط چینی"
+  },
+  "devanagari_script_priority_label": {
+    "message": "اولویت خط دواناگری"
+  },
+  "hindi_language_name": {
+    "message": "هندی"
+  },
+  "marathi_language_name": {
+    "message": "ماراتی"
+  },
+  "nepali_language_name": {
+    "message": "نپالی"
+  },
+  "latin_script_priority_label": {
+    "message": "اولویت خط لاتین"
+  },
+  "latin_priority_none_label": {
+    "message": "خودکار"
+  },
+  "english_language_name": {
+    "message": "انگلیسی"
+  },
+  "french_language_name": {
+    "message": "فرانسوی"
+  },
+  "spanish_language_name": {
+    "message": "اسپانیایی"
+  },
+  "german_language_name": {
+    "message": "آلمانی"
+  },
+  "italian_language_name": {
+    "message": "ایتالیایی"
+  },
+  "portuguese_language_name": {
+    "message": "پرتغالی"
+  },
+  "turkish_language_name": {
+    "message": "ترکی"
+  },
+  "dutch_language_name": {
+    "message": "هلندی"
   }
 }

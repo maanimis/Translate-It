@@ -75,7 +75,7 @@ export class OptionsValidator {
     if (!apiKey || !apiKey.trim()) {
       this.addError("apiKey", {
         key: "validation_api_key_empty",
-        params: { provider: providerName }
+        params: { provider: providerName },
       });
       return false;
     }
@@ -111,7 +111,7 @@ export class OptionsValidator {
     if (missingPlaceholders.length > 0) {
       this.addError("promptTemplate", {
         key: "validation_prompt_template_missing_placeholders",
-        params: { placeholders: missingPlaceholders.join(", ") }
+        params: { placeholders: missingPlaceholders.join(", ") },
       });
       return false;
     }
@@ -132,8 +132,8 @@ export class OptionsValidator {
     const invalidSites = [];
 
     siteList.forEach((site) => {
-      // Basic domain validation
-      if (!this.isValidDomain(site)) {
+      // Accept either regular domains or file:// entries created by page-level exclusion.
+      if (!this.isValidExcludedSiteEntry(site)) {
         invalidSites.push(site);
       }
     });
@@ -141,7 +141,7 @@ export class OptionsValidator {
     if (invalidSites.length > 0) {
       this.addError("excludedSites", {
         key: "validation_invalid_domains",
-        params: { domains: invalidSites.join(", ") }
+        params: { domains: invalidSites.join(", ") },
       });
       return false;
     }
@@ -170,6 +170,17 @@ export class OptionsValidator {
     return true;
   }
 
+  // Helper method to validate exclusion entries
+  isValidExcludedSiteEntry(entry) {
+    if (!entry || typeof entry !== "string") return false;
+
+    if (entry.startsWith("file://")) {
+      return this.isValidLocalFileUrl(entry);
+    }
+
+    return this.isValidDomain(entry);
+  }
+
   // Helper method to validate domain names
   isValidDomain(domain) {
     if (!domain || typeof domain !== "string") return false;
@@ -186,6 +197,16 @@ export class OptionsValidator {
 
     return domainRegex.test(domain) && domain.length <= 253;
   }
+
+  // Helper method to validate file URLs stored in exclusion settings
+  isValidLocalFileUrl(url) {
+    try {
+      const parsedUrl = new URL(url);
+      return parsedUrl.protocol === "file:" && Boolean(parsedUrl.pathname);
+    } catch {
+      return false;
+    }
+  }
 }
 
 // Validation composable for Vue components
@@ -196,7 +217,7 @@ export function useValidation() {
   // This should be called from Vue components with access to i18n
   const translateError = (error, t) => {
     if (!error) return null;
-    if (typeof error === 'string') {
+    if (typeof error === "string") {
       // String is a translation key
       return t(error);
     }
@@ -218,13 +239,13 @@ export function useValidation() {
   // Get all translated errors for a field
   const getFieldErrorsTranslated = (field, t) => {
     const errors = validator.getFieldErrors(field);
-    return errors.map(error => translateError(error, t));
+    return errors.map((error) => translateError(error, t));
   };
 
   // Get all translated errors as flat array
   const getAllErrorsTranslated = (t) => {
     const errors = validator.getAllErrors();
-    return errors.map(error => translateError(error, t));
+    return errors.map((error) => translateError(error, t));
   };
 
   return {
@@ -288,14 +309,17 @@ export async function validateField(value, rules) {
   for (const rule of rules) {
     if (!rule.test(value)) {
       // Support both old format (message string) and new format (key + params)
-      if (typeof rule === 'string' || (typeof rule === 'object' && rule.message)) {
+      if (
+        typeof rule === "string" ||
+        (typeof rule === "object" && rule.message)
+      ) {
         // Legacy format - return as is
-        errors.push(typeof rule === 'string' ? rule : rule.message);
+        errors.push(typeof rule === "string" ? rule : rule.message);
       } else {
         // New format - return object with key and optional params
         errors.push({
           key: rule.key,
-          params: rule.params || {}
+          params: rule.params || {},
         });
       }
     }

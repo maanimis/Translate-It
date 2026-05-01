@@ -49,8 +49,27 @@ class LifecycleManager {
 
     await this.refreshContextMenus();
 
+    // Initialize TTS voice cache in background
+    this.initializeTTSVoiceCache();
+
     this.initialized = true;
     logger.info("[LifecycleManager] Background service initialized successfully");
+  }
+
+  /**
+   * Initialize TTS voice list cache in background
+   * @private
+   */
+  async initializeTTSVoiceCache() {
+    try {
+      // Lazy load to keep startup light
+      const { ttsVoiceService } = await import("@/features/tts/services/TTSVoiceService.js");
+      // This will trigger a fetch only if the 24h cache is expired
+      ttsVoiceService.getVoices();
+      logger.debug("[LifecycleManager] TTS Voice cache initialization triggered");
+    } catch (e) {
+      logger.debug("[LifecycleManager] TTS Voice cache initialization skipped:", e.message);
+    }
   }
 
   /**
@@ -63,7 +82,7 @@ class LifecycleManager {
       const features = await this.featureLoader.preloadEssentialFeatures();
       logger.info("Essential features preloaded:", Object.keys(features));
     } catch (error) {
-      logger.error("❌ Failed to preload essential features:", error);
+      logger.error("Failed to preload essential features:", error);
       // Continue initialization even if preloading fails
     }
   }
@@ -82,7 +101,7 @@ class LifecycleManager {
       await this.translationEngine.initialize();
       logger.info('[LifecycleManager] TranslationEngine initialized successfully');
     } catch (error) {
-      logger.error('❌ [LifecycleManager] Failed to initialize TranslationEngine:', error);
+      logger.error('[LifecycleManager] Failed to initialize TranslationEngine:', error);
       throw error;
     }
   }
@@ -122,15 +141,15 @@ class LifecycleManager {
       'revertTranslation': Handlers.handleRevertTranslationLazy,
       'CANCEL_TRANSLATION': Handlers.handleCancelTranslationLazy,
       [MessageActions.CANCEL_SESSION]: Handlers.handleCancelSessionLazy,
-      'TRANSLATION_RESULT_UPDATE': Handlers.handleTranslationResultLazy,
+      [MessageActions.TRANSLATION_RESULT_UPDATE]: Handlers.handleTranslationResultLazy,
       'CHECK_TRANSLATION_STATUS': Handlers.handleCheckTranslationStatusLazy,
 
       // TTS handlers - Lazy loaded for better performance
-      'GOOGLE_TTS_SPEAK': Handlers.handleTTSSpeakLazy,
+      [MessageActions.GOOGLE_TTS_SPEAK]: Handlers.handleTTSSpeakLazy,
       'TTS_SPEAK': Handlers.handleTTSSpeakLazy,
-      'TTS_STOP': Handlers.handleTTSStopLazy,
-      'GOOGLE_TTS_ENDED': Handlers.handleTTSEndedLazy,
-      'OFFSCREEN_READY': Handlers.handleOffscreenReadyLazy,
+      [MessageActions.TTS_STOP]: Handlers.handleTTSStopLazy,
+      [MessageActions.GOOGLE_TTS_ENDED]: Handlers.handleTTSEndedLazy,
+      [MessageActions.OFFSCREEN_READY]: Handlers.handleOffscreenReadyLazy,
       'clearTTSHandlerCache': Handlers.clearTTSHandlerCache,
       'getTTSHandlerStats': Handlers.getTTSHandlerStats,
       
@@ -171,6 +190,7 @@ class LifecycleManager {
       [MessageActions.PAGE_TRANSLATE_PROGRESS]: Handlers.handlePageTranslation,
       [MessageActions.PAGE_TRANSLATE_COMPLETE]: Handlers.handlePageTranslation,
       [MessageActions.PAGE_TRANSLATE_ERROR]: Handlers.handlePageTranslation,
+      [MessageActions.PAGE_TRANSLATE_RESET_ERROR]: Handlers.handlePageTranslation,
       [MessageActions.PAGE_RESTORE_COMPLETE]: Handlers.handlePageTranslation,
       [MessageActions.PAGE_AUTO_RESTORE_COMPLETE]: Handlers.handlePageTranslation, // NEW
       [MessageActions.PAGE_RESTORE_ERROR]: Handlers.handlePageTranslation,
@@ -208,6 +228,21 @@ class LifecycleManager {
     // Register all handlers with proper action names
     const { registeredCount, failedCount } = this.performHandlerRegistration(handlerMappings);
     
+    // Register DebugModeBridge handlers
+    try {
+      import('@/shared/logging/DebugModeBridge.js').then(({ debugModeBridge }) => {
+        const debugHandlers = debugModeBridge.getHandlerMappings();
+        for (const [action, handler] of Object.entries(debugHandlers)) {
+          this.messageHandler.registerHandler(action, handler);
+        }
+        logger.info('Registered DebugModeBridge handlers in background');
+      }).catch(err => {
+        logger.warn('Failed to load DebugModeBridge for handler registration:', err);
+      });
+    } catch (error) {
+      logger.warn('Error during DebugModeBridge registration:', error);
+    }
+    
     logger.info(`Handler registration complete: ${registeredCount} registered, ${failedCount} failed`);
   }
 
@@ -225,7 +260,7 @@ class LifecycleManager {
       logger.warn('Unmapped handlers detected (consider adding to handlerMappings):',
                    unmappedHandlers.map(h => h.name || 'anonymous'));
     } else {
-      logger.debug('✅ All available handlers are properly mapped');
+      logger.debug('All available handlers are properly mapped');
     }
     
     // Mapping statistics - logged at TRACE level for detailed debugging
@@ -259,11 +294,11 @@ class LifecycleManager {
           
           registeredCount++;
         } catch (error) {
-          logger.error(`❌ Failed to register handler for action: ${actionName}`, error);
+          logger.error(`Failed to register handler for action: ${actionName}`, error);
           failedCount++;
         }
       } else {
-        logger.warn(`⚠️ Handler function not found for action: ${actionName}`);
+        logger.warn(`Handler function not found for action: ${actionName}`);
         failedCount++;
       }
     }
@@ -288,7 +323,7 @@ class LifecycleManager {
 
       logger.info("Error handlers initialization completed");
     } catch (error) {
-      logger.error("❌ Failed to initialize error handlers:", error);
+      logger.error("Failed to initialize error handlers:", error);
     }
   }
 
@@ -317,7 +352,7 @@ class LifecycleManager {
       logger.info("[LifecycleManager] Context menus refreshed successfully");
 
     } catch (error) {
-      logger.error("❌ [LifecycleManager] Failed to refresh context menus:", error);
+      logger.error("[LifecycleManager] Failed to refresh context menus:", error);
       // Try one more direct approach as ultimate fallback if featureLoader failed
       await this.createContextMenuDirectly();
     }
@@ -361,7 +396,7 @@ class LifecycleManager {
       logger.info("[LifecycleManager] Emergency context menu setup completed");
 
     } catch (directError) {
-      logger.error("❌ [LifecycleManager] Emergency context menu creation failed:", directError);
+      logger.error("[LifecycleManager] Emergency context menu creation failed:", directError);
     }
   }
 

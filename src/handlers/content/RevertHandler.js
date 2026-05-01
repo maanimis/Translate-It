@@ -6,6 +6,11 @@ import { pageEventBus } from '@/core/PageEventBus.js';
 import ResourceTracker from '@/core/memory/ResourceTracker.js';
 import { NOTIFICATION_TIME } from '../../shared/config/constants.js';
 import { useMobileStore } from '@/store/modules/mobile.js';
+import NotificationManager from '@/core/managers/core/NotificationManager.js';
+import { revertSelectElementTranslation } from '@/features/element-selection/core/DomTranslatorAdapter.js';
+import { getActivePinia } from 'pinia';
+import { state } from '@/shared/config/config.js';
+import { getTranslationHandlerInstance } from "@/core/InstanceManager.js";
 
 const logger = getScopedLogger(LOG_COMPONENTS.MESSAGING, 'RevertHandler');
 /**
@@ -18,6 +23,7 @@ export class RevertHandler extends ResourceTracker {
     super('revert-handler')
     this.context = 'content-revert';
     this.isExecuting = false; // Prevent duplicate executions
+    this.notificationManager = new NotificationManager();
 
     // Listen for revert requests from the PageEventBus (used by mobile dashboard and notifications)
     pageEventBus.on('revert-translations', () => {
@@ -97,7 +103,7 @@ export class RevertHandler extends ResourceTracker {
       const isTopFrame = window === window.top;
       const canAccessTop = (() => {
         try { return !!(window.top && window.top.location && window.top.location.href); }
-        catch (e) { return false; }
+        catch { return false; }
       })();
       const shouldEmitNotification = isTopFrame || !canAccessTop;
 
@@ -105,7 +111,7 @@ export class RevertHandler extends ResourceTracker {
         if (totalRevertedCount > 0) {
           const { getTranslationString } = await utilsFactory.getI18nUtils();
           const message = `${totalRevertedCount} ${(await getTranslationString("STATUS_Revert_Number")) || "(item(s) reverted)"}`;
-          pageEventBus.emit('show-notification', { message, type: "revert", duration: NOTIFICATION_TIME.REVERT });
+          this.notificationManager.show(message, "revert", NOTIFICATION_TIME.REVERT);
           logger.info('Success notification sent');
         } else {
           // const { getTranslationString } = await utilsFactory.getI18nUtils();
@@ -150,21 +156,27 @@ export class RevertHandler extends ResourceTracker {
     try {
       // First, try to revert Select Element translation using global state
       // This works even when SelectElementManager is deactivated
-      const { revertSelectElementTranslation } = await import('@/features/element-selection/core/DomTranslatorAdapter.js');
       const selectElementReverted = await revertSelectElementTranslation();
 
       if (selectElementReverted) {
         logger.debug('Reverted Select Element translation via global state');
         
-        // Update store to reset Revert badge
-        const mobileStore = useMobileStore();
-        mobileStore.setHasElementTranslations(false);
+        // Update store to reset Revert badge - only if Pinia is active
+        try {
+          if (getActivePinia()) {
+            const mobileStore = useMobileStore();
+            mobileStore.setHasElementTranslations(false);
+          }
+        } catch {
+          logger.debug('Pinia not available for store update during revert');
+        }
         
         return 1;
       }
 
-      // Fallback: Try to get SelectElementManager instance through FeatureManager
-      const selectElementManager = await this.getSelectElementManagerFromFeatureManager();
+      // Fallback: Try to get SelectElementManager instance using the unified getter
+      // which includes fallbacks to global window instances if FeatureManager is not available
+      const selectElementManager = await this.getSelectElementManager();
 
       if (selectElementManager && typeof selectElementManager.revertTranslations === 'function') {
         const revertedCount = await selectElementManager.revertTranslations();
@@ -189,7 +201,6 @@ export class RevertHandler extends ResourceTracker {
     try {
       // Get translation handler for context
       const translationHandler = await this.getTranslationHandler();
-      const { state } = await import("../../config.js");
 
       const context = {
         state,
@@ -283,8 +294,7 @@ export class RevertHandler extends ResourceTracker {
         return window.translationHandlerInstance;
       }
       
-      // Fallback: try to import and get instance
-      const { getTranslationHandlerInstance } = await import("../../core/InstanceManager.js");
+      // Fallback: use statically imported getter
       return getTranslationHandlerInstance();
     } catch (error) {
       logger.warn('Could not get TranslationHandler:', error);

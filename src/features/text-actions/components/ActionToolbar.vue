@@ -38,6 +38,12 @@
 
     <!-- Right group: Paste -->
     <div class="ti-toolbar-right">
+      <span
+        v-if="showLanguageLabel"
+        class="ti-language-label"
+      >
+        {{ languageLabelText }}
+      </span>
       <PasteButton
         v-if="showPaste"
         :size="buttonSize"
@@ -57,6 +63,7 @@
 </template>
 
 <script setup>
+import './ActionToolbar.scss';
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import CopyButton from './CopyButton.vue'
@@ -64,6 +71,7 @@ import PasteButton from './PasteButton.vue'
 import TTSButton from '@/components/shared/TTSButton.vue' // Updated to use the new enhanced TTSButton
 import { getScopedLogger } from '@/shared/logging/logger.js'
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js'
+import { getLanguageNameFromCode } from '@/shared/config/languageConstants.js'
 
 const logger = getScopedLogger(LOG_COMPONENTS.UI, 'ActionToolbar')
 
@@ -80,6 +88,10 @@ const props = defineProps({
   language: {
     type: String,
     default: 'auto'
+  },
+  detectedLanguage: {
+    type: String,
+    default: undefined
   },
   
   // Display control
@@ -207,6 +219,30 @@ const buttonVariant = computed(() => {
   return props.variant
 })
 
+const showLanguageLabel = computed(() => {
+  if (!props.text || props.text.trim().length === 0) return false;
+
+  // Input mode: Show detected language
+  if (props.mode === 'input') {
+    return props.detectedLanguage && props.detectedLanguage !== 'auto';
+  }
+  
+  // Output mode & Sidepanel: Show target language
+  if (props.mode === 'output' || props.mode === 'sidepanel') {
+    return props.language && props.language !== 'auto';
+  }
+
+  return false;
+})
+
+const languageLabelText = computed(() => {
+  const code = (props.mode === 'input') ? props.detectedLanguage : props.language;
+  if (!code || code === 'auto') return '';
+  
+  const name = getLanguageNameFromCode(code);
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : '';
+})
+
 // Event Handlers
 const handleCopied = (text) => {
   logger.debug('[ActionToolbar] Text copied:', text.substring(0, 50) + '...')
@@ -266,136 +302,3 @@ const handleTTSStateChanged = (data) => {
   emit('tts-state-changed', data)
 }
 </script>
-
-<style scoped>
-.ti-action-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  /* transition: opacity 0.2s ease, visibility 0.2s ease; */
-  width: 100%;
-}
-
-/* Toolbar groups */
-.ti-toolbar-left,
-.ti-toolbar-right {
-  display: flex;
-  gap: 2px;
-  align-items: center;
-  flex-shrink: 1;
-  min-width: 0;
-  overflow: visible;
-}
-
-.ti-toolbar-left {
-  flex: 0 1 auto;
-}
-
-.ti-toolbar-right {
-  flex: 0 1 auto;
-}
-
-/* Layout variants */
-.ti-layout-horizontal {
-  flex-direction: row;
-}
-
-.ti-layout-horizontal .ti-toolbar-left,
-.ti-layout-horizontal .ti-toolbar-right {
-  flex-direction: row;
-}
-
-.ti-layout-vertical {
-  flex-direction: column;
-  justify-content: flex-start;
-  gap: 4px;
-}
-
-.ti-layout-vertical .ti-toolbar-left,
-.ti-layout-vertical .ti-toolbar-right {
-  flex-direction: column;
-  width: 100%;
-}
-
-.ti-layout-vertical .ti-toolbar-right {
-  margin-top: 4px;
-}
-
-/* Position variants */
-.ti-position-top-right {
-  position: absolute;
-  top: 8px;
-  right: 0px;
-  max-width: calc(100% - 24px);
-  box-sizing: border-box;
-}
-
-.ti-position-top-left {
-  position: absolute;
-  top: 8px;
-  left: 0px;
-  max-width: calc(100% - 24px);
-  box-sizing: border-box;
-}
-
-.ti-position-bottom-right {
-  position: absolute;
-  bottom: 8px;
-  right: 0px;
-  max-width: calc(100% - 24px);
-  box-sizing: border-box;
-  right: 8px;
-}
-
-.ti-position-bottom-left {
-  position: absolute;
-  bottom: 8px;
-  left: 0px;
-  max-width: calc(100% - 24px);
-  box-sizing: border-box;
-}
-
-.ti-position-inline {
-  position: relative;
-  display: inline-flex;
-}
-
-/* Mode-specific styles - simplified */
-.ti-mode-input,
-.ti-mode-output,
-.ti-mode-floating {
-  background: var(--color-background, rgba(255, 255, 255, 0.95));
-  border-radius: 4px;
-  padding: 0px 2px; /* Reduced vertical padding from 2px to 0px */
-  border: 1px solid var(--color-border, transparent);
-  min-height: unset; /* Ensure no minimum height is enforced */
-  line-height: 1;
-}
-
-.ti-mode-inline,
-.ti-mode-sidepanel {
-  background: transparent;
-  padding: 0px 2px; /* Reduced vertical padding */
-}
-
-/* Content-based visibility - Removed to always show toolbar with full opacity
-   Individual buttons now handle disabled state instead of toolbar transparency */
-
-/* Dark mode support - using theme classes for consistency */
-:root.theme-dark .ti-mode-input,
-:root.theme-dark .ti-mode-output,
-:root.theme-dark .ti-mode-floating,
-.theme-dark .ti-mode-input,
-.theme-dark .ti-mode-output,
-.theme-dark .ti-mode-floating {
-  background: var(--color-surface, rgba(32, 33, 36, 0.9));
-  border-color: var(--color-border, rgba(255, 255, 255, 0.15));
-}
-
-/* Ensure proper spacing for icon-only buttons */
-:root.theme-dark .ti-action-toolbar,
-.theme-dark .ti-action-toolbar {
-  /* Add slight padding to ensure icons have proper spacing */
-  gap: 2px;
-}
-</style>

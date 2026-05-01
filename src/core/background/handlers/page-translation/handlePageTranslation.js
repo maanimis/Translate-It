@@ -4,6 +4,8 @@ import { MessageActions } from '@/shared/messaging/core/MessageActions.js';
 import browser from 'webextension-polyfill';
 import ExtensionContextManager from '@/core/extensionContext.js';
 import { unifiedTranslationService } from '@/core/services/translation/UnifiedTranslationService.js';
+import { statsManager } from '@/features/translation/core/TranslationStatsManager.js';
+import { tabPermissionChecker } from '@/core/tabPermissions.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.PAGE_TRANSLATION, 'handlePageTranslation');
 
@@ -49,6 +51,7 @@ export async function handlePageTranslation(message, sender) {
       MessageActions.PAGE_TRANSLATE_PROGRESS,
       MessageActions.PAGE_TRANSLATE_COMPLETE,
       MessageActions.PAGE_TRANSLATE_ERROR,
+      MessageActions.PAGE_TRANSLATE_RESET_ERROR,
       MessageActions.PAGE_RESTORE_COMPLETE,
       MessageActions.PAGE_AUTO_RESTORE_COMPLETE,
       MessageActions.PAGE_RESTORE_ERROR,
@@ -56,6 +59,62 @@ export async function handlePageTranslation(message, sender) {
     ];
 
     if (eventActions.includes(message.action)) {
+      // Filter out empty/invalid completion messages before broadcasting
+      if (message.action === MessageActions.PAGE_TRANSLATE_COMPLETE) {
+        const data = message.data || {};
+        // Skip completion messages with no meaningful data
+        if (!data.translatedCount && !data.totalCount && !data.isTranslated && !data.messageId) {
+          logger.debug('Skipping empty PAGE_TRANSLATE_COMPLETE message');
+          return { success: true };
+        }
+      }
+
+      // Filter out empty/invalid auto-restore complete messages
+      if (message.action === MessageActions.PAGE_AUTO_RESTORE_COMPLETE) {
+        const data = message.data || {};
+        // Skip auto-restore messages with no translation data unless they have explicit isTranslated flag
+        if (!data.translatedCount && !data.isTranslated) {
+          logger.debug('Skipping empty PAGE_AUTO_RESTORE_COMPLETE message');
+          return { success: true };
+        }
+      }
+
+      // Log Page Session Summary on completion, cancellation or error
+      if (message.action === MessageActions.PAGE_TRANSLATE_COMPLETE ||
+          message.action === MessageActions.PAGE_TRANSLATE_CANCELLED ||
+          message.action === MessageActions.PAGE_TRANSLATE_ERROR ||
+          message.action === MessageActions.PAGE_RESTORE_COMPLETE) {
+
+        // Find session ID in all possible locations - prioritization is key
+        const sessionId = message.data?.sessionId ||
+                         message.sessionId ||
+                         message.data?.messageId ||
+                         message.messageId;
+
+        // Map action to status label
+        let status = 'Complete';
+        if (message.action === MessageActions.PAGE_TRANSLATE_CANCELLED) status = 'Stopped';
+        else if (message.action === MessageActions.PAGE_TRANSLATE_ERROR) status = 'Error';
+        else if (message.action === MessageActions.PAGE_RESTORE_COMPLETE) status = 'Page Restored';
+
+        // Decide whether to clear based on the action type
+        // We only clear on Restore or Cancel, not on "Complete" because of Lazy Loading
+        const shouldClear = message.action === MessageActions.PAGE_RESTORE_COMPLETE ||
+                           message.action === MessageActions.PAGE_TRANSLATE_CANCELLED;
+
+        statsManager.printSummary(sessionId, {
+          status,
+          success: message.action !== MessageActions.PAGE_TRANSLATE_ERROR,
+          clear: shouldClear
+        });
+      }
+
+      // Special case: Clear session if a NEW translation starts on the same ID
+      if (message.action === MessageActions.PAGE_TRANSLATE_START) {
+        const sessionId = message.data?.sessionId || message.data?.messageId;
+        if (sessionId) statsManager.clearSession(sessionId);
+      }
+
       browser.runtime.sendMessage(message).catch(() => {});
       return { success: true };
     }
@@ -79,6 +138,18 @@ export async function handlePageTranslation(message, sender) {
     }
 
     const tab = tabs[0];
+
+    const access = await tabPermissionChecker.checkTabAccess(tab.id);
+    if (!access.isAccessible) {
+      logger.debug(`Page translation blocked on restricted tab ${tab.id}: ${access.errorMessage}`);
+      return {
+        success: false,
+        message: access.errorMessage,
+        isRestrictedPage: true,
+        tabId: tab.id,
+        tabUrl: access.fullUrl,
+      };
+    }
 
     try {
       // Get all frames in the tab to ensure we reach every part of the page (especially iframes)
@@ -105,6 +176,15 @@ export async function handlePageTranslation(message, sender) {
           )
         );
         
+        // 1. Check for an aggregated response (usually from the top frame)
+        // This response already contains consolidated stats from all frames
+        const aggregatedResponse = statusResponses.find(r => r && r.success && r.isAggregated);
+        if (aggregatedResponse) {
+          logger.debug('Returning aggregated translation status from main frame');
+          return aggregatedResponse;
+        }
+
+        // 2. Fallback: Aggregate manually if no aggregated response was found
         const bestResponse = statusResponses.find(r => r && (r.isTranslating || r.isAutoTranslating || r.isTranslated)) || 
                            statusResponses.find(r => r && r.success) || 
                            { success: false, error: 'No active translation found' };

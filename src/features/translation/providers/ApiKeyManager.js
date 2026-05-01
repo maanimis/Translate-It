@@ -95,9 +95,13 @@ class ApiKeyManager {
       const result = await storageManager.get({ [providerSettingKey]: '' });
       const keyString = result[providerSettingKey] || '';
 
-      // Debug logging to see what's actually in storage
+      // Debug logging to see what's actually in storage (masked for security)
+      const maskedValue = keyString.length > 10 
+        ? `${keyString.substring(0, 4)}...${keyString.substring(keyString.length - 4)}`
+        : '***';
+
       logger.info(`[ApiKeyManager] Raw storage value for ${providerSettingKey}:`, {
-        value: keyString,
+        value: maskedValue,
         length: keyString.length,
         hasNewlines: keyString.includes('\n'),
         lineCount: keyString.split('\n').length
@@ -409,12 +413,16 @@ class ApiKeyManager {
    */
   static async _testOpenRouterKey(key, context = {}) {
     try {
-      const apiUrl = context.apiUrl || 'https://openrouter.ai/api/v1/models';
+      // Use auth/key endpoint instead of models to properly validate the key
+      // models endpoint is public and may return 200 even for invalid keys
+      const apiUrl = context.apiUrl || 'https://openrouter.ai/api/v1/auth/key';
       const { proxyManager } = await import('@/shared/proxy/ProxyManager.js');
       const response = await proxyManager.fetch(apiUrl, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${key}`
+          'Authorization': `Bearer ${key}`,
+          'HTTP-Referer': 'https://github.com/iSegaro/Translate-It',
+          'X-Title': 'Translate-It Extension'
         }
       });
       return response.ok;
@@ -479,9 +487,9 @@ class ApiKeyManager {
         apiModel = settings.CUSTOM_API_MODEL;
       }
 
-      if (!apiUrl) {
+      if (!apiUrl || apiUrl.trim() === '') {
         logger.warn('[ApiKeyManager] Custom API URL is not configured, cannot test key');
-        return true; 
+        return false;
       }
 
       // Try to determine models endpoint

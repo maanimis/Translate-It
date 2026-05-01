@@ -6,8 +6,10 @@ import { MOBILE_CONSTANTS } from '@/shared/config/constants.js'
 import { ProviderRegistryIds } from '@/features/translation/providers/ProviderConstants.js'
 import secureStorage from '@/shared/storage/core/SecureStorage.js'
 import { storageManager } from '@/shared/storage/core/StorageCore.js'
+import ExtensionContextManager from '@/core/extensionContext.js'
 import { runSettingsMigrations } from '@/shared/config/settingsMigrations.js'
 import { getScopedLogger } from '@/shared/logging/logger.js';
+import { TTS_ENGINES } from '@/shared/constants/tts.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 const logger = getScopedLogger(LOG_COMPONENTS.SETTINGS, 'settings');
 
@@ -17,6 +19,7 @@ function getDefaultSettings() {
     THEME: CONFIG.THEME || 'auto',
     APPLICATION_LOCALIZE: CONFIG.APPLICATION_LOCALIZE || 'en',
     EXTENSION_ENABLED: CONFIG.EXTENSION_ENABLED ?? true,
+    ENABLE_TRANSLATION_HISTORY: CONFIG.ENABLE_TRANSLATION_HISTORY ?? true,
     TRANSLATION_API: CONFIG.TRANSLATION_API || ProviderRegistryIds.GOOGLE_V2,
     MODE_PROVIDERS: CONFIG.MODE_PROVIDERS || {
       [TranslationMode.Field]: null,
@@ -28,30 +31,47 @@ function getDefaultSettings() {
       [TranslationMode.Sidepanel_Translate]: null,
       [TranslationMode.ScreenCapture]: null
     },
-    SOURCE_LANGUAGE: CONFIG.SOURCE_LANGUAGE || 'en',
-    TARGET_LANGUAGE: CONFIG.TARGET_LANGUAGE || 'fa',
+    SOURCE_LANGUAGE: CONFIG.SOURCE_LANGUAGE || 'auto',
+    TARGET_LANGUAGE: CONFIG.TARGET_LANGUAGE || 'en',
+    LANGUAGE_DETECTION_PREFERENCES: CONFIG.LANGUAGE_DETECTION_PREFERENCES || {
+      "arabic-script": "fa", // پیش‌فرض: وقتی اسکریپت عربی تشخیص داده شد، اولویت با فارسی باشد
+      "chinese-script": "zh-cn", // چینی ساده‌شده
+      "devanagari-script": "hi", // هندی
+      "latin-script": "none" // هیچکدام (اجازه به تشخیص خودکار پرووایدر)
+    },
     TIMEOUT: CONFIG.TIMEOUT || 30000,
     selectionTranslationMode: CONFIG.selectionTranslationMode || SelectionTranslationMode.ON_CLICK,
     COPY_REPLACE: CONFIG.COPY_REPLACE || 'replace',
     REPLACE_SPECIAL_SITES: CONFIG.REPLACE_SPECIAL_SITES ?? true,
     PROMPT_TEMPLATE: CONFIG.PROMPT_TEMPLATE || 'Please translate the following text from $_{SOURCE} to $_{TARGET}:\n\n$_{TEXT}',
+    PROMPT_TEMPLATE_AUTO: CONFIG.PROMPT_TEMPLATE_AUTO || '',
+    PROMPT_BASE_FIELD_AUTO: CONFIG.PROMPT_BASE_FIELD_AUTO || '',
+    PROMPT_BASE_AI_BATCH_AUTO: CONFIG.PROMPT_BASE_AI_BATCH_AUTO || '',
+    PROMPT_BASE_AI_FOLLOWUP_AUTO: CONFIG.PROMPT_BASE_AI_FOLLOWUP_AUTO || '',
     API_KEY: CONFIG.API_KEY || '',
+    OPENAI_API_KEY: CONFIG.OPENAI_API_KEY || '',
+    OPENAI_API_URL: CONFIG.OPENAI_API_URL || '',
+    OPENAI_API_MODEL: CONFIG.OPENAI_API_MODEL || 'gpt-4o',
+    OPENAI_MODELS: CONFIG.OPENAI_MODELS || [],
+    OPENROUTER_API_KEY: CONFIG.OPENROUTER_API_KEY || '',
+    OPENROUTER_API_URL: CONFIG.OPENROUTER_API_URL || '',
+    OPENROUTER_API_MODEL: CONFIG.OPENROUTER_API_MODEL || 'openai/gpt-4o',
+    OPENROUTER_MODELS: CONFIG.OPENROUTER_MODELS || [],
+    DEEPSEEK_API_KEY: CONFIG.DEEPSEEK_API_KEY || '',
+    DEEPSEEK_API_URL: CONFIG.DEEPSEEK_API_URL || '',
+    DEEPSEEK_API_MODEL: CONFIG.DEEPSEEK_API_MODEL || 'deepseek-chat',
+    DEEPSEEK_MODELS: CONFIG.DEEPSEEK_MODELS || [],
     GEMINI_API_KEY: CONFIG.GEMINI_API_KEY || '',
     GEMINI_API_URL: CONFIG.GEMINI_API_URL || '',
     GEMINI_MODEL: CONFIG.GEMINI_MODEL || 'gemini-2.5-flash',
+    GEMINI_MODELS: CONFIG.GEMINI_MODELS || [],
     GEMINI_THINKING_ENABLED: CONFIG.GEMINI_THINKING_ENABLED ?? false,
-    LINGVA_API_URL: CONFIG.LINGVA_API_URL || 'https://lingva.ml',
-    WEBAI_API_URL: CONFIG.WEBAI_API_URL || 'http://localhost:6969/translate',
-    WEBAI_API_MODEL: CONFIG.WEBAI_API_MODEL || 'gemini-2.5-flash',
-    OPENAI_API_KEY: CONFIG.OPENAI_API_KEY || '',
-    OPENAI_API_MODEL: CONFIG.OPENAI_API_MODEL || 'gpt-4o',
-    OPENROUTER_API_KEY: CONFIG.OPENROUTER_API_KEY || '',
-    OPENROUTER_API_MODEL: CONFIG.OPENROUTER_API_MODEL || 'openai/gpt-4o',
-    DEEPSEEK_API_KEY: CONFIG.DEEPSEEK_API_KEY || '',
-    DEEPSEEK_API_MODEL: CONFIG.DEEPSEEK_API_MODEL || 'deepseek-chat',
+    LINGVA_API_URL: CONFIG.LINGVA_API_URL || '',
     CUSTOM_API_URL: CONFIG.CUSTOM_API_URL || '',
     CUSTOM_API_KEY: CONFIG.CUSTOM_API_KEY || '',
     CUSTOM_API_MODEL: CONFIG.CUSTOM_API_MODEL || '',
+    WEBAI_API_URL: CONFIG.WEBAI_API_URL || '',
+    WEBAI_API_MODEL: CONFIG.WEBAI_API_MODEL || '',
     // DeepL Settings
     DEEPL_API_KEY: CONFIG.DEEPL_API_KEY || '',
     DEEPL_API_TIER: CONFIG.DEEPL_API_TIER || 'free',
@@ -60,12 +80,17 @@ function getDefaultSettings() {
     // browser Translation API Settings
     BROWSER_TRANSLATE_ENABLED: CONFIG.BROWSER_TRANSLATE_ENABLED ?? true,
     BROWSER_TRANSLATE_AUTO_DOWNLOAD: CONFIG.BROWSER_TRANSLATE_AUTO_DOWNLOAD ?? true,
-    SHOW_DESKTOP_FAB: CONFIG.SHOW_DESKTOP_FAB ?? false,
+    TTS_ENGINE: CONFIG.TTS_ENGINE || TTS_ENGINES.EDGE,
+    TTS_FALLBACK_ENABLED: CONFIG.TTS_FALLBACK_ENABLED ?? true,
+    TTS_AUTO_DETECT_ENABLED: CONFIG.TTS_AUTO_DETECT_ENABLED ?? true,
+    SHOW_DESKTOP_FAB: CONFIG.SHOW_DESKTOP_FAB ?? true,
+    SHOW_MOBILE_FAB: CONFIG.SHOW_MOBILE_FAB ?? true,
     TRANSLATE_ON_TEXT_FIELDS: CONFIG.TRANSLATE_ON_TEXT_FIELDS ?? false,
     ENABLE_SHORTCUT_FOR_TEXT_FIELDS: CONFIG.ENABLE_SHORTCUT_FOR_TEXT_FIELDS ?? true,
     TEXT_FIELD_SHORTCUT: CONFIG.TEXT_FIELD_SHORTCUT || 'Ctrl+/',
     TRANSLATE_WITH_SELECT_ELEMENT: CONFIG.TRANSLATE_WITH_SELECT_ELEMENT ?? true,
-    TRANSLATE_ON_TEXT_SELECTION: CONFIG.TRANSLATE_ON_TEXT_SELECTION ?? true,
+    SELECT_ELEMENT_SHOW_ORIGINAL_ON_HOVER: CONFIG.SELECT_ELEMENT_SHOW_ORIGINAL_ON_HOVER ?? false, // نمایش متن اصلی هنگام hover در حالت انتخاب المان
+    TRANSLATE_ON_TEXT_SELECTION: CONFIG.TRANSLATE_ON_TEXT_SELECTION,
     REQUIRE_CTRL_FOR_TEXT_SELECTION: CONFIG.REQUIRE_CTRL_FOR_TEXT_SELECTION ?? false,
     ENABLE_DICTIONARY: CONFIG.ENABLE_DICTIONARY ?? true,
     ENABLE_SCREEN_CAPTURE: CONFIG.ENABLE_SCREEN_CAPTURE ?? true,
@@ -74,6 +99,7 @@ function getDefaultSettings() {
     MOBILE_UI_MODE: CONFIG.MOBILE_UI_MODE || MOBILE_CONSTANTS.UI_MODE.AUTO,
     MOBILE_PAGE_TRANSLATION_AUTO_CLOSE: CONFIG.MOBILE_PAGE_TRANSLATION_AUTO_CLOSE ?? false,
     DEBUG_MODE: CONFIG.DEBUG_MODE ?? false,
+    COMPONENT_LOG_LEVELS: CONFIG.COMPONENT_LOG_LEVELS || {},
     EXCLUDED_SITES: CONFIG.EXCLUDED_SITES || [],
     // Proxy Settings
     PROXY_ENABLED: CONFIG.PROXY_ENABLED ?? false,
@@ -99,6 +125,31 @@ function getDefaultSettings() {
     WHOLE_PAGE_ROOT_MARGIN: CONFIG.WHOLE_PAGE_ROOT_MARGIN || '10px',
     WHOLE_PAGE_PROGRESS_UPDATE_INTERVAL: CONFIG.WHOLE_PAGE_PROGRESS_UPDATE_INTERVAL || 100,
     WHOLE_PAGE_SHOW_ORIGINAL_ON_HOVER: CONFIG.WHOLE_PAGE_SHOW_ORIGINAL_ON_HOVER ?? false,
+    WHOLE_PAGE_TRANSLATE_AFTER_SCROLL_STOP: CONFIG.WHOLE_PAGE_TRANSLATE_AFTER_SCROLL_STOP ?? false,
+    WHOLE_PAGE_SCROLL_STOP_DELAY: CONFIG.WHOLE_PAGE_SCROLL_STOP_DELAY || 500,
+    // AI Optimization Settings
+    AI_CONTEXT_TRANSLATION_ENABLED: CONFIG.AI_CONTEXT_TRANSLATION_ENABLED ?? true,
+    AI_CONVERSATION_HISTORY_ENABLED: CONFIG.AI_CONVERSATION_HISTORY_ENABLED ?? false,
+    OPTIMIZATION_LEVEL: CONFIG.OPTIMIZATION_LEVEL || 3,
+    PROVIDER_OPTIMIZATION_LEVELS: CONFIG.PROVIDER_OPTIMIZATION_LEVELS || {},
+    BILINGUAL_TRANSLATION: CONFIG.BILINGUAL_TRANSLATION ?? true,
+    BILINGUAL_TRANSLATION_MODES: CONFIG.BILINGUAL_TRANSLATION_MODES || {
+      [TranslationMode.Popup_Translate]: true,
+      [TranslationMode.Sidepanel_Translate]: true,
+      [TranslationMode.Select_Element]: true,
+      [TranslationMode.Field]: true,
+      [TranslationMode.Selection]: true,
+      [TranslationMode.Page]: false,
+      [TranslationMode.Dictionary_Translation]: true,
+      [TranslationMode.ScreenCapture]: true
+    },
+    CONTEXT_MENU_VISIBILITY: CONFIG.CONTEXT_MENU_VISIBILITY || {
+      PAGE_CONTEXT_SELECT_ELEMENT: true,
+      ACTION_CONTEXT_SELECT_ELEMENT: true,
+      ACTION_CONTEXT_OPTIONS: true,
+      ACTION_CONTEXT_SHORTCUTS: true,
+      ACTION_CONTEXT_HELP: true
+    },
     translationHistory: []
   };
 }
@@ -111,6 +162,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const isLoading = ref(false)
   const isInitialized = ref(false)
   const isSaving = ref(false)
+  const isSettingsValid = ref(true) // Global validation state for options UI
   
   // Getters
   const isDarkTheme = computed(() => {
@@ -168,7 +220,11 @@ export const useSettingsStore = defineStore('settings', () => {
         
         return current;
       } catch (error) {
-        logger.error('Failed to load settings:', error);
+        if (ExtensionContextManager.isContextError(error)) {
+          ExtensionContextManager.handleContextError(error, 'settings-store-load');
+        } else {
+          logger.error('Failed to load settings:', error);
+        }
         throw error;
       } finally {
         isLoading.value = false;
@@ -198,10 +254,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const sanitizeSettings = () => {
     const s = settings.value;
     
-    // 1. FAB Consistency: If FAB is disabled, we can't use it for translation trigger.
+    // 1. FAB Consistency: If BOTH FABs are disabled, we can't use it for translation trigger.
     // Fallback to ON_CLICK (Show icon) to ensure user has a way to translate.
-    if (s.SHOW_DESKTOP_FAB === false && s.selectionTranslationMode === SelectionTranslationMode.ON_FAB_CLICK) {
-      logger.info('Sanitizing settings: FAB disabled, falling back selectionTranslationMode to ON_CLICK');
+    if (s.SHOW_DESKTOP_FAB === false && s.SHOW_MOBILE_FAB === false && s.selectionTranslationMode === SelectionTranslationMode.ON_FAB_CLICK) {
+      logger.info('Sanitizing settings: Both FABs disabled, falling back selectionTranslationMode to ON_CLICK');
       s.selectionTranslationMode = SelectionTranslationMode.ON_CLICK;
     }
     
@@ -218,7 +274,11 @@ export const useSettingsStore = defineStore('settings', () => {
       await storageManager.set(settings.value);
       return true;
     } catch (error) {
-      logger.error('Failed to save all settings:', error);
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'settings-store-save');
+      } else {
+        logger.error('Failed to save all settings:', error);
+      }
       throw error;
     } finally {
       isSaving.value = false;
@@ -234,10 +294,31 @@ export const useSettingsStore = defineStore('settings', () => {
   const updateSettingAndPersist = async (key, value) => {
     try {
       settings.value[key] = value // Update local state
-      await storageManager.set({ [key]: value }) // Persist immediately
+      
+      const updates = { [key]: value };
+
+      // SMART CLEANUP: If Debug Mode is disabled while Mock provider is active, 
+      // automatically switch to the system default provider.
+      if (key === 'DEBUG_MODE' && value === false) {
+        const currentApi = settings.value['TRANSLATION_API'];
+        if (currentApi === 'mock') {
+          const defaultApi = CONFIG.TRANSLATION_API || 'googlev2';
+          
+          settings.value['TRANSLATION_API'] = defaultApi;
+          updates['TRANSLATION_API'] = defaultApi;
+          
+          logger.info(`Debug mode disabled while Mock was active. Reverting provider to default: ${defaultApi}`);
+        }
+      }
+
+      await storageManager.set(updates) // Persist all changes
       return true
     } catch (error) {
-      logger.error(`Failed to update and persist setting ${key}:`, error)
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, `settings-store-update-${key}`);
+      } else {
+        logger.error(`Failed to update and persist setting ${key}:`, error);
+      }
       throw error
     }
   }
@@ -252,7 +333,11 @@ export const useSettingsStore = defineStore('settings', () => {
       
       return true
     } catch (error) {
-      logger.error('Failed to update multiple settings:', error)
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'settings-store-update-multiple');
+      } else {
+        logger.error('Failed to update multiple settings:', error);
+      }
       throw error
     }
   }
@@ -267,7 +352,11 @@ export const useSettingsStore = defineStore('settings', () => {
       await saveAllSettings(true);
       return true;
     } catch (error) {
-      logger.error('Failed to reset settings:', error);
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'settings-store-reset');
+      } else {
+        logger.error('Failed to reset settings:', error);
+      }
       throw error;
     }
   }
@@ -298,7 +387,11 @@ export const useSettingsStore = defineStore('settings', () => {
         _version: version
       };
     } catch (error) {
-      logger.error('Failed to export settings:', error);
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'settings-store-export');
+      } else {
+        logger.error('Failed to export settings:', error);
+      }
       throw error;
     }
   }
@@ -342,14 +435,6 @@ export const useSettingsStore = defineStore('settings', () => {
       Object.keys(settings.value).forEach(k => delete settings.value[k]);
       Object.assign(settings.value, mergedSettings);
 
-      // Normalize possible empty regex placeholders
-      if (typeof settings.value.RTL_REGEX === 'object' && settings.value.RTL_REGEX !== null && Object.keys(settings.value.RTL_REGEX).length === 0) {
-        settings.value.RTL_REGEX = CONFIG.RTL_REGEX;
-      }
-      if (typeof settings.value.PERSIAN_REGEX === 'object' && settings.value.PERSIAN_REGEX !== null && Object.keys(settings.value.PERSIAN_REGEX).length === 0) {
-        settings.value.PERSIAN_REGEX = CONFIG.PERSIAN_REGEX;
-      }
-
       await saveAllSettings();
 
       // Re-setup storage listener after import is complete
@@ -363,7 +448,11 @@ export const useSettingsStore = defineStore('settings', () => {
       }
       return true;
     } catch (error) {
-      logger.error('[Import] Failed:', error);
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'settings-store-import');
+      } else {
+        logger.error('[Import] Failed:', error);
+      }
       // Re-setup storage listener on error
       await setupStorageListener();
       throw error;
@@ -399,9 +488,13 @@ export const useSettingsStore = defineStore('settings', () => {
       }
     }
     
-    // Validate prompt template
+    // Validate prompt templates
     if (!settings.value.PROMPT_TEMPLATE || !settings.value.PROMPT_TEMPLATE.includes('$_{TEXT}')) {
       errors.push('Prompt template must include $_{TEXT} placeholder')
+    }
+    
+    if (settings.value.PROMPT_TEMPLATE_AUTO && !settings.value.PROMPT_TEMPLATE_AUTO.includes('$_{TEXT}')) {
+      errors.push('Auto prompt template must include $_{TEXT} placeholder if provided')
     }
     
     return {
@@ -434,6 +527,11 @@ export const useSettingsStore = defineStore('settings', () => {
       if (key === 'DEBUG_MODE' && oldValue !== newValue) {
         handleDebugModeChange(Boolean(newValue))
       }
+
+      // Special handling for COMPONENT_LOG_LEVELS - sync with logging system
+      if (key === 'COMPONENT_LOG_LEVELS' && JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
+        handleComponentLogLevelsChange(newValue)
+      }
     }
   }
 
@@ -452,6 +550,21 @@ export const useSettingsStore = defineStore('settings', () => {
       })
     } catch (error) {
       logger.warn('[SettingsStore] Failed to sync DEBUG_MODE with logging system:', error)
+    }
+  }
+
+  // Handle COMPONENT_LOG_LEVELS changes and sync with logging system
+  const handleComponentLogLevelsChange = async (levels) => {
+    try {
+      const { debugModeBridge } = await import('@/shared/logging/DebugModeBridge.js')
+      debugModeBridge.handleComponentLogLevelsChange(levels)
+      
+      logger.info('[SettingsStore] COMPONENT_LOG_LEVELS changed and synced with logging system', {
+        levels,
+        source: 'storage_change'
+      })
+    } catch (error) {
+      logger.warn('[SettingsStore] Failed to sync COMPONENT_LOG_LEVELS with logging system:', error)
     }
   }
 
@@ -474,7 +587,11 @@ export const useSettingsStore = defineStore('settings', () => {
       storageListener = null;
   if (settings.value.DEBUG_MODE) logger.info('[SettingsStore] Listener cleaned up');
     } catch (error) {
-      logger.error('[SettingsStore] Error cleaning up storage listener:', error);
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'settings-store-cleanup');
+      } else {
+        logger.error('[SettingsStore] Error cleaning up storage listener:', error);
+      }
     }
   }
 
@@ -510,6 +627,7 @@ export const useSettingsStore = defineStore('settings', () => {
     isLoading,
     isInitialized,
     isSaving,
+    isSettingsValid,
     
     // Getters
     isDarkTheme,

@@ -1,0 +1,114 @@
+@use "@/assets/styles/base/variables" as *;
+
+/* Main popup wrapper: Handles centering on large screens */
+.popup-wrapper {
+  width: 100%;
+  width: 100vw;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg-color);
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* Center horizontally */
+  justify-content: flex-start; /* Keep it at the top vertically */
+  font-family: "Vazirmatn", "Segoe UI", sans-serif;
+  color: var(--text-color);
+  overflow-x: hidden;
+}
+/* Content container: Fully Fluid for all devices */
+.popup-content-container, .popup-container {
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-color);
+  box-shadow: none;
+  position: relative;
+  box-sizing: border-box;
+  margin: 0;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+/* Header section remains visible during scroll */
+.sticky-header {
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--bg-color);
+  border-bottom: 1px solid var(--header-border-color);
+}
+
+/* Main form area that can scroll if content exceeds viewport */
+.translation-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+.loading-container, .error-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  gap: 1rem;
+  flex: 1;
+}
+
+.loading-text {
+  font-size: 14px;
+  opacity: 0.7;
+}
+
+.error-message {
+  color: var(--text-color);
+  opacity: 0.8;
+  margin: 0;
+  text-align: center;
+}
+
+.retry-button {
+  padding: 0.5rem 1rem;
+  background-color: var(--toolbar-link-color);
+  color: var(--bg-color);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.popup-content-container .language-controls {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 6px 10px !important;
+  gap: 8px !important;
+  background: var(--language-controls-bg-color);
+  min-height: 40px !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  overflow: visible !important;
+}
+
+.popup-content-container .language-controls > :first-child {
+  flex-shrink: 0 !important;
+}
+
+.popup-content-container .language-controls > :last-child {
+  flex: 1 !important;
+  min-width: 0 !important;
+}
+
+/* Maintain single row even on small screens for the main popup controls */
+@media (max-width: 340px) {
+  .popup-content-container .language-controls {
+    gap: 4px !important;
+    padding: 4px 6px !important;
+  }
+}

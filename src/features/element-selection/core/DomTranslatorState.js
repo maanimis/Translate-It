@@ -5,17 +5,30 @@
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { pageEventBus } from '@/core/PageEventBus.js';
-import DOMPurify from 'dompurify';
+import { restoreElementDirection } from '@/utils/dom/DomDirectionManager.js';
+import { PAGE_TRANSLATION_ATTRIBUTES } from '@/features/page-translation/PageTranslationConstants.js';
 
-export const globalSelectElementState = {
-  translationHistory: [], // Store all translations for proper revert
-  isTranslating: false,
+// Global translation state registry to ensure singleton behavior across chunks
+const getGlobalState = () => {
+  if (typeof window !== 'undefined') {
+    if (!window.__selectElementTranslationState__) {
+      window.__selectElementTranslationState__ = {
+        translationHistory: [], // Store all translations for proper revert
+        isTranslating: false,
+        currentTranslation: null
+      };
+    }
+    return window.__selectElementTranslationState__;
+  }
+  // Fallback for non-browser environments (tests/SSR)
+  return { 
+    translationHistory: [], 
+    isTranslating: false,
+    currentTranslation: null
+  };
 };
 
-// Make it available globally for legacy RevertHandler access if needed
-if (typeof window !== 'undefined') {
-  window.__selectElementTranslationState__ = globalSelectElementState;
-}
+export const globalSelectElementState = getGlobalState();
 
 /**
  * Get the global Select Element translation state
@@ -25,11 +38,6 @@ export function getSelectElementTranslationState() {
   return globalSelectElementState;
 }
 
-/**
- * Global function to revert ALL Select Element translations
- * Can be called independently of the Adapter class
- * @returns {Promise<number>} Number of translations reverted
- */
 export async function revertSelectElementTranslation() {
   if (!globalSelectElementState.translationHistory || globalSelectElementState.translationHistory.length === 0) {
     return 0;
@@ -45,12 +53,7 @@ export async function revertSelectElementTranslation() {
     for (const translation of translationsToRevert) {
       const { 
         element, 
-        originalHTML, 
-        originalTextNodesData, 
-        originalDir, 
-        originalStyleDirection,
-        originalTextAlign, 
-        originalDataDir 
+        originalTextNodesData
       } = translation;
 
       // Skip if element no longer exists in DOM
@@ -60,48 +63,37 @@ export async function revertSelectElementTranslation() {
         continue;
       }
 
-      // 1. Restore content (innerHTML is most reliable for restoring attributes/styles of children)
-      if (originalHTML && element) {
-        // Safe: clear content first (using literal empty string)
-        element.innerHTML = '';
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(DOMPurify.sanitize(originalHTML), 'text/html');
-        element.append(...doc.body.childNodes);
-        revertedCount++;
-      } else if (originalTextNodesData && originalTextNodesData.length > 0) {
-        // Fallback to surgical text node restoration if HTML is not available
+      // 1. Restore content - SURGICAL RESTORATION ONLY
+      // We NEVER use innerHTML for active page elements as it destroys event listeners, 
+      // breaks SPAs, and causes massive layout recalculations.
+      if (originalTextNodesData && originalTextNodesData.length > 0) {
+        let restoredNodes = 0;
         originalTextNodesData.forEach(({ node, originalText }) => {
-          if (node && node.parentNode) {
+          // Verify the node still exists and is attached to the document
+          if (node && node.parentNode && document.documentElement.contains(node)) {
             node.nodeValue = originalText;
+            restoredNodes++;
           }
         });
-        revertedCount++;
+        
+        if (restoredNodes > 0) {
+          revertedCount++;
+        } else {
+          logger.debug('No valid text nodes found to restore for this element');
+        }
+      } else {
+        logger.debug('Missing originalTextNodesData for surgical revert. Skipping content restoration to preserve page integrity.');
       }
 
-      // 2. Restore root element's own direction and styles
+      // 2. Restore direction and styles for the element, its descendants, and its ancestors.
       if (element) {
-        // Restore dir attribute
-        if (originalDir !== null && originalDir !== undefined) {
-          element.setAttribute('dir', originalDir);
-        } else {
-          element.removeAttribute('dir');
-        }
+        // Remove tracking attribute for hover tooltip from element and ALL descendants
+        const attr = PAGE_TRANSLATION_ATTRIBUTES.HAS_ORIGINAL;
+        element.removeAttribute(attr);
+        element.querySelectorAll(`[${attr}]`).forEach(el => el.removeAttribute(attr));
 
-        // Restore CSS direction
-        element.style.direction = originalStyleDirection || '';
-
-        // Restore data-translate-dir
-        if (originalDataDir !== null && originalDataDir !== undefined) {
-          element.setAttribute('data-translate-dir', originalDataDir);
-        } else {
-          element.removeAttribute('data-translate-dir');
-        }
-
-        // Restore text alignment
-        element.style.textAlign = originalTextAlign || '';
-
-        // NOTE: We no longer need to manually clean up children's dir/textAlign
-        // because restoring element.innerHTML already replaced them with their original state.
+        // This function now recursively cleans ancestors up to the body
+        restoreElementDirection(element);
 
         pageEventBus.emit('hide-translation', { element });
       }

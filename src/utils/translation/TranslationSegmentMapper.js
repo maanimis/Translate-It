@@ -6,167 +6,177 @@
 
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
+import { DEFAULT_TEXT_DELIMITER, ALTERNATIVE_DELIMITERS } from '@/features/translation/core/ProviderConfigurations.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.TRANSLATION, 'SegmentMapper');
 
 export class TranslationSegmentMapper {
   /**
-   * Standard delimiter for separating text segments
+   * Standard delimiter for separating text segments.
+   * Using a more resilient pattern that traditional providers are less likely to merge.
    */
-  static STANDARD_DELIMITER = '\n\n---\n\n';
+  static STANDARD_DELIMITER = DEFAULT_TEXT_DELIMITER;
 
   /**
    * Enhanced mapping: attempt to reconstruct original segments from translated text
-   * @param {string} translatedText - The complete translated text
-   * @param {string[]} originalSegments - Original segments that were sent for translation
-   * @param {string} delimiter - The delimiter that should separate segments
-   * @param {string} providerName - Name of the provider for logging
-   * @returns {string[]} - Mapped segments matching original count
    */
   static mapTranslationToOriginalSegments(translatedText, originalSegments, delimiter, providerName = 'Unknown') {
+    const scrub = (text) => this.removeAllDelimiters(text, delimiter);
+
     if (!translatedText || !Array.isArray(originalSegments)) {
-      return [translatedText];
+      return [typeof translatedText === 'string' ? scrub(translatedText) : translatedText];
     }
 
-    // First, try standard splitting
+    // 0. Handle unified response object from ProviderCoordinator
+    if (typeof translatedText === 'object' && !Array.isArray(translatedText) && translatedText.translatedText !== undefined) {
+      translatedText = translatedText.translatedText;
+    }
+
+    if (originalSegments.length <= 1) {
+      const result = Array.isArray(translatedText) ? translatedText : [translatedText];
+      return result.map(s => typeof s === 'string' ? scrub(s) : s);
+    }
+
+    // 0.5. Normalize common delimiter mangling (e.g. "[[ --- ]]" or "[[ ... ]]")
+    if (typeof translatedText === 'string') {
+      // Selective Regex: Matches [[ only when it contains delimiter-like characters (dashes, dots, etc.)
+      // This preserves user content like [[Reference]] while allowing normalization of mangled delimiters.
+      const bracketPattern = /[\s\u200B-\u200D\u200E\u200F\uFEFF]*\[\[[\s.——–…ـ·・-]+\]\][\s\u200B-\u200D\u200E\u200F\uFEFF]*/g;
+      if (bracketPattern.test(translatedText)) {
+        translatedText = translatedText.replace(bracketPattern, delimiter);
+      }
+    }
+
+    // 0.6. Handle cases where translatedText is already an array
+    if (Array.isArray(translatedText)) {
+      if (translatedText.length === originalSegments.length) {
+        return translatedText.map(s => typeof s === 'string' ? scrub(s) : s);
+      }
+      translatedText = translatedText.join('\n');
+    }
+
+    // 1. Try standard splitting
     let segments = translatedText.split(delimiter);
-
-    // If standard splitting works, return it
     if (segments.length === originalSegments.length) {
-      return segments;
+      return segments.map(s => scrub(s).trim());
     }
 
-    // Enhanced fallback: try to split by alternative delimiters and patterns
-    const alternatives = [
-      delimiter.trim(),
-      '\n\n---\n',                    // Missing newline
-      '\n---\n\n',                    // Missing newline on other side
-      '---',                         // Just the separator
-      '\n\n',                         // Double newlines
-      '\n',                          // Single newlines (last resort)
-    ];
-
-    for (const altDelim of alternatives) {
+    // 2. Try alternative common delimiters
+    for (const altDelim of ALTERNATIVE_DELIMITERS) {
       const testSegments = translatedText.split(altDelim);
       if (testSegments.length === originalSegments.length) {
         logger.info(`[${providerName}] Found working alternative delimiter: "${altDelim}"`);
-        return testSegments;
+        return testSegments.map(s => scrub(s).trim());
       }
     }
 
-    // Advanced fallback: map based on whitespace and empty segments
-    const emptySegmentIndices = originalSegments
-      .map((seg, idx) => seg.trim() === '' ? idx : -1)
-      .filter(idx => idx !== -1);
-
-    if (emptySegmentIndices.length > 0) {
-      // If we have empty segments in original, try to map them
-      const nonEmptyOriginals = originalSegments.filter(seg => seg.trim() !== '');
-      const nonEmptyTranslated = segments.filter(seg => seg.trim() !== '');
-
-      if (nonEmptyTranslated.length === nonEmptyOriginals.length) {
-        // Reconstruct full array with empty segments
-        const result = new Array(originalSegments.length);
-        let translatedIdx = 0;
-
-        for (let i = 0; i < originalSegments.length; i++) {
-          if (originalSegments[i].trim() === '') {
-            result[i] = originalSegments[i]; // Keep original empty/whitespace
-          } else {
-            result[i] = nonEmptyTranslated[translatedIdx++];
-          }
-        }
-
-        logger.info(`[${providerName}] Successfully reconstructed segments with empty segment mapping`);
-        return result;
-      }
-    }
-
-    // Last resort: split by pattern matching original structure
-    try {
-      const result = this.splitByPattern(translatedText, originalSegments, providerName);
-      if (result.length === originalSegments.length) {
-        logger.info(`[${providerName}] Successfully split by pattern matching`);
-        return result;
-      }
-    } catch (error) {
-      logger.warn(`[${providerName}] Pattern splitting failed:`, error);
-    }
-
-    // If all else fails, return as single segment
-    return [translatedText];
-  }
-
-  /**
-   * Split translation text by matching patterns from original segments
-   * @param {string} translatedText - Complete translated text
-   * @param {string[]} originalSegments - Original segments for pattern reference
-   * @param {string} providerName - Name of the provider for logging
-   * @returns {string[]} - Split segments
-   */
-  static splitByPattern(translatedText, originalSegments, providerName = 'Unknown') {
-    const result = [];
-    let delimiterPattern = new RegExp(`(\n\n---\n\n|\\n\\n---\\n|\\n---\\n\n|---|\\n\\n|\\n)`, 'g');
-
-    logger.debug(`[${providerName}] Splitting translated text by pattern matching`);
-
-    // Try to find delimiters in translated text
-    const matches = [...translatedText.matchAll(delimiterPattern)];
-
-    if (matches.length === originalSegments.length - 1) {
-      // Extract segments between delimiters
-      let lastIndex = 0;
-      for (let i = 0; i < matches.length; i++) {
-        const match = matches[i];
-        const segment = translatedText.substring(lastIndex, match.index);
-        result.push(segment);
-        lastIndex = match.index + match[0].length;
-      }
-      result.push(translatedText.substring(lastIndex)); // Last segment
+    // 3. Handle Empty/Whitespace segments preservation
+    // This is critical for social media like Twitter where icons/dots are separate nodes
+    const nonEmptyOriginals = originalSegments.map((s, i) => ({ text: s, id: i })).filter(s => s.text.trim() !== '');
+    
+    // If we only have 1 non-empty segment, map everything to it
+    if (nonEmptyOriginals.length === 1) {
+      const result = originalSegments.map(s => s.trim() === '' ? s : '');
+      result[nonEmptyOriginals[0].id] = translatedText.trim();
       return result;
     }
-
-    // Fallback: try to estimate segment boundaries based on length ratios
-    const totalLength = translatedText.length;
-    const originalLengths = originalSegments.map(seg => seg.length);
-    const totalOriginalLength = originalLengths.reduce((a, b) => a + b, 0);
-
-    let currentIndex = 0;
-    for (let i = 0; i < originalSegments.length - 1; i++) {
-      const expectedLength = Math.round((originalLengths[i] / totalOriginalLength) * totalLength);
-      const segment = translatedText.substring(currentIndex, currentIndex + expectedLength);
-      result.push(segment);
-      currentIndex += expectedLength;
+    // 4. Last Resort: Smart Word-Based Distribution (Replacing the broken character-ratio split)
+    try {
+      // CRITICAL: Before word-ratio splitting, remove ALL possible delimiters from the text
+      // to avoid them appearing as "words" in the output segments.
+      const cleanedText = this.removeAllDelimiters(translatedText, delimiter);
+      return this.splitByWordRatio(cleanedText, originalSegments, providerName);
+    } catch (error) {
+      logger.warn(`[${providerName}] Smart splitting failed:`, error);
+      // Absolute fallback: first segment gets everything, others get original
+      return originalSegments.map((s, i) => i === 0 ? translatedText : s);
     }
-    result.push(translatedText.substring(currentIndex)); // Last segment
-
-    return result;
   }
 
   /**
-   * Create a simple alternative fallback for segment mapping
-   * @param {string} translatedText - The complete translated text
-   * @param {string[]} originalSegments - Original segments that were sent for translation
-   * @param {string} providerName - Name of the provider for logging
-   * @returns {string[]} - Mapped segments
+   * Utility to remove all known delimiter patterns from text before fallback splitting
+   * @param {string} text - The text to clean
+   * @param {string} primaryDelimiter - The primary delimiter used in the current request
+   * @returns {string} - Cleaned text
    */
-  static createAlternativeFallback(translatedText, originalSegments, providerName = 'Unknown') {
-    // Try splitting by "---" (delimiter might have been translated)
-    const altSplit1 = translatedText.split(/\n*---\n*/);
-    if (altSplit1.length === originalSegments.length) {
-      logger.debug(`[${providerName}] Successfully recovered segments using alternative splitting`);
-      return altSplit1.map(t => t.trim());
+  static removeAllDelimiters(text, primaryDelimiter) {
+    if (!text) return "";
+
+    // 1. Aggressive Regex: Matches [[ with anything inside ]] and ALL surrounding hidden Unicode marks/spaces
+    // Selective Regex: Matches [[ only when it contains delimiter-like characters (dashes, dots, etc.)
+    // This preserves user content like [[Reference]] while scrubbing [[ --- ]]
+    const BIDI_ARTIFACT_REGEX = /[\s\u200B-\u200D\u200E\u200F\uFEFF]*\[\[[\s.——–…ـ·・-]+\]\][\s\u200B-\u200D\u200E\u200F\uFEFF]*/g;
+    let cleaned = text.replace(BIDI_ARTIFACT_REGEX, ' ');
+
+    // 2. Remove standard, primary, and common alternative delimiters
+    const delimitersToRemove = new Set([
+      primaryDelimiter,
+      DEFAULT_TEXT_DELIMITER,
+      ...ALTERNATIVE_DELIMITERS
+    ]);
+
+    for (const delim of delimitersToRemove) {
+      if (!delim || delim.trim() === '') continue;
+      const escaped = delim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      cleaned = cleaned.split(new RegExp(escaped, 'g')).join(' ');
     }
 
-    // Try splitting by double newlines
-    const altSplit2 = translatedText.split(/\n\n+/);
-    if (altSplit2.length === originalSegments.length) {
-      logger.debug(`[${providerName}] Successfully recovered segments using newline splitting`);
-      return altSplit2.map(t => t.trim());
+    // 3. Clean up isolated bracket remnants and delimiter fragments at word boundaries
+    // Includes artifacts from all major providers: Bing (—–…ـ), Google (·・), and common dashes/dots
+    cleaned = cleaned.replace(/\[\[[\s.——–…ـ·・-]+/, ' ');
+    cleaned = cleaned.replace(/[\s.——–…ـ·・-]+\]\]/, ' ');
+    cleaned = cleaned.replace(/\s[\]——–…ـ·・-]+\s/g, ' ');
+    cleaned = cleaned.replace(/\s[[——–…ـ·・-]+\s/g, ' ');
+
+    // 4. Final safety scrub using the BIDI regex again (handles cases where delimiters merged)
+    cleaned = cleaned.replace(BIDI_ARTIFACT_REGEX, ' ');
+
+    // 5. Normalize whitespace
+    return cleaned.replace(/\s+/g, ' ').trim();
+  }
+
+/**
+* Split translated text based on word boundaries and length ratios.
+...
+   * Prevents "half-word" splitting like "س ا ۸ عت" by respecting word boundaries.
+   * @private
+   */
+  static splitByWordRatio(translatedText, originalSegments, providerName) {
+    // Ensure we are working with text lengths even if segments are objects (Page Translation mode)
+    const getLength = (s) => (typeof s === 'object' ? (s.t || s.text || "") : String(s || "")).length;
+    const totalOriginalChars = originalSegments.reduce((sum, s) => sum + getLength(s), 0);
+    
+    const words = translatedText.trim().split(/\s+/);
+    
+    if (words.length === 0) return originalSegments.map(() => "");
+
+    const result = new Array(originalSegments.length).fill("");
+    let currentWordIdx = 0;
+
+    for (let i = 0; i < originalSegments.length; i++) {
+      const segText = typeof originalSegments[i] === 'object' ? (originalSegments[i].t || originalSegments[i].text || "") : String(originalSegments[i] || "");
+      
+      if (segText.trim() === "") {
+        result[i] = "";
+        continue;
+      }
+
+      const ratio = getLength(originalSegments[i]) / totalOriginalChars;
+      const targetWordCount = Math.max(1, Math.round(ratio * words.length));
+      
+      const segmentWords = words.slice(currentWordIdx, currentWordIdx + targetWordCount);
+      
+      // If it's the last segment, take all remaining words
+      if (i === originalSegments.length - 1 || (currentWordIdx + targetWordCount >= words.length)) {
+        result[i] = words.slice(currentWordIdx).join(" ");
+        break;
+      }
+
+      result[i] = segmentWords.join(" ");
+      currentWordIdx += targetWordCount;
     }
 
-    // Last resort: distribute text evenly
-    logger.debug(`[${providerName}] Using fallback: returning original text count with empty strings`);
-    return originalSegments.map((_, index) => index === 0 ? translatedText : "");
+    logger.info(`[${providerName}] Used Word-Ratio splitting to preserve word integrity`);
+    return result;
   }
 }

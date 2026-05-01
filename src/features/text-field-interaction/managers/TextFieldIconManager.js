@@ -22,6 +22,15 @@ import { settingsManager } from '@/shared/managers/SettingsManager.js';
 // Singleton instance for TextFieldIconManager
 let textFieldIconManagerInstance = null;
 
+// Global fail-safe listener for cross-bundle communication
+if (typeof window !== 'undefined') {
+  window.addEventListener('text-field-icon-clicked', (event) => {
+    if (textFieldIconManagerInstance && event.detail) {
+      textFieldIconManagerInstance.executeTranslationFromEvent(event.detail);
+    }
+  });
+}
+
 export class TextFieldIconManager extends ResourceTracker {
   constructor(options = {}) {
     super('text-field-icon-manager')
@@ -65,6 +74,56 @@ export class TextFieldIconManager extends ResourceTracker {
     // Store singleton instance
     textFieldIconManagerInstance = this;
     this.logger.debug('TextFieldIconManager singleton created');
+
+    // Register click listener IMMEDIATELY in constructor as well
+    this.addEventListener(pageEventBus, 'text-field-icon-clicked', (detail) => {
+      this.logger.info('Received text-field-icon-clicked event via pageEventBus:', detail);
+      this.executeTranslationFromEvent(detail);
+    });
+  }
+
+  /**
+   * Internal helper to execute translation from an event detail
+   */
+  executeTranslationFromEvent(detail) {
+    if (!detail || !detail.id) return;
+
+    // Find the element associated with this icon ID
+    const iconData = Array.from(this.activeIcons.values()).find(icon => icon.id === detail.id);
+    if (iconData && iconData.targetElement) {
+      this.logger.debug('Triggering translation for element:', iconData.targetElement.tagName);
+
+      if (!this.translationHandler) {
+        this.logger.warn('Translation handler missing, attempting to recover...');
+        this.initializeTranslationHandler().then(() => {
+          if (this.translationHandler) this.executeTranslation(iconData);
+        });
+        return;
+      }
+
+      this.executeTranslation(iconData);
+    }
+  }
+
+  async initializeTranslationHandler() {
+    try {
+      const { getTranslationHandlerInstance } = await import('@/core/InstanceManager.js');
+      this.translationHandler = getTranslationHandlerInstance();
+    } catch (e) {
+      this.logger.error('Failed to recover translation handler', e);
+    }
+  }
+
+  executeTranslation(iconData) {
+    if (this.translationHandler && typeof this.translationHandler.processTranslation_with_CtrlSlash === 'function') {
+      this.translationHandler.processTranslation_with_CtrlSlash({
+        text: iconData.targetElement.value || iconData.targetElement.textContent,
+        target: iconData.targetElement,
+      });
+      this.cleanupElement(iconData.targetElement);
+    } else {
+      this.logger.error('Translation handler invalid or missing processTranslation_with_CtrlSlash');
+    }
   }
 
   // Static method to get singleton instance
@@ -83,13 +142,9 @@ export class TextFieldIconManager extends ResourceTracker {
     }
   }
 
-  /**
-   * Initialize the text field manager
-   * @param {Object} dependencies - Required dependencies
-   */
   initialize(dependencies = {}) {
     if (this.initialized) {
-      this.logger.debug('Already initialized, skipping');
+      this.logger.debug('Already initialized, skipping dependency update');
       return;
     }
 
@@ -101,35 +156,6 @@ export class TextFieldIconManager extends ResourceTracker {
 
     this.initialized = true;
     this.logger.debug('Initialized with dependencies');
-
-    // Listen for icon click events from the UI Host (using ResourceTracker)
-    this.addEventListener(pageEventBus, 'text-field-icon-clicked', (detail) => {
-      this.logger.debug('Received text-field-icon-clicked event:', detail);
-      // Find the element associated with this icon ID
-      const iconData = Array.from(this.activeIcons.values()).find(icon => icon.id === detail.id);
-      if (iconData && iconData.targetElement) {
-        this.logger.debug('Triggering translation for element:', iconData.targetElement.tagName);
-
-        // Debug: Check if translationHandler exists and has the method
-        if (!this.translationHandler) {
-          this.logger.error('Translation handler is not available!');
-          return;
-        }
-
-        if (typeof this.translationHandler.processTranslation_with_CtrlSlash !== 'function') {
-          this.logger.error('processTranslation_with_CtrlSlash method not found on translation handler!');
-          return;
-        }
-
-        // Call the translation handler
-        this.translationHandler.processTranslation_with_CtrlSlash({
-          text: iconData.targetElement.value || iconData.targetElement.textContent,
-          target: iconData.targetElement,
-        });
-        // Immediately clean up the icon after click
-        this.cleanupElement(iconData.targetElement);
-      }
-    });
 
     // Setup settings listeners (only once)
     this.setupSettingsListeners();
@@ -293,7 +319,8 @@ export class TextFieldIconManager extends ResourceTracker {
     }
 
     // Protocol check
-    if (typeof window === 'undefined' || !["http:", "https:"].includes(window.location.protocol)) {
+    // Local files are supported and should follow the same text-field flow as regular web pages.
+    if (typeof window === 'undefined' || !["http:", "https:", "file:"].includes(window.location.protocol)) {
       // Skipping icon creation - Invalid protocol or no window (logged at TRACE level)
       // this.logger.trace('Skipping icon creation: Invalid protocol or no window.');
       return null;
@@ -322,8 +349,18 @@ export class TextFieldIconManager extends ResourceTracker {
 
     // Check if WindowsManager currently has an active icon
     if (this._windowsManagerIconActive) {
-      this.logger.debug('Skipping icon creation: WindowsManager icon is currently active');
-      return false;
+      // Fail-safe: Check if an actual WindowsManager icon exists in the DOM
+      // This prevents the flag from getting stuck if a dismiss event was missed
+      // We specifically look for IDs starting with 'translation-icon-' or the fixed 'translate-it-icon' ID
+      const hasWindowsManagerIcon = !!document.querySelector('[id^="translation-icon-"], #translate-it-icon');
+      
+      if (!hasWindowsManagerIcon) {
+        this.logger.debug('WindowsManager icon flag was stuck, resetting it');
+        this._windowsManagerIconActive = false;
+      } else {
+        this.logger.debug('Skipping icon creation: WindowsManager icon is currently active');
+        return false;
+      }
     }
 
     // Check if another icon is already active
@@ -493,8 +530,18 @@ export class TextFieldIconManager extends ResourceTracker {
 
     // Check if WindowsManager currently has an active icon
     if (this._windowsManagerIconActive) {
-      this.logger.debug('WindowsManager icon is active, skipping TextFieldIcon creation on focus');
-      return null;
+      // Fail-safe: Check if an actual WindowsManager icon exists in the DOM
+      // This prevents the flag from getting stuck if a dismiss event was missed
+      // We specifically look for IDs starting with 'translation-icon-' or the fixed 'translate-it-icon' ID
+      const hasWindowsManagerIcon = !!document.querySelector('[id^="translation-icon-"], #translate-it-icon');
+      
+      if (!hasWindowsManagerIcon) {
+        this.logger.debug('WindowsManager icon flag was stuck, resetting it');
+        this._windowsManagerIconActive = false;
+      } else {
+        this.logger.debug('WindowsManager icon is active, skipping TextFieldIcon creation on focus');
+        return null;
+      }
     }
 
     if (state?.activeTranslateIcon) {

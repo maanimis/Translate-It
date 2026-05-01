@@ -39,7 +39,8 @@
 
 <script setup>
 import { computed } from 'vue'
-import browser from 'webextension-polyfill'
+import './IconButton.scss'
+import ExtensionContextManager from '@/core/extensionContext.js'
 
 // Props
 const props = defineProps({
@@ -89,22 +90,14 @@ const iconSrc = computed(() => {
     return props.icon
   }
 
-  // Use runtime.getURL for extension icons
-  if (browser && browser.runtime && browser.runtime.getURL) {
-    if (props.icon.includes('/')) {
-      // Provider icons like "providers/google.svg"
-      return browser.runtime.getURL(`icons/${props.icon}`)
-    } else {
-      // UI icons like "side-panel.png"
-      return browser.runtime.getURL(`icons/ui/${props.icon}`)
-    }
-  }
-
-  // Fallback for when runtime API is not available
+  // Use ExtensionContextManager.safeGetURL for extension icons
+  // to avoid context invalidation errors during render
   if (props.icon.includes('/')) {
-    return `/assets/icons/${props.icon}`
+    // Provider icons like "providers/google.svg"
+    return ExtensionContextManager.safeGetURL(`icons/${props.icon}`, `/assets/icons/${props.icon}`)
   } else {
-    return `/assets/icons/ui/${props.icon}`
+    // UI icons like "side-panel.png"
+    return ExtensionContextManager.safeGetURL(`icons/ui/${props.icon}`, `/assets/icons/ui/${props.icon}`)
   }
 })
 
@@ -114,63 +107,3 @@ const isInlineIcon = computed(() => props.type === 'inline')
 const isPasteIconSeparate = computed(() => props.type === 'paste-separate')
 const isVoiceTargetIcon = computed(() => props.type === 'voice-target')
 </script>
-
-<style lang="scss" scoped>
-@use "@/assets/styles/base/mixins" as *;
-
-.ti-icon-button {
-  cursor: pointer;
-  transition: opacity 0.2s ease-in-out, filter 0.2s ease-in-out;
-  filter: var(--icon-filter);
-}
-
-.ti-icon-button:hover {
-  opacity: var(--icon-hover-opacity);
-}
-
-/* Toolbar Button Specific Styles */
-.ti-toolbar-button {
-  @include toolbar-button-minimal;
-}
-
-
-.ti-inline-icon {
-  width: 16px;
-  height: 16px;
-  opacity: var(--icon-opacity, 0.6);
-}
-
-.ti-revert-icon {
-  transition: transform 0.4s ease, opacity 0.2s ease-in-out, filter 0.2s ease-in-out;
-}
-
-.ti-revert-icon:hover {
-  transform: rotate(360deg);
-}
-
-.ti-paste-icon-separate {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  direction: ltr; /* Force LTR to maintain consistent positioning */
-  width: 16px;
-  height: 16px;
-}
-
-.ti-toolbar-icon {
-  width: 20px;
-  height: 20px;
-  opacity: var(--icon-opacity, 0.6);
-}
-
-.ti-voice-target-icon {
-  width: 16px !important;
-  height: 16px !important;
-  max-width: 16px !important;
-  max-height: 16px !important;
-}
-
-.ti-paste-icon-separate.ti-hidden-by-clipboard {
-  display: none !important;
-}
-</style>

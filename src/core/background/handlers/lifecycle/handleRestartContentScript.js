@@ -4,6 +4,7 @@ import { ErrorHandler } from '@/shared/error-management/ErrorHandler.js';
 import { ErrorTypes } from '@/shared/error-management/ErrorTypes.js';
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
+import { injectContentScriptsForTab } from '@/core/background/handlers/common/contentScriptInjector.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.CORE, 'handleRestartContentScript');
 
@@ -29,16 +30,13 @@ export async function handleRestartContentScript(message, sender, sendResponse) 
     
     logger.debug(`Restarting content script for tab ${tabId}`);
     
-    // Execute content script reinjection
-    await browser.scripting.executeScript({
-      target: { tabId },
-      files: ['/content-scripts/main.js'] // Main content script entry point
-    });
-    
+    // Reinject the top-frame entry plus all current iframe entries in the tab.
+    const injectionResult = await injectContentScriptsForTab(tabId);
+
     // Reinject CSS if needed
     await browser.scripting.insertCSS({
       target: { tabId },
-      files: ['/styles/content.css']
+      files: ['translate-it.css']
     });
     
     logger.debug(`Content script restarted successfully for tab ${tabId}`);
@@ -46,7 +44,8 @@ export async function handleRestartContentScript(message, sender, sendResponse) 
     sendResponse({ 
       success: true, 
       message: `Content script restarted for tab ${tabId}`,
-      tabId 
+      tabId,
+      iframeInjectedCount: injectionResult.iframeInjectedCount,
     });
     return true;
   } catch (error) {

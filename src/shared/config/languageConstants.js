@@ -21,17 +21,24 @@ export const UI_LOCALE_TO_CODE_MAP = UI_LOCALES.reduce((map, locale) => {
 
 // Standard language name to code mapping
 export const LANGUAGE_NAME_TO_CODE_MAP = {
+  acehnese: "ace",
   afrikaans: "af",
   albanian: "sq",
+  amharic: "am",
   arabic: "ar",
+  armenian: "hy",
   azerbaijani: "az",
   belarusian: "be",
   bengali: "bn",
   bulgarian: "bg",
+  burmese: "my",
   catalan: "ca",
   cebuano: "ceb",
-  "chinese (simplified)": "zh-CN",
-  chinese: "zh-CN",
+  "chinese (simplified)": "zh-cn",
+  chinese: "zh-cn",
+  "chinese (traditional)": "zh-tw",
+  "chinese (classical)": "lzh",
+  cantonese: "yue",
   croatian: "hr",
   czech: "cs",
   danish: "da",
@@ -43,6 +50,8 @@ export const LANGUAGE_NAME_TO_CODE_MAP = {
   filipino: "fil",
   finnish: "fi",
   french: "fr",
+  "gaelic (scottish)": "gd",
+  georgian: "ka",
   german: "de",
   greek: "el",
   hebrew: "he",
@@ -53,7 +62,9 @@ export const LANGUAGE_NAME_TO_CODE_MAP = {
   japanese: "ja",
   kannada: "kn",
   kazakh: "kk",
+  khmer: "km",
   korean: "ko",
+  lao: "lo",
   latvian: "lv",
   lithuanian: "lt",
   malay: "ms",
@@ -91,205 +102,243 @@ export const LANGUAGE_CODE_TO_NAME_MAP = Object.fromEntries(
   Object.entries(LANGUAGE_NAME_TO_CODE_MAP).map(([name, code]) => [code, name])
 );
 
+/**
+ * Languages that are considered "Global Favorites" or "Commonly Encountered".
+ * Used by the LanguageDetectionService to filter out unreliable statistical guesses
+ * for short strings.
+ */
+export const GLOBAL_TRUSTED_LANGUAGES = [
+  // Major World Languages (High population/usage)
+  'en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'zh-cn', 'ja', 'ko', 'tr', 'id', 'ms', 'hi',
+  'ar', 'fa', 'ur', 'bn', 'vi', 'th', 'pl', 'uk', 'nl', 'sv', 'no', 'fi', 'el', 'he',
+  // Specific supported variants and minor languages with high reliable detection
+  'ml', 'ta', 'te', 'kn', 'mr', 'ne', 'my', 'km', 'lo', 'am', 'hy', 'ka', 'ace', 'gd'
+];
+
+/**
+ * Standard RTL (Right-to-Left) language codes.
+ * This is the Single Source of Truth for the entire extension.
+ */
+export const RTL_LANGUAGES = new Set([
+  'ar',   // Arabic
+  'fa',   // Persian (Farsi)
+  'he',   // Hebrew
+  'ur',   // Urdu
+  'ps',   // Pashto
+  'sd',   // Sindhi
+  'ckb',  // Central Kurdish (Sorani)
+  'ku',   // Kurdish (general, when using Arabic script)
+  'yi',   // Yiddish
+  'ug',   // Uyghur
+  'dv',   // Divehi
+  'syr',  // Syriac
+  'arc',  // Aramaic
+  'azb'   // South Azerbaijani
+]);
+
 // Provider-specific language code mappings
 export const PROVIDER_LANGUAGE_MAPPINGS = {
   // Google Translate Language Codes
-  GOOGLE: LANGUAGE_NAME_TO_CODE_MAP,
+  GOOGLE: {
+    ...LANGUAGE_NAME_TO_CODE_MAP,
+    "zh-cn": "zh-CN",
+    "zh-tw": "zh-TW",
+    "lzh": "zh-CN",   // Google Classical fallback
+    "yue": "yue",     // Cantonese
+    "ps": "ps",
+    "ur": "ur",
+    "ak": "ak", "ace": "ace", "ach": "ach", "aa": "aa", "awa": "awa", "bal": "bal", 
+    "ban": "ban", "bci": "bci", "btk": "btk", "bts": "bts", "bbc": "bbc", "bew": "bew", 
+    "bik": "bik", "bua": "bua", "ch": "ch", "ce": "ce", "chk": "chk", "chv": "chv", 
+    "crh": "crh", "din": "din", "doi": "doi", "dyu": "dyu", "dz": "dz", "ee": "ee", 
+    "fon": "fon", "fr-CA": "fr-CA", "fur": "fur", "ff": "ff", "gaa": "gaa", "gri": "gri", 
+    "hrp": "hrp", "hnn": "hnn", "hsb": "hsb", "iba": "iba", "ilo": "ilo", "inh": "inh", 
+    "ikt": "ikt", "iu": "iu", "jam": "jam", "jbo": "jbo", "kac": "kac", "kl": "kl", 
+    "kau": "kau", "pam": "pam", "kha": "kha", "kmb": "kmb", "kon": "kon", "krw": "krw", 
+    "kru": "kru", "lij": "lij", "li": "li", "lmo": "lmo", "lua": "lua", "mad": "mad", 
+    "mak": "mak", "mfa": "mfa", "mwr": "mwr", "mfe": "mfe", "mhr": "mhr", "min": "min", 
+    "mzo": "mzo", "nah": "nah", "nd": "nd", "nr": "nr", "new": "new", "nko": "nko", 
+    "nus": "nus", "oc": "oc", "os": "os", "pag": "pag", "pap": "pap", "qvi": "qvi", 
+    "rom": "rom", "rn": "rn", "smn": "smn", "sag": "sag", "sat": "sat", "se": "se", 
+    "nso": "nso", "st": "st", "sn": "sn", "crs": "crs", "shn": "shn", "szl": "szl", 
+    "skr": "skr", "ss": "ss", "ty": "ty", "tmh": "tmh", "tet": "tet", "bo": "bo", 
+    "tiv": "tiv", "tpi": "tpi", "to": "to", "tum": "tum", "tyv": "tyv", "udm": "udm", 
+    "ve": "ve", "vec": "vec", "war": "war", "wol": "wol", "sah": "sah"
+  },
+
+  // Lingva Translate (Google Proxy) - Needs specific codes
+  LINGVA: {
+    ...LANGUAGE_NAME_TO_CODE_MAP,
+    "zh-cn": "zh",
+    "zh-tw": "zh_HANT",
+    "lzh": "zh",
+    "yue": "zh", // Lingva/Google Cantonese fallback
+  },
 
   // Bing Translate Language Codes
   BING: {
     auto: "auto-detect",
-    af: "af",
-    am: "am",
-    ar: "ar",
-    az: "az",
-    bg: "bg",
-    bs: "bs",
-    ca: "ca",
-    cs: "cs",
-    cy: "cy",
-    da: "da",
-    de: "de",
-    el: "el",
-    en: "en",
-    es: "es",
-    et: "et",
-    fa: "fa",
-    fi: "fi",
-    fr: "fr",
-    ga: "ga",
-    gu: "gu",
-    hi: "hi",
-    hmn: "mww",
-    hr: "hr",
-    ht: "ht",
-    hu: "hu",
-    hy: "hy",
-    id: "id",
-    is: "is",
-    it: "it",
-    ja: "ja",
-    kk: "kk",
-    km: "km",
-    kn: "kn",
-    ko: "ko",
-    ku: "ku",
-    lo: "lo",
-    lt: "lt",
-    lv: "lv",
-    mg: "mg",
-    mi: "mi",
-    ml: "ml",
-    mr: "mr",
-    ms: "ms",
-    mt: "mt",
-    my: "my",
-    ne: "ne",
-    nl: "nl",
-    no: "nb",
-    pa: "pa",
-    pl: "pl",
-    ps: "ps",
-    ro: "ro",
-    ru: "ru",
-    sk: "sk",
-    sl: "sl",
-    sm: "sm",
-    sq: "sq",
-    sr: "sr-Cyrl",
-    sv: "sv",
-    sw: "sw",
-    ta: "ta",
-    te: "te",
-    th: "th",
-    tr: "tr",
-    uk: "uk",
-    ur: "ur",
-    vi: "vi",
-    iw: "he", // Hebrew uses 'iw' in Bing
-    tl: "fil", // Filipino uses 'fil' in Bing
-    pt: "pt",
-    "zh-CN": "zh-Hans", // Simplified Chinese
-    "zh-TW": "zh-Hant", // Traditional Chinese
+    "zh-cn": "zh-Hans",
+    "zh-tw": "zh-Hant",
+    "zh": "zh-Hans",
+    "lzh": "lzh",
+    "yue": "yue",
+    "no": "nb",
+    "nb": "nb",
+    "fa": "fa",
+    "prs": "prs",
+    "sr": "sr-Cyrl",
+    "sr-cyrl": "sr-Cyrl",
+    "sr-latn": "sr-Latn",
+    "hmn": "mww",
+    "tl": "fil",
+    "iw": "he",
+    // Standard Identity Mappings for Bing
+    ace: "ace", af: "af", sq: "sq", am: "am", ar: "ar", arz: "arz", ary: "ary", arb: "arb", 
+    hy: "hy", as: "as", ast: "ast", az: "az", ban: "ban", bn: "bn", ba: "ba", eu: "eu", 
+    bbc: "bbc", be: "be", bho: "bho", bik: "bik", brx: "brx", bs: "bs", bg: "bg", ca: "ca", 
+    ceb: "ceb", hne: "hne", co: "co", hr: "hr", cs: "cs", da: "da", dv: "dv", doi: "doi", 
+    nl: "nl", en: "en", "en-gb": "en-GB", epo: "epo", et: "et", fo: "fo", fj: "fj", 
+    fil: "fil", fi: "fi", fr: "fr", "fr-ca": "fr-CA", fy: "fy", fur: "fur", gl: "gl", 
+    lug: "lug", ka: "ka", de: "de", el: "el", gu: "gu", ht: "ht", ha: "ha", he: "he", 
+    hil: "hil", hi: "hi", mww: "mww", hu: "hu", iba: "iba", is: "is", ig: "ig", ilo: "ilo", 
+    id: "id", ikt: "ikt", iu: "iu", "iu-latn": "iu-Latn", ga: "ga", it: "it", jam: "jam", 
+    ja: "ja", jav: "jav", kea: "kea", kn: "kn", pam: "pam", ks: "ks", kk: "kk", km: "km", 
+    rw: "rw", "tlh-latn": "tlh-Latn", gom: "gom", ko: "ko", kri: "kri", ku: "ku", 
+    kmr: "kmr", ky: "ky", lo: "lo", la: "la", lv: "lv", lij: "lij", lim: "lim", ln: "ln", 
+    lt: "lt", lmo: "lmo", dsb: "dsb", lb: "lb", mk: "mk", mai: "mai", mg: "mg", ms: "ms", 
+    ml: "ml", mt: "mt", mr: "mr", mwr: "mwr", mfe: "mfe", min: "min", "mn-cyrl": "mn-Cyrl", 
+    "mn-mong": "mn-Mong", my: "my", mi: "mi", ne: "ne", nya: "nya", oc: "oc", or: "or", 
+    pap: "pap", ps: "ps", pl: "pl", "pt-pt": "pt-PT", pa: "pa", pnb: "pnb", otq: "otq", 
+    ro: "ro", run: "run", ru: "ru", sm: "sm", sa: "sa", srd: "srd", st: "st", tn: "tn", 
+    crs: "crs", sn: "sn", scn: "scn", sd: "sd", si: "si", sk: "sk", sl: "sl", so: "so", 
+    es: "es", su: "su", sw: "sw", sv: "sv", ty: "ty", tgk: "tgk", ta: "ta", tt: "tt", 
+    te: "te", tet: "tet", th: "th", bo: "bo", ti: "ti", tpi: "tpi", to: "to", tr: "tr", 
+    tk: "tk", uk: "uk", hsb: "hsb", ur: "ur", ug: "ug", uz: "uz", vec: "vec", vi: "vi", 
+    war: "war", cy: "cy", xh: "xh", ydd: "ydd", yo: "yo", yua: "yua", zu: "zu"
   },
 
-  // Yandex Translate Language Codes
-  YANDEX: LANGUAGE_NAME_TO_CODE_MAP,
+  // Yandex Translate - based on provided list
+  YANDEX: {
+    auto: "auto",
+    "zh-cn": "zh",
+    "zh-tw": "zh",
+    "zh": "zh",
+    "fa": "fa",
+    "ps": "fa", // Pashto fallback
+    "ne": "ne",
+    "ur": "ur",
+    "iw": "he",
+    "jw": "jv",
+    "tl": "tl",
+    "no": "no",
+    // Standard and Special Mappings for Yandex
+    abq: "abq", ab: "ab", af: "af", sq: "sq", am: "am", ar: "ar", hy: "hy", az: "az", 
+    ba: "ba", eu: "eu", be: "be", bn: "bn", bs: "bs", bg: "bg", my: "my", bua: "bua", 
+    ca: "ca", ceb: "ceb", cv: "cv", hr: "hr", cs: "cs", da: "da", nl: "nl", sjn: "sjn", 
+    emj: "emj", myv: "myv", eo: "eo", et: "et", fi: "fi", fr: "fr", gl: "gl", glt: "glt", 
+    ka: "ka", de: "de", el: "el", gu: "gu", ht: "ht", he: "he", mrj: "mrj", hi: "hi", 
+    hu: "hu", is: "is", id: "id", ga: "ga", it: "it", ja: "ja", jv: "jv", kbd: "kbd", 
+    kn: "kn", krc: "krc", kk: "kk", kazlat: "kazlat", km: "km", kv: "kv", ko: "ko", 
+    ky: "ky", lo: "lo", la: "la", lv: "lv", lt: "lt", lb: "lb",
+    // Other existing ones
+    mk: "mk", mg: "mg", ms: "ms", ml: "ml", mt: "mt", mi: "mi", mr: "mr", mn: "mn", 
+    pl: "pl", pt: "pt", pa: "pa", ro: "ro", ru: "ru", gd: "gd", sr: "sr", 
+    si: "si", sk: "sk", sl: "sl", es: "es", su: "su", sw: "sw", sv: "sv", tg: "tg", 
+    ta: "ta", te: "te", th: "th", tr: "tr", uk: "uk", uz: "uz", vi: "vi", 
+    cy: "cy", xh: "xh", yi: "yi"
+  },
+
+  // Browser Translation API (Chrome Local)
+  BROWSER: {
+    "afrikaans": "af",
+    "albanian": "sq",
+    "arabic": "ar",
+    "azerbaijani": "az",
+    "belarusian": "be",
+    "bengali": "bn",
+    "bulgarian": "bg",
+    "catalan": "ca",
+    "chinese (simplified)": "zh",
+    "zh-cn": "zh",
+    "zh-tw": "zh",
+    "lzh": "zh",
+    "chinese": "zh",
+    "croatian": "hr",
+    "czech": "cs",
+    "danish": "da",
+    "dutch": "nl",
+    "english": "en",
+    "estonian": "et",
+    "farsi": "fa",
+    "persian": "fa",
+    "ps": "fa",
+    "mr": "hi",
+    "ne": "hi",
+    "ur": "ur",
+    "filipino": "fil",
+    "finnish": "fi",
+    "french": "fr",
+    "german": "de",
+    "greek": "el",
+    "hebrew": "he",
+    "hindi": "hi",
+    "hungarian": "hu",
+    "indonesian: ": "id",
+    "italian": "it",
+    "japanese": "ja",
+    "korean": "ko",
+    "latvian": "lv",
+    "lithuanian": "lt",
+    "malay": "ms",
+    "norwegian": "no",
+    "polish": "pl",
+    "portuguese": "pt",
+    "romanian": "ro",
+    "russian": "ru",
+    "serbian": "sr",
+    "slovak": "sk",
+    "slovenian": "sl",
+    "spanish": "es",
+    "swedish: ": "sv",
+    "thai": "th",
+    "turkish": "tr",
+    "ukrainian": "uk",
+    "vietnamese": "vi"
+  },
 
   // DeepL Translate Language Codes (UPPERCASE)
   // Standard languages
   DEEPL: {
     auto: '',
-    'bg': 'BG',
-    'cs': 'CS',
-    'da': 'DA',
-    'de': 'DE',
-    'el': 'EL',
-    'en': 'EN',
-    'es': 'ES',
-    'et': 'ET',
-    'fi': 'FI',
-    'fr': 'FR',
-    'hu': 'HU',
-    'id': 'ID',
-    'it': 'IT',
-    'ja': 'JA',
-    'ko': 'KO',
-    'lt': 'LT',
-    'lv': 'LV',
-    'nb': 'NB',
-    'nl': 'NL',
-    'pl': 'PL',
-    'pt': 'PT',
-    'pt-br': 'PT-BR',
-    'ro': 'RO',
-    'ru': 'RU',
-    'sk': 'SK',
-    'sl': 'SL',
-    'sv': 'SV',
-    'tr': 'TR',
-    'uk': 'UK',
-    'zh': 'ZH',
-    'zh-cn': 'ZH',
+    'bg': 'BG', 'cs': 'CS', 'da': 'DA', 'de': 'DE', 'el': 'EL', 'en': 'EN', 'es': 'ES', 
+    'et': 'ET', 'fi': 'FI', 'fr': 'FR', 'hu': 'HU', 'id': 'ID', 'it': 'IT', 'ja': 'JA', 
+    'ko': 'KO', 'lt': 'LT', 'lv': 'LV', 'nb': 'NB', 'nl': 'NL', 'pl': 'PL', 'pt': 'PT', 
+    'pt-br': 'PT-BR', 'ro': 'RO', 'ru': 'RU', 'sk': 'SK', 'sl': 'SL', 'sv': 'SV', 
+    'tr': 'TR', 'uk': 'UK', 
+    'zh': 'ZH', 
+    'zh-cn': 'ZH-HANS', 
+    'zh-tw': 'ZH-HANT',
+    'ps': 'FA',
+    'ur': 'FA',
+    'mr': 'HI',
+    'ne': 'HI',
   },
 
   // DeepL Beta Languages (require enable_beta_languages parameter)
   DEEPL_BETA: {
-    'ace': 'ACE',        // Acehnese
-    'af': 'AF',          // Afrikaans
-    'an': 'AN',          // Aragonese
-    'as': 'AS',          // Assamese
-    'ay': 'AY',          // Aymara
-    'az': 'AZ',          // Azerbaijani
-    'ba': 'BA',          // Bashkir
-    'be': 'BE',          // Belarusian
-    'bho': 'BHO',        // Bhojpuri
-    'bn': 'BN',          // Bengali
-    'br': 'BR',          // Breton
-    'bs': 'BS',          // Bosnian
-    'ca': 'CA',          // Catalan
-    'ceb': 'CEB',        // Cebuano
-    'ckb': 'CKB',        // Kurdish (Sorani)
-    'cy': 'CY',          // Welsh
-    'eo': 'EO',          // Esperanto
-    'eu': 'EU',          // Basque
-    'fa': 'FA',          // Persian (Farsi)
-    'ga': 'GA',          // Irish
-    'gl': 'GL',          // Galician
-    'gn': 'GN',          // Guarani
-    'gom': 'GOM',        // Konkani
-    'gu': 'GU',          // Gujarati
-    'ha': 'HA',          // Hausa
-    'hi': 'HI',          // Hindi
-    'hr': 'HR',          // Croatian
-    'ht': 'HT',          // Haitian Creole
-    'hy': 'HY',          // Armenian
-    'ig': 'IG',          // Igbo
-    'is': 'IS',          // Icelandic
-    'jv': 'JV',          // Javanese
-    'ka': 'KA',          // Georgian
-    'kk': 'KK',          // Kazakh
-    'kmr': 'KMR',        // Kurdish (Kurmanji)
-    'ky': 'KY',          // Kyrgyz
-    'la': 'LA',          // Latin
-    'lb': 'LB',          // Luxembourgish
-    'lmo': 'LMO',        // Lombard
-    'ln': 'LN',          // Lingala
-    'mai': 'MAI',        // Maithili
-    'mg': 'MG',          // Malagasy
-    'mi': 'MI',          // Maori
-    'mk': 'MK',          // Macedonian
-    'mn': 'MN',          // Mongolian
-    'mr': 'MR',          // Marathi
-    'ms': 'MS',          // Malay
-    'mt': 'MT',          // Maltese
-    'my': 'MY',          // Burmese
-    'ne': 'NE',          // Nepali
-    'oc': 'OC',          // Occitan
-    'pag': 'PAG',        // Pangasinan
-    'pam': 'PAM',        // Kapampangan
-    'prs': 'PRS',        // Dari
-    'ps': 'PS',          // Pashto
-    'qu': 'QU',          // Quechua
-    'sa': 'SA',          // Sanskrit
-    'scn': 'SCN',        // Sicilian
-    'sq': 'SQ',          // Albanian
-    'sr': 'SR',          // Serbian
-    'su': 'SU',          // Sundanese
-    'sw': 'SW',          // Swahili
-    'ta': 'TA',          // Tamil
-    'te': 'TE',          // Telugu
-    'tg': 'TG',          // Tajik
-    'tk': 'TK',          // Turkmen
-    'tl': 'TL',          // Tagalog
-    'tn': 'TN',          // Tswana
-    'ts': 'TS',          // Tsonga
-    'tt': 'TT',          // Tatar
-    'ur': 'UR',          // Urdu
-    'uz': 'UZ',          // Uzbek
-    'wo': 'WO',          // Wolof
-    'xh': 'XH',          // Xhosa
-    'yue': 'YUE',        // Cantonese
+    'ace': 'ACE', 'af': 'AF', 'sq': 'SQ', 'ar': 'AR', 'an': 'AN', 'hy': 'HY', 'as': 'AS', 
+    'ay': 'AY', 'az': 'AZ', 'ba': 'BA', 'eu': 'EU', 'be': 'BE', 'bn': 'BN', 'bho': 'BHO', 
+    'bs': 'BS', 'br': 'BR', 'my': 'MY', 'yue': 'YUE', 'ca': 'CA', 'ceb': 'CEB', 'hr': 'HR', 
+    'prs': 'PRS', 'eo': 'EO', 'gl': 'GL', 'ka': 'KA', 'gn': 'GN', 'gu': 'GU', 'ht': 'HT', 
+    'ha': 'HA', 'he': 'HE', 'hi': 'HI', 'ig': 'IG', 'ga': 'GA', 'jv': 'JV', 'pam': 'PAM', 
+    'kk': 'KK', 'gom': 'GOM', 'kmr': 'KMR', 'ckb': 'CKB', 'ky': 'KY', 'la': 'LA', 
+    'ln': 'LN', 'lmo': 'LMO', 'lb': 'LB', 'mk': 'MK', 'mai': 'MAI', 'mg': 'MG', 'ms': 'MS', 
+    'ml': 'ML', 'mt': 'MT', 'mi': 'MI', 'mr': 'HI', 'mn': 'MN', 'ne': 'HI', 'oc': 'OC', 
+    'om': 'OM', 'pag': 'PAG', 'ps': 'PS', 'fa': 'FA', 'pa': 'PA', 'qu': 'QU', 'sa': 'SA', 
+    'sr': 'SR', 'st': 'ST', 'scn': 'SCN', 'su': 'SU', 'sw': 'SW', 'tg': 'TG', 'ta': 'TA', 
+    'tt': 'TT', 'te': 'TE', 'ts': 'TS', 'tn': 'TN', 'tk': 'TK', 'ur': 'UR', 'uz': 'UZ', 
+    'vi': 'VI', 'cy': 'CY', 'wo': 'WO', 'xh': 'XH', 'yi': 'YI', 'zu': 'ZU'
   },
 };
 
@@ -306,16 +355,18 @@ export const PROVIDER_LANGUAGE_MAPPINGS = {
  * Maps different code variations to a canonical form for matching
  */
 const CANONICAL_CODE_MAP = {
-  // Chinese variations - all map to 'zh'
-  'zh': 'zh',
-  'zhcn': 'zh',     // zh-CN normalized
-  'zhtw': 'zh',     // zh-TW normalized
-  'zhans': 'zh',    // zh-Hans normalized
-  'zhant': 'zh',    // zh-Hant normalized
+  // Chinese variations
+  'zh': 'zh-cn',
+  'zhcn': 'zh-cn',     // zh-CN normalized
+  'zhtw': 'zh-tw',     // zh-TW normalized
+  'zhans': 'zh-cn',    // zh-Hans normalized
+  'zhant': 'zh-tw',    // zh-Hant normalized
+  'yue': 'yue',
+  'lzh': 'lzh',
 
   // Filipino/Tagalog variations
   'fil': 'fil',
-  'tl': 'fil',
+  'tl': 'tl',
 };
 
 /**
@@ -331,27 +382,28 @@ export function getCanonicalCode(code) {
 }
 
 export const PROVIDER_SUPPORTED_LANGUAGES = {
-  // Google Translate - supports all standard languages (use values for codes)
-  google: Object.values(LANGUAGE_NAME_TO_CODE_MAP),
-
-  // Bing Translate - languages from BING mapping (excluding aliases)
-  bing: [
-    'af', 'am', 'ar', 'az', 'bg', 'bs', 'ca', 'cs', 'cy', 'da', 'de', 'el', 'en',
-    'es', 'et', 'fa', 'fi', 'fr', 'ga', 'gu', 'he', 'hi', 'hr', 'ht', 'hu', 'hy',
-    'id', 'is', 'it', 'ja', 'kk', 'km', 'kn', 'ko', 'ku', 'lo', 'lt', 'lv', 'mg',
-    'mi', 'ml', 'mr', 'ms', 'mt', 'my', 'ne', 'nl', 'no', 'pa', 'pl', 'ps', 'pt',
-    'ro', 'ru', 'sk', 'sl', 'sq', 'sr', 'sv', 'sw', 'ta', 'te', 'th', 'tl', 'tr',
-    'uk', 'ur', 'vi', 'zh-CN', 'zh-TW'
+  // Google Translate - supports all standard languages and many new ones from user list
+  google: [
+    'af', 'sq', 'am', 'ar', 'hy', 'as', 'ay', 'az', 'bm', 'ba', 'eu', 'be', 'bn', 'bho', 'bs', 'br', 'bg', 'ca', 'ceb', 'ny', 'zh-cn', 'zh-tw', 'co', 'hr', 'cs', 'da', 'dv', 'doi', 'nl', 'en', 'eo', 'et', 'ee', 'tl', 'fi', 'fr', 'fy', 'gl', 'ka', 'de', 'el', 'gn', 'gu', 'ht', 'ha', 'haw', 'iw', 'he', 'hi', 'hmn', 'hu', 'is', 'ig', 'ilo', 'id', 'ga', 'it', 'ja', 'jw', 'kn', 'kk', 'km', 'rw', 'gom', 'ko', 'kri', 'ku', 'ckb', 'ky', 'lo', 'la', 'lv', 'ln', 'lt', 'lg', 'lb', 'mk', 'mai', 'mg', 'ms', 'ml', 'mt', 'mi', 'mr', 'mni-mtei', 'lus', 'mn', 'my', 'ne', 'no', 'or', 'om', 'ps', 'fa', 'pl', 'pt', 'pa', 'qu', 'ro', 'ru', 'sm', 'sa', 'gd', 'nso', 'sr', 'st', 'sn', 'sd', 'si', 'sk', 'sl', 'so', 'es', 'su', 'sw', 'sv', 'tg', 'ta', 'tt', 'te', 'th', 'ti', 'ts', 'tr', 'tk', 'ak', 'uk', 'ur', 'ug', 'uz', 'vi', 'cy', 'xh', 'yi', 'yo', 'zu',
+    'yue', 'ace', 'ach', 'aa', 'awa', 'bal', 'ban', 'bci', 'btk', 'bts', 'bbc', 'bew', 'bik', 'bua', 'ch', 'ce', 'chk', 'chv', 'crh', 'din', 'dyu', 'dz', 'fon', 'fr-CA', 'fur', 'ff', 'gaa', 'gri', 'hrp', 'hnn', 'hsb', 'iba', 'inh', 'ikt', 'iu', 'jam', 'jbo', 'kac', 'kl', 'kau', 'pam', 'kha', 'kmb', 'kon', 'krw', 'kru', 'lij', 'li', 'lmo', 'lua', 'mad', 'mak', 'mfa', 'mwr', 'mfe', 'mhr', 'min', 'mzo', 'nah', 'nd', 'nr', 'new', 'nko', 'nus', 'oc', 'os', 'pag', 'pap', 'qvi', 'rom', 'rn', 'smn', 'sag', 'sat', 'se', 'crs', 'shn', 'szl', 'skr', 'ss', 'ty', 'tmh', 'tet', 'bo', 'tiv', 'tpi', 'to', 'tum', 'tyv', 'udm', 've', 'vec', 'war', 'wol', 'sah'
   ],
 
-  // Yandex Translate - same as Google
-  yandex: Object.values(LANGUAGE_NAME_TO_CODE_MAP),
+  // Bing Translate - languages from the provided HTML list
+  bing: [
+    'ace', 'af', 'sq', 'am', 'ar', 'arz', 'ary', 'arb', 'hy', 'as', 'ast', 'az', 'ban', 'bn', 'ba', 'eu', 'bbc', 'be', 'bho', 'bik', 'brx', 'bs', 'bg', 'yue', 'ca', 'ceb', 'hne', 'lzh', 'zh-Hans', 'zh-Hant', 'co', 'hr', 'cs', 'da', 'prs', 'dv', 'doi', 'nl', 'en', 'en-GB', 'epo', 'et', 'fo', 'fj', 'fil', 'fi', 'fr', 'fr-CA', 'fy', 'fur', 'gl', 'gd', 'lug', 'ka', 'de', 'el', 'gu', 'ht', 'ha', 'he', 'hil', 'hi', 'mww', 'hu', 'iba', 'is', 'ig', 'ilo', 'id', 'ikt', 'iu', 'iu-Latn', 'ga', 'it', 'jam', 'ja', 'jav', 'kea', 'kn', 'pam', 'ks', 'kk', 'km', 'rw', 'tlh-Latn', 'gom', 'ko', 'kri', 'ku', 'kmr', 'ky', 'lo', 'la', 'lv', 'lij', 'lim', 'ln', 'lt', 'lmo', 'dsb', 'lb', 'mk', 'mai', 'mg', 'ms', 'ml', 'mt', 'mr', 'mwr', 'mfe', 'min', 'mn-Cyrl', 'mn-Mong', 'my', 'mi', 'ne', 'nb', 'nno', 'nya', 'oc', 'or', 'pap', 'ps', 'fa', 'pl', 'pt', 'pt-PT', 'pa', 'pnb', 'otq', 'ro', 'run', 'ru', 'sm', 'sa', 'srd', 'sr-Cyrl', 'sr-Latn', 'st', 'nso', 'tn', 'crs', 'sn', 'scn', 'sd', 'si', 'sk', 'sl', 'so', 'es', 'su', 'sw', 'sv', 'ty', 'tgk', 'ta', 'tt', 'te', 'tet', 'th', 'bo', 'ti', 'tpi', 'to', 'tr', 'tk', 'uk', 'hsb', 'ur', 'ug', 'uz', 'vec', 'vi', 'war', 'cy', 'xh', 'ydd', 'yo', 'yua', 'zu'
+  ],
+
+  // Yandex Translate - based on provided list
+  yandex: [
+    'ace', 'af', 'sq', 'am', 'ar', 'an', 'hy', 'as', 'ay', 'az', 'ba', 'eu', 'be', 'bn', 'bho', 'bs', 'br', 'bg', 'my', 'yue', 'ca', 'ceb', 'zh-cn', 'hr', 'cs', 'da', 'prs', 'nl', 'en', 'eo', 'et', 'fi', 'fr', 'gl', 'gd', 'ka', 'de', 'el', 'gn', 'gu', 'ht', 'ha', 'he', 'hi', 'hu', 'is', 'ig', 'id', 'ga', 'it', 'ja', 'jv', 'pam', 'kk', 'gom', 'ko',
+    'ru', 'fa', 'ne'
+  ],
 
   // Browser API - uses Chrome's built-in translation (from BrowserAPI.js langNameToCodeMap)
   // Using canonical codes for matching
   // Note: Provider might be 'browser', 'browserapi', or 'BrowserAPI' depending on context
   browserapi: [
-    'af', 'sq', 'ar', 'az', 'be', 'bn', 'bg', 'ca', 'zh', 'hr', 'cs', 'da', 'nl',
+    'af', 'sq', 'ar', 'az', 'be', 'bn', 'bg', 'ca', 'zh-cn', 'hr', 'cs', 'da', 'nl',
     'en', 'et', 'fa', 'fil', 'fi', 'fr', 'de', 'el', 'he', 'hi', 'hu', 'id', 'it',
     'ja', 'ko', 'lv', 'lt', 'ms', 'no', 'pl', 'pt', 'ro', 'ru', 'sr', 'sk', 'sl',
     'es', 'sv', 'th', 'tr', 'uk', 'vi'
@@ -359,7 +411,7 @@ export const PROVIDER_SUPPORTED_LANGUAGES = {
 
   // Alias for 'browser' (in case provider name is different)
   browser: [
-    'af', 'sq', 'ar', 'az', 'be', 'bn', 'bg', 'ca', 'zh', 'hr', 'cs', 'da', 'nl',
+    'af', 'sq', 'ar', 'az', 'be', 'bn', 'bg', 'ca', 'zh-cn', 'hr', 'cs', 'da', 'nl',
     'en', 'et', 'fa', 'fil', 'fi', 'fr', 'de', 'el', 'he', 'hi', 'hu', 'id', 'it',
     'ja', 'ko', 'lv', 'lt', 'ms', 'no', 'pl', 'pt', 'ro', 'ru', 'sr', 'sk', 'sl',
     'es', 'sv', 'th', 'tr', 'uk', 'vi'
@@ -369,7 +421,7 @@ export const PROVIDER_SUPPORTED_LANGUAGES = {
   deepl: [
     'bg', 'cs', 'da', 'de', 'el', 'en', 'es', 'et', 'fi', 'fr', 'hu', 'id', 'it',
     'ja', 'ko', 'lt', 'lv', 'nb', 'nl', 'pl', 'pt', 'pt-br', 'ro', 'ru', 'sk', 'sl',
-    'sv', 'tr', 'uk', 'zh', 'zh-cn'
+    'sv', 'tr', 'uk', 'zh', 'zh-cn', 'zh-tw'
   ],
 
   // DeepL with beta languages enabled
@@ -377,14 +429,15 @@ export const PROVIDER_SUPPORTED_LANGUAGES = {
     // Standard languages
     'bg', 'cs', 'da', 'de', 'el', 'en', 'es', 'et', 'fi', 'fr', 'hu', 'id', 'it',
     'ja', 'ko', 'lt', 'lv', 'nb', 'nl', 'pl', 'pt', 'pt-br', 'ro', 'ru', 'sk', 'sl',
-    'sv', 'tr', 'uk', 'zh', 'zh-cn',
-    // Beta languages
+    'sv', 'tr', 'uk', 'zh', 'zh-cn', 'zh-tw',
+    // Beta languages (new extensive list)
     'ace', 'af', 'an', 'as', 'ay', 'az', 'ba', 'be', 'bho', 'bn', 'br', 'bs', 'ca',
     'ceb', 'ckb', 'cy', 'eo', 'eu', 'fa', 'ga', 'gl', 'gn', 'gom', 'gu', 'ha', 'hi',
     'hr', 'ht', 'hy', 'ig', 'is', 'jv', 'ka', 'kk', 'kmr', 'ky', 'la', 'lb', 'lmo',
-    'ln', 'mai', 'mg', 'mi', 'mk', 'mn', 'mr', 'ms', 'mt', 'my', 'ne', 'oc', 'pag',
+    'ln', 'mai', 'mg', 'mi', 'mk', 'mn', 'ms', 'mt', 'my', 'oc', 'pag',
     'pam', 'prs', 'ps', 'qu', 'sa', 'scn', 'sq', 'sr', 'su', 'sw', 'ta', 'te', 'tg',
-    'tk', 'tl', 'tn', 'ts', 'tt', 'ur', 'uz', 'wo', 'xh', 'yue'
+    'tk', 'tl', 'tn', 'ts', 'tt', 'ur', 'uz', 'wo', 'xh', 'yue', 'yi', 'zu', 'om',
+    'pa', 'st', 'sn'
   ],
 
   // AI Providers (Gemini, OpenAI, OpenRouter, DeepSeek, WebAI, Custom)
@@ -429,7 +482,10 @@ export function getProviderLanguageCode(lang, provider = 'GOOGLE') {
 const AI_ENHANCED_LANGUAGE_MAPPINGS = {
   'ar': 'Arabic (Modern Standard)',
   'zh': 'Chinese (Simplified)',
+  'zh-cn': 'Chinese (Simplified)',
   'zh-tw': 'Chinese (Traditional)',
+  'lzh': 'Chinese (Literary / Classical)',
+  'yue': 'Cantonese (Traditional Script)',
   'he': 'Hebrew (Modern)',
   'fa': 'Persian (Farsi)',
 };

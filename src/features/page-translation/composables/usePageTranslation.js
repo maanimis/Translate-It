@@ -34,6 +34,20 @@ export function usePageTranslation() {
   let restoreCompleteListener = null;
   let autoRestoreCompleteListener = null; // Auto-restore event (NEW)
   let cancelledListener = null;
+  let resetErrorListener = null;
+
+  function applyRestrictedPageState(response) {
+    const restrictedMessage = response?.message || 'Feature not available on this page';
+
+    isTranslating.value = false;
+    isTranslated.value = false;
+    isAutoTranslating.value = false;
+    progress.value = 0;
+    translatedCount.value = 0;
+    totalNodes.value = 0;
+    error.value = null;
+    message.value = restrictedMessage;
+  }
 
   /**
    * Fetch current translation status from the active tab
@@ -54,6 +68,8 @@ export function usePageTranslation() {
         if (result.translatedCount !== undefined) {
           translatedCount.value = result.translatedCount;
         }
+      } else if (result?.isRestrictedPage) {
+        applyRestrictedPageState(result);
       } else {
         // Reset state if we can't get status (e.g. restricted page)
         isTranslated.value = false;
@@ -99,6 +115,11 @@ export function usePageTranslation() {
         context: MessageContexts.PAGE_TRANSLATION_UI,
       });
 
+      if (result?.isRestrictedPage) {
+        applyRestrictedPageState(result);
+        return;
+      }
+
       if (result.success) {
         isTranslated.value = true;
         translatedCount.value = result.translatedCount || 0;
@@ -118,7 +139,11 @@ export function usePageTranslation() {
         isAutoTranslating.value = false;
       }
     } finally {
-      isTranslating.value = false;
+      // Only clear isTranslating if we're not in auto-translating mode
+      // If auto-translating, the runtime messages will handle the state
+      if (!isAutoTranslating.value) {
+        isTranslating.value = false;
+      }
     }
   }
 
@@ -137,6 +162,11 @@ export function usePageTranslation() {
         action: MessageActions.PAGE_RESTORE,
         context: MessageContexts.PAGE_TRANSLATION_UI,
       });
+
+      if (result?.isRestrictedPage) {
+        applyRestrictedPageState(result);
+        return;
+      }
 
       if (result.success) {
         isTranslated.value = false;
@@ -164,12 +194,27 @@ export function usePageTranslation() {
         context: MessageContexts.PAGE_TRANSLATION_UI,
       });
 
+      if (result?.isRestrictedPage) {
+        applyRestrictedPageState(result);
+        return;
+      }
+
       if (result.success) {
         isAutoTranslating.value = false;
+        isTranslating.value = false;
+        // If result contains isTranslated info, use it; otherwise assume current state
+        if (result.isTranslated !== undefined) {
+          isTranslated.value = result.isTranslated;
+        }
+        // If result has translatedCount, use it to determine isTranslated
+        if (result.translatedCount !== undefined) {
+          isTranslated.value = result.translatedCount > 0;
+        }
         message.value = 'Auto-translation stopped';
       }
     } catch {
       isAutoTranslating.value = false;
+      isTranslating.value = false;
     }
   }
 
@@ -193,6 +238,13 @@ export function usePageTranslation() {
    * Update progress
    */
   function updateProgress(data) {
+    if (data.status === 'idle' || data.status === 'error') {
+      isTranslating.value = false;
+      isAutoTranslating.value = false;
+      progress.value = 0;
+      return;
+    }
+
     if (data.progress !== undefined) {
       progress.value = data.progress;
     }
@@ -205,6 +257,17 @@ export function usePageTranslation() {
     if (data.message !== undefined) {
       message.value = data.message;
     }
+    
+    // Update state flags if provided
+    if (data.isTranslating !== undefined) {
+      isTranslating.value = !!data.isTranslating;
+    }
+    if (data.isTranslated !== undefined) {
+      isTranslated.value = !!data.isTranslated;
+    }
+    if (data.isAutoTranslating !== undefined) {
+      isAutoTranslating.value = !!data.isAutoTranslating;
+    }
   }
 
   /**
@@ -212,13 +275,32 @@ export function usePageTranslation() {
    */
   function handleComplete(data) {
     isTranslating.value = false;
-    isTranslated.value = true;
-    
+    const isMainFrame = typeof window !== 'undefined' && window.self === window.top;
+
+    // Skip empty/invalid messages - they might come from iframes or initialization
+    // BUT: process if it is aggregated as it represents the whole page state
+    // OR: if we are in the main frame/popup context
+    if (!data.isAggregated && !isMainFrame && (!data || (data.translatedCount === 0 && !data.isTranslated))) {
+      // Refresh status to get accurate state from content script
+      refreshStatus().catch(() => {});
+      return;
+    }
+
+    // Determine isTranslated from data
+    if (data.isTranslated !== undefined) {
+      isTranslated.value = !!data.isTranslated;
+    } else if (data.translatedCount !== undefined) {
+      isTranslated.value = data.translatedCount > 0;
+    } else {
+      // Backward compatibility: assume translation completed
+      isTranslated.value = true;
+    }
+
     // Only update isAutoTranslating if it's explicitly provided in the message
-    if (data && data.isAutoTranslating !== undefined) {
+    if (data.isAutoTranslating !== undefined) {
       isAutoTranslating.value = !!data.isAutoTranslating;
     }
-    
+
     progress.value = 100;
     if (data.translatedCount !== undefined) translatedCount.value = data.translatedCount;
     if (data.totalNodes !== undefined) totalNodes.value = data.totalNodes;
@@ -253,14 +335,25 @@ export function usePageTranslation() {
   function handleAutoRestoreComplete(data) {
     isAutoTranslating.value = false;
     isTranslating.value = false;
-    
+    const isMainFrame = typeof window !== 'undefined' && window.self === window.top;
+
+    // Skip empty/invalid messages - they might come from empty frames
+    // Only process messages with meaningful translation data
+    // BUT: Allow if it's aggregated or from the main frame
+    if (!data.isAggregated && !isMainFrame && (!data || (data.translatedCount === 0 && !data.isTranslated))) {
+      // If this is an invalid message, refresh status from content script to get accurate state
+      refreshStatus().catch(() => {});
+      return;
+    }
+
     // Determine if the page remains translated
-    if (data && data.isTranslated !== undefined) {
+    // Priority: isTranslated flag > translatedCount
+    if (data.isTranslated !== undefined) {
       isTranslated.value = !!data.isTranslated;
-    } else if (data && data.translatedCount !== undefined) {
+    } else if (data.translatedCount !== undefined) {
       isTranslated.value = data.translatedCount > 0;
     }
-    
+
     message.value = 'Auto-translation stopped';
   }
 
@@ -272,6 +365,16 @@ export function usePageTranslation() {
     isAutoTranslating.value = false;
     isTranslated.value = false; // Cancel usually implies restore
     message.value = 'Translation cancelled';
+  }
+
+  /**
+   * Handle error reset
+   */
+  function handleResetError() {
+    error.value = null;
+    if (message.value && message.value.includes('Error:')) {
+      message.value = '';
+    }
   }
 
   // Tab change handlers for Sidepanel sync
@@ -302,6 +405,7 @@ export function usePageTranslation() {
         progress.value = 0;
         break;
       case MessageActions.PAGE_TRANSLATE_PROGRESS:
+      case MessageActions.PAGE_TRANSLATE_IDLE:
         updateProgress(message.data || {});
         break;
       case MessageActions.PAGE_TRANSLATE_COMPLETE:
@@ -318,6 +422,9 @@ export function usePageTranslation() {
         break;
       case MessageActions.PAGE_TRANSLATE_CANCELLED:
         handleCancelled();
+        break;
+      case MessageActions.PAGE_TRANSLATE_RESET_ERROR:
+        handleResetError();
         break;
     }
   };
@@ -361,6 +468,10 @@ export function usePageTranslation() {
     // Translation cancelled
     cancelledListener = () => handleCancelled();
     pageEventBus.on('page-translation-cancelled', cancelledListener);
+
+    // Error reset
+    resetErrorListener = () => handleResetError();
+    pageEventBus.on(MessageActions.PAGE_TRANSLATE_RESET_ERROR, resetErrorListener);
   });
 
   // Cleanup event listeners
@@ -380,6 +491,7 @@ export function usePageTranslation() {
     pageEventBus.off('page-restore-complete', restoreCompleteListener);
     pageEventBus.off(MessageActions.PAGE_AUTO_RESTORE_COMPLETE, autoRestoreCompleteListener);
     pageEventBus.off('page-translation-cancelled', cancelledListener);
+    pageEventBus.off(MessageActions.PAGE_TRANSLATE_RESET_ERROR, resetErrorListener);
   });
 
   return {
@@ -416,5 +528,4 @@ export function usePageTranslation() {
     }),
   };
 }
-
 

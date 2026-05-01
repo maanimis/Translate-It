@@ -8,14 +8,7 @@ import { matchErrorToType } from '@/shared/error-management/ErrorMatcher.js'
 import { getScopedLogger } from '@/shared/logging/logger.js'
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js'
 
-// Lazy logger initialization to avoid TDZ issues
-let logger = null;
-function getLogger() {
-  if (!logger) {
-    logger = getScopedLogger(LOG_COMPONENTS.UI, 'useErrorHandler');
-  }
-  return logger;
-}
+const logger = getScopedLogger(LOG_COMPONENTS.UI, 'useErrorHandler');
 
 /**
  * useErrorHandler composable - comprehensive error handling for Vue components
@@ -34,7 +27,7 @@ export function useErrorHandler() {
    */
   const handleError = async (error, context = 'unknown', options = {}) => {
     if (isHandlingError.value) {
-      getLogger().warn('Error handling already in progress, skipping duplicate')
+      logger.warn('Error handling already in progress, skipping duplicate')
       return
     }
     
@@ -45,7 +38,7 @@ export function useErrorHandler() {
       const errorHandler = ErrorHandler.getInstance()
       
       // Determine error type
-      const errorType = matchErrorToType(error?.message || error)
+      const errorType = matchErrorToType(error)
       
       // Handle the error with proper metadata
       await errorHandler.handle(error, {
@@ -58,8 +51,8 @@ export function useErrorHandler() {
       
     } catch (handlerError) {
       // Fallback logging if ErrorHandler itself fails
-      getLogger().error(`[useErrorHandler] Handler failed for context "${context}":`, handlerError)
-      getLogger().error(`[useErrorHandler] Original error:`, error)
+      logger.error(`[useErrorHandler] Handler failed for context "${context}":`, handlerError)
+      logger.error(`[useErrorHandler] Original error:`, error)
     } finally {
       isHandlingError.value = false
     }
@@ -145,7 +138,7 @@ export function useErrorHandler() {
    * @returns {boolean} True if error should be silent
    */
   const isSilentError = (error) => {
-    const errorType = matchErrorToType(error?.message || error)
+    const errorType = matchErrorToType(error)
     const silentErrors = [
       ErrorTypes.CONTEXT,
       ErrorTypes.EXTENSION_CONTEXT_INVALIDATED
@@ -160,7 +153,7 @@ export function useErrorHandler() {
    * @returns {boolean} True if error can be retried
    */
   const isRetryableError = (error) => {
-    const errorType = matchErrorToType(error?.message || error)
+    const errorType = matchErrorToType(error)
     const retryableErrors = [
       ErrorTypes.NETWORK_ERROR,
       ErrorTypes.HTTP_ERROR,
@@ -195,7 +188,7 @@ export function setupGlobalErrorHandler(app, appName = 'vue-app') {
   app.config.errorHandler = async (error, instance, info) => {
     try {
       const componentName = instance?.$options?.name || 'UnknownComponent'
-      const errorType = matchErrorToType(error?.message || error)
+      const errorType = matchErrorToType(error)
       
       await errorHandler.handle(error, {
         type: errorType,
@@ -206,14 +199,14 @@ export function setupGlobalErrorHandler(app, appName = 'vue-app') {
       })
       
     } catch (handlerError) {
-      getLogger().error(`[${appName}] Global error handler failed:`, handlerError)
+      logger.error(`[${appName}] Global error handler failed:`, handlerError)
     }
   }
   
   // Also handle unhandled promise rejections in Vue context
   app.config.warnHandler = (msg, instance) => {
-    getLogger().warn(`[${appName}] Vue Warning:`, msg)
-    getLogger().debug(`[${appName}] Vue warn instance summary:`, {
+    logger.warn(`[${appName}] Vue Warning:`, msg)
+    logger.debug(`[${appName}] Vue warn instance summary:`, {
       componentName: instance?.type?.name || instance?.proxy?.$options?.name || null,
       vnodeIsFunction: typeof instance?.vnode?.type === 'function',
       vnodeName: instance?.vnode?.type?.name || null,

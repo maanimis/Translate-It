@@ -1,16 +1,36 @@
 <template>
   <fieldset
     class="base-fieldset"
-    :class="{ disabled }"
+    :class="{ disabled, 'has-header': $slots.header }"
   >
-    <legend v-if="legend">
-      {{ legend }}
+    <legend 
+      v-if="legend" 
+      class="base-fieldset__legend"
+    >
+      <span class="legend-text">{{ legend }}</span>
     </legend>
-    <slot />
+
+    <div 
+      v-if="$slots.header" 
+      class="base-fieldset__header-actions"
+    >
+      <slot name="header" />
+    </div>
+
+    <div class="base-fieldset__content">
+      <slot />
+    </div>
   </fieldset>
 </template>
 
 <script setup>
+import './BaseFieldset.scss'
+
+/**
+ * BaseFieldset - A standardized fieldset component for grouping related settings.
+ * Supports an optional 'header' slot for actions (like ProviderSelector) 
+ * that will be positioned on the right side of the legend/border.
+ */
 defineProps({
   legend: {
     type: String,
@@ -22,35 +42,3 @@ defineProps({
   }
 })
 </script>
-
-<style lang="scss" scoped>
-@use "@/assets/styles/base/variables" as *;
-
-.base-fieldset {
-  border: $border-width $border-style var(--color-border);
-  border-radius: $border-radius-md;
-  padding: 1.5em 1em 1em 1em;
-  margin-bottom: $spacing-xl;
-  position: relative;
-  
-  legend {
-    padding: 0 0.5em;
-    margin-left: 0.5em;
-    font-weight: $font-weight-semibold;
-    color: var(--color-text-secondary);
-    font-size: $font-size-sm;
-  }
-  
-  &.disabled {
-    opacity: 0.6;
-    pointer-events: none;
-  }
-}
-
-// Remove border from last setting group in fieldset
-.base-fieldset :deep(.setting-group:last-of-type) {
-  border-bottom: none;
-  padding-bottom: 0;
-  margin-bottom: 0;
-}
-</style>

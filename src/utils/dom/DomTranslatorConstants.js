@@ -3,18 +3,25 @@
  */
 
 /**
- * RTL language codes for automatic direction detection
- */
-export const RTL_LANGUAGES = new Set([
-  'ar', 'he', 'fa', 'ur', 'yi', 'ps', 'sd', 'ckb', 'dv', 'ug',
-  'ae', 'arc', 'xh', 'zu'
-]);
-/**
  * Tags that represent major page layout structures and should NOT have their 'dir' attribute changed
  * to avoid flipping the entire page UI (like sidebars, avatars, etc.)
  */
 export const LAYOUT_TAGS = new Set([
-  'ARTICLE', 'SECTION', 'NAV', 'ASIDE', 'MAIN', 'HEADER', 'FOOTER', 'FORM', 'TABLE', 'UL', 'OL', 'DETAILS'
+  'HTML', 'BODY', 'ARTICLE', 'SECTION', 'NAV', 'ASIDE', 'MAIN', 'HEADER', 'FOOTER', 'FORM', 'TABLE', 'UL', 'OL', 'DETAILS'
+]);
+
+/**
+ * CSS display values that indicate a layout engine is active (flex, grid)
+ */
+export const LAYOUT_DISPLAY_MODES = new Set([
+  'flex', 'grid', 'inline-flex', 'inline-grid'
+]);
+
+/**
+ * Interactive UI elements that should not be flipped as part of a text block
+ */
+export const INTERACTIVE_TAGS = new Set([
+  'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'
 ]);
 
 /**
@@ -32,7 +39,16 @@ export const TEXT_TAGS = new Set([
  * Inline formatting tags that don't constitute a "complex layout"
  */
 export const FORMATTING_TAGS = new Set([
-  'SPAN', 'STRONG', 'EM', 'B', 'I', 'U', 'S', 'SMALL', 'BR', 'A', 'SUB', 'SUP', 'CODE', 'CITE', 'Q'
+  'SPAN', 'STRONG', 'EM', 'B', 'I', 'U', 'S', 'SMALL', 'BR', 'A', 'SUB', 'SUP', 'CODE', 'CITE', 'Q', 'TIME', 'IMG'
+]);
+
+/**
+ * Block-level tags used specifically for the "Select Element" feature
+ * to create logical grouping boundaries for context-aware batching.
+ */
+export const SELECT_ELEMENT_BLOCK_TAGS = new Set([
+  'ARTICLE', 'SECTION', 'DIV', 'P', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 
+  'HEADER', 'FOOTER', 'MAIN', 'ASIDE', 'NAV', 'BLOCKQUOTE', 'PRE', 'TABLE', 'TR', 'TD', 'TH'
 ]);
 
 /**

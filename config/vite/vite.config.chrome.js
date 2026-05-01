@@ -6,8 +6,7 @@ import { resolve } from 'path'
 import { generateValidatedManifest } from '../manifest-generator.js'
 import pkg from '../../package.json' with { type: 'json' };
 
-const isMobile = process.env.IS_MOBILE === 'true';
-const baseOutDir = `dist/chrome/Translate-It-v${pkg.version}${isMobile ? '-mobile' : ''}`;
+const baseOutDir = `dist/chrome/Translate-It-v${pkg.version}`;
 
 // Import production config for production builds
 let productionConfig = null;
@@ -200,8 +199,7 @@ export default defineConfig({
   define: {
     ...(finalConfig.define || {}),
     __BROWSER__: JSON.stringify('chrome'),
-    __MANIFEST_VERSION__: 3,
-    __IS_MOBILE__: isMobile
+    __MANIFEST_VERSION__: 3
   },
   build: {
     ...(finalConfig.build || {}),
@@ -220,6 +218,7 @@ export default defineConfig({
     ...(baseConfig.plugins || []),
     fixExtensionPaths(),
     webExtension({
+      additionalInputs: ['src/core/content-scripts/index-iframe.js'],
       manifest: async () => {
           const manifest = generateValidatedManifest('chrome');
           manifest.background = {
@@ -267,7 +266,13 @@ export default defineConfig({
           outDir: baseOutDir,
           emptyOutDir: false,
           rollupOptions: {
-            output: { format: 'es' }
+            ...baseConfig.build?.rollupOptions,
+            manualChunks: undefined,
+            output: {
+              ...baseConfig.build?.rollupOptions?.output,
+              manualChunks: undefined,
+              format: 'es'
+            }
           }
         }
       },

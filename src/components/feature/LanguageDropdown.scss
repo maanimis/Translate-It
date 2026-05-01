@@ -1,0 +1,35 @@
+@use "@/assets/styles/base/variables" as *;
+
+.language-dropdown {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-base);
+  font-size: var(--font-size-sm);
+  background-color: var(--color-background);
+  color: var(--color-text);
+  cursor: pointer;
+  appearance: auto;
+  -webkit-appearance: auto;
+  transition: all var(--transition-base);
+  box-sizing: border-box;
+
+  &:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.1);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background-color: var(--color-surface);
+  }
+}
+
+/* RTL support - general handling for standard extension options */
+:global(.rtl) .language-dropdown {
+  text-align: right;
+  direction: rtl;
+}
+

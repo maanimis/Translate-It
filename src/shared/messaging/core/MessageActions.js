@@ -37,6 +37,8 @@ export class MessageActions {
   static PAGE_TRANSLATE_PROGRESS = 'page-translate-progress';
   static PAGE_TRANSLATE_COMPLETE = 'page-translate-complete';
   static PAGE_TRANSLATE_ERROR = 'page-translate-error';
+  static PAGE_TRANSLATE_IDLE = 'page-translate-idle';
+  static PAGE_TRANSLATE_RESET_ERROR = 'page-translate-reset-error';
   static PAGE_RESTORE = 'page-restore';
   static PAGE_RESTORE_COMPLETE = 'page-restore-complete';
   static PAGE_RESTORE_ERROR = 'page-restore-error';
@@ -74,11 +76,11 @@ export class MessageActions {
   // TTS actions
   static GOOGLE_TTS_SPEAK = 'GOOGLE_TTS_SPEAK';
   static TTS_STOP = 'TTS_STOP';
-  static GOOGLE_TTS_PAUSE = 'GOOGLE_TTS_PAUSE';
-  static GOOGLE_TTS_RESUME = 'GOOGLE_TTS_RESUME';
   static GOOGLE_TTS_GET_STATUS = 'GOOGLE_TTS_GET_STATUS';
   static GOOGLE_TTS_ENDED = 'GOOGLE_TTS_ENDED';
+  static TTS_LANG_DETECTED = 'TTS_LANG_DETECTED';
   static PLAY_OFFSCREEN_AUDIO = 'playOffscreenAudio';
+  static OFFSCREEN_READY = 'OFFSCREEN_READY';
   
   // Capture actions
   static SCREEN_CAPTURE = 'SCREEN_CAPTURE';
@@ -153,6 +155,10 @@ export class MessageActions {
   static SET_BACKGROUND_CONFIG = 'SET_BACKGROUND_CONFIG';
   static GET_MEMORY_STATS = 'GET_MEMORY_STATS';
   static FORCE_GARBAGE_COLLECTION = 'FORCE_GARBAGE_COLLECTION';
+
+  // Debug & Logging actions
+  static DEBUG_MODE_CHANGED = 'DEBUG_MODE_CHANGED';
+  static COMPONENT_LOG_LEVELS_CHANGED = 'COMPONENT_LOG_LEVELS_CHANGED';
 
   /**
    * Get all available actions

@@ -1,13 +1,15 @@
-// src/core/providers/WebAIProvider.js
+// src/features/translation/providers/WebAI.js
 import { BaseAIProvider } from "@/features/translation/providers/BaseAIProvider.js";
 import {
   getWebAIApiUrlAsync,
   getWebAIApiModelAsync,
 } from "@/shared/config/config.js";
-import { buildPrompt } from "@/features/translation/utils/promptBuilder.js";
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
+import { AIConversationHelper } from "./utils/AIConversationHelper.js";
+import { AITextProcessor } from "./utils/AITextProcessor.js";
+import { ResponseFormat } from "@/shared/config/translationConstants.js";
 
 const logger = getScopedLogger(LOG_COMPONENTS.PROVIDERS, 'WebAI');
 
@@ -15,71 +17,64 @@ export class WebAIProvider extends BaseAIProvider {
   static type = "ai";
   static description = "WebAI service";
   static displayName = "WebAI";
-  static reliableJsonMode = false;
-  static supportsDictionary = true;
-  
-  // AI Provider capabilities - Standard API service settings
-  static supportsStreaming = true; // Enable streaming for segment-based real-time translation
-  static preferredBatchStrategy = 'smart';
-  static optimalBatchSize = 25; // Moderate batch size for external API
-  static maxComplexity = 400;
-  static supportsImageTranslation = false; // Depends on model
-  
-  // Batch processing strategy
-  static batchStrategy = 'json'; // Uses JSON format for batch translation
 
   constructor() {
     super(ProviderNames.WEBAI);
   }
 
-  
-  async _translateSingle(text, sourceLang, targetLang, translateMode, abortController) {
+  /**
+   * Internal implementation of the WebAI API call.
+   * @protected
+   */
+  async _callAI(systemPrompt, userText, options = {}) {
+    const { abortController, sessionId, expectedFormat, isBatch } = options;
+
     const [apiUrl, apiModel] = await Promise.all([
       getWebAIApiUrlAsync(),
       getWebAIApiModelAsync(),
     ]);
 
-    logger.info(`[WebAI] Using model: ${apiModel}`);
-    logger.info(`[WebAI] Starting translation: ${text.length} chars`);
+    this._validateConfig({ apiUrl, apiModel }, ["apiUrl", "apiModel"], `${this.providerName.toLowerCase()}-translation`);
 
-    // Validate configuration
-    this._validateConfig(
-      { apiUrl, apiModel },
-      ["apiUrl", "apiModel"],
-      `${this.providerName.toLowerCase()}-translation`
-    );
+    const turnNumber = await AIConversationHelper.claimNextTurn(sessionId, this.providerName);
+    logger.info(`[WebAI] Model: ${apiModel}${sessionId ? ` (Session: ${sessionId.substring(0, 15)}..., Turn: ${turnNumber})` : ''}`);
 
-    const prompt = await buildPrompt(
-      text,
-      sourceLang,
-      targetLang,
-      translateMode,
-      this.constructor.type
-    );
+    // WebAI uses a single prompt string instead of separate messages
+    // We combine the system prompt and user text into a final message
+    const finalMessage = `${systemPrompt}\n\nText to translate:\n${userText}`;
 
     const fetchOptions = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        message: prompt,
+        message: finalMessage,
         model: apiModel,
         images: [],
-        reset_session: this.shouldResetSession(),
+        max_tokens: 4096,
+        // Enforce JSON Mode for both Object and Batch (Array) contracts
+        ...((expectedFormat === ResponseFormat.JSON_OBJECT || expectedFormat === ResponseFormat.JSON_ARRAY) && { 
+          response_format: { type: "json_object" } 
+        })
       }),
     };
 
-    // Use unified API request handler
     const result = await this._executeRequest({
       url: apiUrl,
       fetchOptions,
-      extractResponse: (data) =>
-        typeof data.response === "string" ? data.response : undefined,
+      charCount: fetchOptions.body.length,
+      originalCharCount: isBatch ? AITextProcessor.estimateOriginalChars(userText) : userText.length,
+      extractResponse: (data) => typeof data.response === "string" ? data.response : undefined,
       context: `${this.providerName.toLowerCase()}-translation`,
       abortController,
+      sessionId
     });
 
-    logger.info(`[WebAI] Translation completed successfully`);
-    this.storeSessionContext({ model: apiModel, lastUsed: Date.now() });
-    return this._cleanAIResponse(result);
+    if (sessionId && result) {
+      await AIConversationHelper.updateSessionHistory(sessionId, userText, result);
+    }
+    
+    return result;
   }
 }
+
+export default WebAIProvider;

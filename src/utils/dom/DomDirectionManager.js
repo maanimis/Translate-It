@@ -1,18 +1,27 @@
 /**
  * DomDirectionManager - Shared logic for RTL/LTR direction management.
+ * 
+ * Strategy: "Directional Isolation"
+ * Applies direction and alignment only to the immediate containers of translated text,
+ * ensuring that global layouts (like headers, sidebars, and item rows with icons)
+ * remain unaffected.
  */
 
-import { RTL_LANGUAGES, BLOCK_TAGS, LAYOUT_TAGS, FORMATTING_TAGS } from './DomTranslatorConstants.js';
+import { 
+  BLOCK_TAGS, 
+  LAYOUT_TAGS, 
+  LAYOUT_DISPLAY_MODES, 
+  INTERACTIVE_TAGS
+} from './DomTranslatorConstants.js';
+import { LanguageDetectionService } from '@/shared/services/LanguageDetectionService.js';
 
-// --- 1. Core Utilities (Shared) ---
+// --- 1. Core Utilities ---
 
 /**
  * Checks if a language code is RTL
  */
 export function isRTL(langCode) {
-  if (!langCode) return false;
-  const base = langCode.toLowerCase().split('-')[0];
-  return RTL_LANGUAGES.has(base);
+  return LanguageDetectionService.isRTL(langCode);
 }
 
 /**
@@ -25,8 +34,6 @@ export const BIDI_MARKS = {
 
 /**
  * Removes BiDi control marks (RLM, LRM) from a string.
- * @param {string} text 
- * @returns {string}
  */
 export function stripBiDiMarks(text) {
   if (!text || typeof text !== 'string') return text;
@@ -34,213 +41,245 @@ export function stripBiDiMarks(text) {
 }
 
 /**
- * Detect text direction from actual text content (more accurate for mixed content)
- * Uses strong directional character detection following Unicode Bidirectional Algorithm principles
- * @param {string} text - Text to analyze
- * @returns {string} 'rtl' or 'ltr'
+ * Detect text direction from actual text content.
+ * Biased towards target language for translated content.
  */
-export function detectDirectionFromContent(text = '') {
-  if (!text || typeof text !== 'string') return 'ltr';
-
-  const trimmedText = text.trim();
-  if (trimmedText.length === 0) return 'ltr';
-
-  // Count RTL and LTR STRONG characters (ignore neutral/weak characters)
-  let rtlStrongCount = 0;
-  let ltrStrongCount = 0;
-
-  // Track first strong character position
-  let firstRTLIndex = -1;
-  let firstLTRIndex = -1;
-
-  for (let i = 0; i < trimmedText.length; i++) {
-    const code = trimmedText.codePointAt(i);
-    // Skip next surrogate if it's a high surrogate
-    if (code > 0xFFFF) i++;
-
-    // RTL Strong characters: Arabic, Hebrew, Syriac, Thaana, etc.
-    const isRTLStrong = (
-      (code >= 0x0590 && code <= 0x05FF) ||  // Hebrew
-      (code >= 0x0600 && code <= 0x06FF) ||  // Arabic
-      (code >= 0x0700 && code <= 0x074F) ||  // Syriac
-      (code >= 0x0750 && code <= 0x077F) ||  // Arabic Supplement
-      (code >= 0x0780 && code <= 0x07BF) ||  // Thaana
-      (code >= 0x07C0 && code <= 0x07FF) ||  // NKo
-      (code >= 0x08A0 && code <= 0x08FF) ||  // Arabic Extended
-      (code >= 0xFB1D && code <= 0xFB4F) ||  // Hebrew Presentation Forms
-      (code >= 0xFB50 && code <= 0xFDFF) ||  // Arabic Presentation Forms
-      (code >= 0xFE70 && code <= 0xFEFF) ||  // Arabic Presentation Forms-B
-      (code === 0x200F)                      // Right-to-Left Mark
-    );
-
-    // LTR Strong characters: Latin, Greek, Cyrillic, etc.
-    const isLTRStrong = (
-      (code >= 0x0041 && code <= 0x005A) ||  // Basic Latin uppercase
-      (code >= 0x0061 && code <= 0x007A) ||  // Basic Latin lowercase
-      (code >= 0x00C0 && code <= 0x00D6) ||  // Latin-1 Supplement letters
-      (code >= 0x00D8 && code <= 0x00F6) ||  // Latin-1 Supplement letters
-      (code >= 0x00F8 && code <= 0x00FF) ||  // Latin-1 Supplement letters
-      (code >= 0x0100 && code <= 0x017F) ||  // Latin Extended-A
-      (code >= 0x0180 && code <= 0x024F) ||  // Latin Extended-B
-      (code >= 0x0250 && code <= 0x02AF) ||  // IPA Extensions
-      (code >= 0x0370 && code <= 0x03FF) ||  // Greek and Coptic
-      (code >= 0x0400 && code <= 0x04FF) ||  // Cyrillic
-      (code >= 0x0500 && code <= 0x052F) ||  // Cyrillic Supplement
-      (code >= 0x1E00 && code <= 0x1EFF) ||  // Latin Extended Additional
-      (code === 0x200E)                      // Left-to-Right Mark
-    );
-
-    if (isRTLStrong) {
-      rtlStrongCount++;
-      if (firstRTLIndex === -1) firstRTLIndex = i;
-    } else if (isLTRStrong) {
-      ltrStrongCount++;
-      if (firstLTRIndex === -1) firstLTRIndex = i;
-    }
-  }
-
-  if (rtlStrongCount === 0 && ltrStrongCount === 0) return 'ltr';
-
-  const totalStrong = rtlStrongCount + ltrStrongCount;
-  const rtlRatio = rtlStrongCount / totalStrong;
-
-  // Use majority with threshold
-  if (rtlRatio >= 0.6) return 'rtl';
-  if (rtlRatio <= 0.4) return 'ltr';
-
-  // Balanced content - Follow first strong character
-  return (firstRTLIndex !== -1 && (firstLTRIndex === -1 || firstRTLIndex < firstLTRIndex)) ? 'rtl' : 'ltr';
+export function detectDirectionFromContent(text = '', targetLanguage = null) {
+  return LanguageDetectionService.getDirection(text, targetLanguage);
 }
 
 /**
- * Identifies structural layout walls (should not be flipped)
+ * Identifies structural layout barriers that should not have their flow reversed.
+ * Uses standards-based detection (ARIA roles, CSS isolation, structural complexity).
  */
-function isLayoutContainer(el) {
+function isLayoutBarrier(el) {
   if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
-  
-  // NEVER flip direction for the root structural elements as it often causes horizontal scroll/overflow
-  if (el.tagName === 'BODY' || el.tagName === 'HTML' || el.tagName === 'MAIN' || el.tagName === 'ARTICLE' || el.tagName === 'SECTION') {
+  const tag = el.tagName.toUpperCase();
+
+  // 1. Standard Structural Barriers (Major HTML Tags)
+  if (LAYOUT_TAGS.has(tag)) return true;
+
+  // 2. Interactive and Media Elements (UI Components)
+  if (INTERACTIVE_TAGS.has(tag) || tag === 'SVG' || tag === 'IMG' || tag === 'VIDEO' || tag === 'CANVAS') return true;
+
+  // 3. Custom Elements (Web Components) - Standard W3C check (tags with hyphens)
+  if (tag.includes('-')) return true;
+
+  // 4. Semantic ARIA Roles (Standard layout roles)
+  const role = el.getAttribute('role');
+  if (role && ['article', 'listitem', 'region', 'group', 'main', 'complementary', 'navigation', 'search'].includes(role)) {
     return true;
   }
-  
-  if (LAYOUT_TAGS.has(el.tagName)) return true;
 
   const style = window.getComputedStyle(el);
-  const isLayoutDisplay = style.display === 'flex' || style.display === 'grid';
-  
-  // If it's a layout engine (flex/grid) with multiple children, don't flip it
-  if (isLayoutDisplay && el.children.length > 1) return true;
 
-  // If it has explicit width or height, it might be a rigid layout part
-  if (el.style.width || el.style.height || style.width.includes('px') || style.maxWidth !== 'none') {
-    // Only allow if it's a very small text-centric tag
-    if (!BLOCK_TAGS.has(el.tagName)) return true;
+  // 5. Layout Engine Check (Flex/Grid)
+  // Even with one child, they are structural boundaries.
+  if (LAYOUT_DISPLAY_MODES.has(style.display)) return true;
+
+  // 6. CSS Containment & Isolation (Explicit Web Standards)
+  if (style.isolation === 'isolate' || (style.contain && style.contain !== 'none')) return true;
+
+  // 7. Scrolling Containers are always barriers
+  if (style.overflow !== 'visible' && (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth)) {
+    return true;
   }
 
-  const hasBlockChildren = Array.from(el.children).some(child => {
-    const childStyle = window.getComputedStyle(child);
-    return !FORMATTING_TAGS.has(child.tagName) || childStyle.display === 'block' || childStyle.display === 'flex';
-  });
-  
-  return hasBlockChildren;
+  // 8. Structural Complexity Check
+  // If it has multiple children and those are block-level or structural, it's a container.
+  if (el.children.length > 1) {
+    const hasBlockChildren = Array.from(el.children).some(child => {
+      const childTag = child.tagName.toUpperCase();
+      // If child is a block tag or has block-like display
+      if (BLOCK_TAGS.has(childTag)) return true;
+      
+      const childStyle = window.getComputedStyle(child);
+      return ['block', 'flex', 'grid', 'list-item'].includes(childStyle.display);
+    });
+    
+    if (hasBlockChildren) return true;
+  }
+
+  return false;
 }
 
 /**
- * Checks if we should apply text-align: start to an element.
- * Respects existing 'center' or 'justify' alignments.
+ * Determines if text alignment should be preserved based on explicit styles.
  */
-function shouldApplyStartAlignment(element) {
-  if (!BLOCK_TAGS.has(element.tagName)) return false;
-  
-  const computedStyle = window.getComputedStyle(element);
-  const textAlign = computedStyle.textAlign;
-  
-  // If the element is already centered or justified, keep it that way.
-  // These are positional intents that should persist across languages.
-  return textAlign !== 'center' && textAlign !== 'justify';
+function getPreservedAlignment(element) {
+  // Use computed style to detect alignment from CSS classes (especially for center/justify)
+  const style = window.getComputedStyle(element);
+  const computedAlign = style.textAlign;
+
+  // 1. Always preserve 'center' and 'justify' - they are intentional design choices
+  // regardless of whether they come from inline styles or CSS classes.
+  if (computedAlign === 'center' || computedAlign === 'justify') {
+    return computedAlign;
+  }
+
+  // 2. Check for explicit inline style alignment for left/right.
+  // We only preserve 'left' or 'right' if they are set as inline styles.
+  // This is because we want to allow the system to change direction-based
+  // alignment (like default left) to right for RTL, but respect
+  // explicit overrides.
+  const inlineAlign = element.style.textAlign;
+  if (inlineAlign === 'left' || inlineAlign === 'right') {
+    return inlineAlign;
+  }
+
+  // 3. Check for legacy align attribute
+  const alignAttr = element.getAttribute('align');
+  if (alignAttr === 'center' || alignAttr === 'justify') return alignAttr;
+
+  // For Block tags, if no explicit style exists, we let it follow direction.
+  if (BLOCK_TAGS.has(element.tagName.toUpperCase())) {
+    // If we're translating to RTL, and it's currently effectively LTR,
+    // we return null to allow the application logic to set 'right' safely.
+    return null;
+  }
+
+  return null;
 }
 
-// --- 2. State Management (Internal) ---
+// --- 2. Styles Management ---
 
-/**
- * Saves original styles to data-attributes before modification
- */
 function saveOriginalStyles(element) {
-  if (!element || element.hasAttribute('data-dir-original-saved')) return;
+  if (!element || element.nodeType !== Node.ELEMENT_NODE || element.hasAttribute('data-dir-original-saved')) return;
+  
   element.setAttribute('data-original-direction', element.style.direction || '');
   element.setAttribute('data-original-text-align', element.style.textAlign || '');
+  element.setAttribute('data-original-unicode-bidi', element.style.unicodeBidi || '');
+  element.setAttribute('data-original-max-width', element.style.maxWidth || '');
+  
+  const originalDir = element.getAttribute('dir');
+  if (originalDir !== null) element.setAttribute('data-original-dir', originalDir);
+  
   element.setAttribute('data-dir-original-saved', 'true');
 }
 
-// --- 3. Application Logic ---
+// --- 3. Core Application Logic ---
 
 /**
- * Surgical Application: Finds the smallest safe container for a text node and aligns it.
- * Commonly used by both Select Element and Page Translation.
+ * Surgical Application: Applies isolated direction to text containers.
  */
 export function applyNodeDirection(textNode, targetLanguage, rootElement = null) {
   const isTargetRTL = isRTL(targetLanguage);
-  const targetDir = isTargetRTL ? 'rtl' : 'ltr';
+  const detectedDir = detectDirectionFromContent(textNode.textContent, targetLanguage);
+  const targetDir = detectedDir || (isTargetRTL ? 'rtl' : 'ltr');
   
   let container = textNode.parentElement;
-  let lastSafeContainer = null;
+  let level = 0;
 
-  while (container && container !== document.body) {
-    if (isLayoutContainer(container)) break;
-    lastSafeContainer = container;
-    if (container === rootElement) break;
-    container = container.parentElement;
-  }
+  while (container && container !== document.body && container !== document.documentElement) {
+    const tag = container.tagName.toUpperCase();
+    const isBlock = BLOCK_TAGS.has(tag);
+    
+    // Stop if we hit a layout barrier (like a flex row with an avatar)
+    // But allow at least 1 level of application to the immediate parent.
+    if (level > 0 && isLayoutBarrier(container)) break;
+    
+    const currentAppliedDir = container.getAttribute('data-translate-dir');
 
-  if (lastSafeContainer) {
-    if (lastSafeContainer.style.direction !== targetDir) {
-      saveOriginalStyles(lastSafeContainer);
-      lastSafeContainer.style.direction = targetDir;
-      
-      if (shouldApplyStartAlignment(lastSafeContainer)) {
-        lastSafeContainer.style.textAlign = 'start';
+    // Apply isolation and direction
+    if (!(targetDir === 'ltr' && currentAppliedDir === 'rtl')) {
+      if (container.style.direction !== targetDir || !currentAppliedDir) {
+        saveOriginalStyles(container);
+        
+        // 1. Apply Directional Isolation
+        container.style.direction = targetDir;
+        container.style.unicodeBidi = 'isolate';
+        
+        // 2. Surgical isolation: Prevent long translated strings from pushing parent width
+        if (isBlock) {
+          container.style.maxWidth = '100%';
+        }
+        
+        // 3. Handle Text Alignment for Block elements
+        if (isTargetRTL && isBlock) {
+          const preserved = getPreservedAlignment(container, targetLanguage);
+          // Only force 'right' if no explicit alignment exists
+          if (!preserved) {
+            container.style.textAlign = 'right';
+          }
+        }
+        
+        container.setAttribute('data-translate-dir', targetDir);
       }
-      
-      lastSafeContainer.setAttribute('data-translate-dir', targetDir);
     }
+
+    // Surgical stops
+    if (rootElement && container === rootElement) break;
+    if (rootElement && !container.contains(rootElement) && container !== rootElement) break;
+    
+    container = container.parentElement;
+    level++;
   }
 }
 
 /**
- * Direct Application: Applies direction to a specific element container.
- * Primarily used by Select Element for high-level container management.
+ * Direct Application: For high-level element management.
  */
 export function applyElementDirection(element, targetLanguage) {
-  if (!element || element.nodeType !== Node.ELEMENT_NODE || isLayoutContainer(element)) return;
+  if (!element || element.nodeType !== Node.ELEMENT_NODE) return;
+  if (isLayoutBarrier(element)) return;
 
   const isTargetRTL = isRTL(targetLanguage);
-  const directionAttr = isTargetRTL ? 'rtl' : 'ltr';
+  const detectedDir = detectDirectionFromContent(element.textContent, targetLanguage);
+  const targetDir = detectedDir || (isTargetRTL ? 'rtl' : 'ltr');
 
   saveOriginalStyles(element);
-
-  element.style.direction = directionAttr;
-  if (shouldApplyStartAlignment(element)) {
-    element.style.textAlign = 'start';
+  
+  element.style.direction = targetDir;
+  element.style.unicodeBidi = 'isolate';
+  element.style.maxWidth = '100%';
+  
+  if (isTargetRTL && BLOCK_TAGS.has(element.tagName.toUpperCase())) {
+    const preserved = getPreservedAlignment(element, targetLanguage);
+    if (!preserved) {
+      element.style.textAlign = 'right';
+    }
   }
-  element.setAttribute('data-translate-dir', directionAttr);
+  
+  element.setAttribute('data-translate-dir', targetDir);
 }
 
 // --- 4. Restoration Logic ---
 
 /**
- * Reverts CSS direction changes using the saved original styles.
- * Primarily used by Page Translation to restore the whole page state.
+ * Reverts CSS direction changes.
  */
 export function restoreElementDirection(element) {
   if (!element || element.nodeType !== Node.ELEMENT_NODE) return;
 
   const restore = (el) => {
     if (el.hasAttribute('data-dir-original-saved')) {
-      el.style.direction = el.getAttribute('data-original-direction') || '';
-      el.style.textAlign = el.getAttribute('data-original-text-align') || '';
-      
+      const origDir = el.getAttribute('data-original-direction');
+      const origAlign = el.getAttribute('data-original-text-align');
+      const origBidi = el.getAttribute('data-original-unicode-bidi');
+      const origMaxW = el.getAttribute('data-original-max-width');
+
+      if (origDir) el.style.direction = origDir;
+      else el.style.removeProperty('direction');
+
+      if (origAlign) el.style.textAlign = origAlign;
+      else el.style.removeProperty('text-align');
+
+      if (origBidi) el.style.unicodeBidi = origBidi;
+      else el.style.removeProperty('unicode-bidi');
+
+      if (origMaxW) el.style.maxWidth = origMaxW;
+      else el.style.removeProperty('max-width');
+
+      if (el.hasAttribute('data-original-dir')) {
+        el.setAttribute('dir', el.getAttribute('data-original-dir'));
+      } else {
+        el.removeAttribute('dir');
+      }
+
       el.removeAttribute('data-original-direction');
       el.removeAttribute('data-original-text-align');
+      el.removeAttribute('data-original-unicode-bidi');
+      el.removeAttribute('data-original-dir');
       el.removeAttribute('data-dir-original-saved');
       el.removeAttribute('data-translate-dir');
       el.removeAttribute('data-page-translated');
@@ -250,4 +289,10 @@ export function restoreElementDirection(element) {
 
   restore(element);
   element.querySelectorAll('[data-dir-original-saved]').forEach(restore);
+  
+  let parent = element.parentElement;
+  while (parent) {
+    restore(parent);
+    parent = parent.parentElement;
+  }
 }

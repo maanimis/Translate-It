@@ -4,18 +4,28 @@
     v-if="mode === 'split'"
     ref="selectorRef"
     class="ti-split-translate-button-container"
-    :class="{ 'ti-dropdown-open': isDropdownOpen }"
+    :class="{ 'ti-dropdown-open': isDropdownOpen, 'is-disabled': disabled }"
     v-bind="$attrs"
   >
-    <div class="ti-split-translate-button">
+    <div
+      class="ti-split-translate-button"
+      :class="{ 'ti-is-loading': loading }"
+    >
       <button
         type="submit"
         class="ti-translate-main-area"
-        :title="t('popup_translate_button_title') || 'ترجمه'"
-        :disabled="isTranslating || disabled"
+        :title="loading ? (t('popup_stop_button_title') || 'توقف') : (t('popup_translate_button_title') || 'ترجمه')"
+        :disabled="disabled"
         @click="handleTranslate"
+        @keydown="handleKeydown"
       >
+        <Icon 
+          v-if="loading"
+          icon="fa6-solid:square" 
+          class="ti-api-provider-icon ti-stop-icon"
+        />
         <img
+          v-else
           :src="currentProviderIcon"
           alt="API Provider"
           class="ti-api-provider-icon"
@@ -24,9 +34,11 @@
         <span>{{ t('popup_translate_button_text') || 'ترجمه' }}</span>
       </button>
       <button 
+        ref="triggerBtnRef"
         type="button"
         class="ti-provider-dropdown-area"
         :class="{ 'ti-active': isDropdownOpen }"
+        :disabled="disabled"
         @click.stop="toggleDropdown"
         @keydown="handleKeydown"
       >
@@ -35,6 +47,7 @@
           alt="Dropdown"
           type="inline"
           class="ti-dropdown-arrow"
+          :disabled="disabled"
         />
       </button>
     </div>
@@ -43,12 +56,14 @@
     <div 
       v-if="isDropdownOpen"
       class="ti-provider-dropdown-menu"
+      :class="{ 'ti-open-upward': isUpward }"
       :style="{ maxHeight: dropdownMaxHeight + ' !important' }"
       @click.stop
     >
       <div
         ref="dropdownMenuRef"
         class="ti-provider-dropdown-list"
+        @mouseleave="focusedIndex = -1"
       >
         <div
           v-for="(provider, index) in availableProviders"
@@ -123,12 +138,14 @@
     v-else-if="mode === 'button'"
     ref="selectorRef"
     class="ti-provider-button-container"
-    :class="{ 'ti-dropdown-open': isDropdownOpen }"
+    :class="{ 'ti-dropdown-open': isDropdownOpen, 'is-disabled': disabled }"
     v-bind="$attrs"
   >
     <button
+      ref="triggerBtnRef"
       class="ti-provider-button"
       :class="{ 'ti-active': isDropdownOpen }"
+      :disabled="disabled"
       @click="toggleDropdown"
       @keydown="handleKeydown"
     >
@@ -145,6 +162,7 @@
         type="inline"
         class="dropdown-arrow"
         :class="{ rotated: isDropdownOpen }"
+        :disabled="disabled"
       />
     </button>
     
@@ -152,12 +170,14 @@
     <div 
       v-if="isDropdownOpen"
       class="ti-provider-dropdown-menu"
+      :class="{ 'ti-open-upward': isUpward }"
       :style="{ maxHeight: dropdownMaxHeight + ' !important' }"
       @click.stop
     >
       <div
         ref="dropdownMenuRef"
         class="ti-provider-dropdown-list"
+        @mouseleave="focusedIndex = -1"
       >
         <div
           v-for="(provider, index) in availableProviders"
@@ -232,13 +252,15 @@
     v-else-if="mode === 'icon-only'"
     ref="selectorRef"
     class="ti-provider-icon-only-container"
-    :class="{ 'ti-dropdown-open': isDropdownOpen }"
+    :class="{ 'ti-dropdown-open': isDropdownOpen, 'is-disabled': disabled }"
     v-bind="$attrs"
   >
     <button
+      ref="triggerBtnRef"
       class="ti-provider-icon-button"
       :class="{ 'ti-active': isDropdownOpen }"
       :title="currentProviderName"
+      :disabled="disabled"
       @click="toggleDropdown"
       @keydown="handleKeydown"
     >
@@ -261,6 +283,7 @@
       <div
         ref="dropdownMenuRef"
         class="ti-provider-dropdown-list"
+        @mouseleave="focusedIndex = -1"
       >
         <div
           v-for="(provider, index) in availableProviders"
@@ -335,12 +358,14 @@
     v-else-if="mode === 'mobile'"
     ref="selectorRef"
     class="ti-provider-mobile-container"
-    :class="{ 'ti-dropdown-open': isDropdownOpen }"
+    :class="{ 'ti-dropdown-open': isDropdownOpen, 'is-disabled': disabled }"
     v-bind="$attrs"
   >
     <button
+      ref="triggerBtnRef"
       class="ti-provider-mobile-button"
       :class="{ 'ti-active': isDropdownOpen }"
+      :disabled="disabled"
       @click="toggleDropdown"
       @keydown="handleKeydown"
     >
@@ -357,6 +382,7 @@
         type="inline"
         class="dropdown-arrow"
         :class="{ rotated: isDropdownOpen }"
+        :disabled="disabled"
       />
     </button>
     
@@ -371,6 +397,7 @@
       <div
         ref="dropdownMenuRef"
         class="ti-provider-dropdown-list"
+        @mouseleave="focusedIndex = -1"
       >
         <div
           v-for="(provider, index) in availableProviders"
@@ -398,12 +425,14 @@
   <div
     v-else
     class="ti-provider-compact-container"
+    :class="{ 'is-disabled': disabled }"
     v-bind="$attrs"
   >
     <select
       :value="currentProvider"
       class="ti-provider-select"
       :class="{ 'is-dark': settingsStore.isDarkTheme }"
+      :disabled="disabled"
       @change="handleProviderChange"
     >
       <option
@@ -419,7 +448,7 @@
 
 <script setup>
 import './ProviderSelector.scss'
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useSettingsStore } from '@/features/settings/stores/settings.js'
 import { useTranslationStore } from '@/features/translation/stores/translation.js'
 import { useErrorHandler } from '@/composables/shared/useErrorHandler.js'
@@ -429,6 +458,7 @@ import { getProvidersForDropdown, getProviderById } from '@/core/provider-regist
 import IconButton from './IconButton.vue'
 import { Icon } from '@iconify/vue'
 import browser from 'webextension-polyfill'
+import ExtensionContextManager from '@/core/extensionContext.js'
 import { getScopedLogger } from '@/shared/logging/logger.js'
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js'
 import { useResourceTracker } from '@/composables/core/useResourceTracker.js'
@@ -469,11 +499,15 @@ const props = defineProps({
   allowDefault: {
     type: Boolean,
     default: false
+  },
+  loading: {
+    type: Boolean,
+    default: false
   }
 })
 
 // Emits
-const emit = defineEmits(['translate', 'provider-change', 'update:modelValue'])
+const emit = defineEmits(['translate', 'cancel', 'provider-change', 'update:modelValue'])
 
 // Stores
 const settingsStore = useSettingsStore()
@@ -483,14 +517,12 @@ const { isSelectModeActive, deactivateSelectMode } = useSelectElementTranslation
 
 // State
 const selectorRef = ref(null)
+const triggerBtnRef = ref(null)
 const dropdownMenuRef = ref(null)
 const isDropdownOpen = ref(false)
 const isUpward = ref(false)
-const isTranslating = ref(false)
 const focusedIndex = ref(-1)
 const dropdownMaxHeight = ref('400px')
-
-import { nextTick } from 'vue'
 
 // Handle keyboard navigation
 const handleKeydown = (event) => {
@@ -516,7 +548,18 @@ const handleKeydown = (event) => {
       }
       return
     }
-    if (key === 'Enter' || key === ' ') {
+    if (key === 'Enter') {
+      event.preventDefault()
+      // In split mode, Enter triggers translation instead of opening dropdown
+      if (props.mode === 'split') {
+        handleTranslate()
+      } else {
+        toggleDropdown()
+        focusedIndex.value = currentIndex !== -1 ? currentIndex : 0
+      }
+      return
+    }
+    if (key === ' ') {
       event.preventDefault()
       toggleDropdown()
       focusedIndex.value = currentIndex !== -1 ? currentIndex : 0
@@ -546,7 +589,7 @@ const handleKeydown = (event) => {
       break
     case 'Escape':
     case 'Tab':
-      isDropdownOpen.value = false
+      closeDropdown()
       break
   }
 }
@@ -554,15 +597,31 @@ const handleKeydown = (event) => {
 const scrollToFocused = () => {
   nextTick(() => {
     if (dropdownMenuRef.value) {
-      const focusedEl = dropdownMenuRef.value.children[focusedIndex.value]
+      const container = dropdownMenuRef.value
+      const items = container.children
+      const focusedEl = items[focusedIndex.value]
+      
       if (focusedEl) {
-        focusedEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        const containerTop = container.scrollTop
+        const containerBottom = containerTop + container.clientHeight
+        const elementTop = focusedEl.offsetTop
+        const elementBottom = elementTop + focusedEl.offsetHeight
+
+        if (elementTop < containerTop) {
+          // Scroll up to show element at top
+          container.scrollTo({ top: elementTop, behavior: 'smooth' })
+        } else if (elementBottom > containerBottom) {
+          // Scroll down to show element at bottom
+          container.scrollTo({ top: elementBottom - container.clientHeight, behavior: 'smooth' })
+        }
       }
     }
   })
 }
 
-// Handle click outside to close dropdown (Shadow DOM compatible)
+/**
+ * Handle click outside to close dropdown (Shadow DOM compatible)
+ */
 const handleClickOutside = (event) => {
   if (!isDropdownOpen.value || !selectorRef.value) return
 
@@ -571,16 +630,48 @@ const handleClickOutside = (event) => {
   
   // If the component container is NOT in the event path, the click was outside
   if (!path.includes(selectorRef.value)) {
-    isDropdownOpen.value = false
+    closeDropdown()
   }
 }
 
-const availableProviders = ref([])
+/**
+ * Computed list of providers based on current settings and props
+ */
+const availableProviders = computed(() => {
+  // Use provider registry for consistent provider information
+  // Pass current debug mode state to allow/hide mock provider dynamically
+  const debugMode = settingsStore.settings?.DEBUG_MODE || false;
+  const providersFromRegistry = getProvidersForDropdown(debugMode);
+  
+  const mappedProviders = providersFromRegistry.map(provider => ({
+    id: provider.id,
+    name: provider.name,
+    icon: provider.icon
+  }));
+
+  if (props.allowDefault) {
+    const defaultProviderId = settingsStore.settings?.TRANSLATION_API || 'googlev2';
+    const defaultProvider = getProviderById(defaultProviderId);
+    
+    return [
+      { 
+        id: 'default', 
+        name: t('provider_default') || 'Default', 
+        icon: defaultProvider?.icon || 'providers/google.svg' 
+      },
+      ...mappedProviders
+    ];
+  }
+  
+  return mappedProviders;
+});
 
 // Ephemeral Sync State from store
 const ephemeralSync = computed(() => translationStore.ephemeralSync)
 
-// Computed
+/**
+ * Currently selected provider ID
+ */
 const currentProvider = computed(() => {
   if (props.modelValue) return props.modelValue
   return settingsStore.settings.TRANSLATION_API
@@ -596,7 +687,9 @@ const currentProviderName = computed(() => {
   return provider?.name || 'Google Translate'
 })
 
-// Helper to determine if a provider icon should be inverted in dark mode
+/**
+ * Helper to determine if a provider icon should be inverted in dark mode
+ */
 const isProviderInverted = (providerId) => {
   let effectiveId = providerId
   
@@ -605,11 +698,13 @@ const isProviderInverted = (providerId) => {
     effectiveId = settingsStore.settings?.TRANSLATION_API || 'googlev2'
   }
   
-  const blackIcons = ['deepl', 'openai', 'openrouter']
+  const blackIcons = ['deepl', 'openai', 'openrouter', 'webai']
   return blackIcons.includes(effectiveId)
 }
 
-// Helper to get effective provider ID for sync icons
+/**
+ * Helper to get effective provider ID for sync icons
+ */
 const getEffectiveProviderId = (type) => {
   const isSynced = ephemeralSync.value[type]
   if (isSynced) return currentProvider.value
@@ -620,22 +715,38 @@ const getEffectiveProviderId = (type) => {
   return settingsStore.settings?.MODE_PROVIDERS?.[TranslationMode.Select_Element] || settingsStore.settings.TRANSLATION_API
 }
 
-// Methods
+/**
+ * Resolves a provider icon URL safely
+ */
 const getProviderIcon = (iconPath) => {
-  // Use runtime.getURL for extension icons
-  if (!browser || !browser.runtime || !browser.runtime.getURL) return '/icons/providers/google.svg'
-
-  if (!iconPath) return browser.runtime.getURL('icons/providers/google.svg')
-  if (iconPath.startsWith('@/assets/')) {
-    const cleanPath = iconPath.replace('@/assets/', 'icons/')
-    return browser.runtime.getURL(cleanPath)
+  try {
+    const fallback = 'icons/providers/google.svg';
+    
+    if (!iconPath) return ExtensionContextManager.safeGetURL(fallback);
+    
+    let path = iconPath;
+    if (iconPath.startsWith('@/assets/')) {
+      path = iconPath.replace('@/assets/', 'icons/')
+    } else if (!iconPath.includes('/')) {
+      path = `icons/providers/${iconPath}`;
+    } else if (!iconPath.startsWith('icons/')) {
+      path = `icons/${iconPath}`;
+    }
+    
+    return ExtensionContextManager.safeGetURL(path, fallback);
+  } catch (error) {
+    if (ExtensionContextManager.isContextError(error)) {
+      ExtensionContextManager.handleContextError(error, 'ProviderSelector:getProviderIcon');
+    } else {
+      logger.error('[getProviderIcon] Failed to resolve icon URL:', error);
+    }
+    return ExtensionContextManager.GENERIC_FALLBACK_ICON;
   }
-  if (iconPath.includes('/')) {
-    return browser.runtime.getURL(`icons/${iconPath}`)
-  }
-  return browser.runtime.getURL(`icons/providers/${iconPath}`)
 }
 
+/**
+ * Resolves the icon for sync rows
+ */
 const getEffectiveIcon = (type) => {
   const isSynced = ephemeralSync.value[type]
   let providerId;
@@ -658,6 +769,9 @@ const getEffectiveIcon = (type) => {
   return getProviderIcon(provider?.icon || 'providers/google.svg')
 }
 
+/**
+ * Toggles provider synchronization for specific modes
+ */
 const toggleSync = (type) => {
   translationStore.ephemeralSync[type] = !translationStore.ephemeralSync[type]
   
@@ -668,28 +782,29 @@ const toggleSync = (type) => {
   logger.debug(`[ProviderSelector] Toggled sync for ${type}:`, translationStore.ephemeralSync[type])
 }
 
+/**
+ * Handles the main translation button click (split mode)
+ */
 const handleTranslate = () => {
-  logger.debug('🗳️ Translate button clicked!', {
+  logger.debug('Translate/Stop button clicked!', {
     currentProvider: currentProvider.value,
-    isTranslating: isTranslating.value,
+    loading: props.loading,
     mode: props.mode
   })
   
-  if (isTranslating.value) {
-    logger.debug('⏳ Translation already in progress, ignoring click')
-    return
+  if (props.loading) {
+    emit('cancel')
+  } else {
+    emit('translate', { provider: currentProvider.value })
   }
-  
-  isTranslating.value = true
-  emit('translate', { provider: currentProvider.value })
-  
-  // Reset after a delay using ResourceTracker (actual implementation should listen for translation completion)
-  tracker.trackTimeout(() => {
-    isTranslating.value = false
-  }, 1000)
 }
 
+/**
+ * Toggles the provider selection dropdown
+ */
 const toggleDropdown = () => {
+  if (props.disabled) return;
+
   // Deactivate select element mode if it's active when user interacts with this control
   if (isSelectModeActive.value) {
     deactivateSelectMode();
@@ -707,37 +822,51 @@ const toggleDropdown = () => {
     nextTick(() => {
       if (selectorRef.value) {
         const rect = selectorRef.value.getBoundingClientRect();
+        const isFloatingWindow = selectorRef.value.closest('.ti-window');
         
-        // Find the nearest scrollable container or sheet content that might clip us
-        const container = selectorRef.value.closest('.ti-m-sheet-content, .ti-window-body');
-        const containerRect = container ? container.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+        // Mobile-specific sheet container detection
+        const mobileContainer = selectorRef.value.closest('.ti-m-sheet-content');
+        const sidepanelContainer = selectorRef.value.closest('.ti-sidepanel-container');
+        const container = mobileContainer || sidepanelContainer || selectorRef.value.closest('.ti-window-body');
+        
+        // For floating windows or when outside a specific container, use viewport
+        const useViewport = !container || isFloatingWindow;
+        const containerRect = useViewport 
+          ? { top: 0, bottom: window.innerHeight } 
+          : container.getBoundingClientRect();
         
         const spaceBelow = containerRect.bottom - rect.bottom;
         const spaceAbove = rect.top - containerRect.top;
         
-        // If space below is less than 250px and there's more space above, open upwards
-        isUpward.value = spaceBelow < 250 && spaceAbove > spaceBelow;
+        const isOptionsPage = window.location.href.includes('options.html');
+
+        if (props.mode === 'mobile') {
+          // On mobile, downward is almost always preferred to avoid sheet header clipping
+          // Only go upward if space below is less than 220px and space above is significant
+          isUpward.value = spaceBelow < 220 && spaceAbove > spaceBelow;
+        } else if (isOptionsPage || !props.isGlobal || isFloatingWindow) {
+          // For floating windows, prioritize downward unless space is very tight
+          const flipThreshold = isFloatingWindow ? 180 : 250;
+          isUpward.value = spaceBelow < flipThreshold && spaceAbove > spaceBelow;
+        } else {
+          isUpward.value = spaceBelow < 100 && spaceAbove > spaceBelow;
+        }
 
         const availableHeight = isUpward.value 
-          ? spaceAbove - 16 // Space above within container
-          : spaceBelow - 16; // Space below within container
+          ? spaceAbove - 20
+          : spaceBelow - 20;
         
-        // Detect if we are in an Extension Popup or Sidepanel
-        const isPopupOrSidepanel = props.isGlobal || window.innerWidth < 600;
+        // Large limit for desktop floating windows, smaller for mobile
+        const maxLimit = isFloatingWindow ? 650 : (props.mode === 'mobile' ? 350 : (props.isGlobal ? 400 : 550));
         
-        // Use a smarter limit:
-        // In Popup: max 400px
-        // In Shadow DOM: max 600px (ideal for standard desktop viewports)
-        // BUT always constrained by the actual available space
-        const maxLimit = isPopupOrSidepanel ? 400 : 600;
-        
-        dropdownMaxHeight.value = `${Math.min(maxLimit, Math.max(150, availableHeight))}px`;
+        // Final height calculation
+        dropdownMaxHeight.value = `${Math.min(maxLimit, Math.max(250, availableHeight))}px`;
       }
       scrollToFocused();
     });
   }
 
-  logger.debug('🔧 Provider selector dropdown toggled!', {
+  logger.debug('Provider selector dropdown toggled!', {
     currentState: isDropdownOpen.value,
     newState: newState,
     direction: isUpward.value ? 'up' : 'down'
@@ -746,8 +875,22 @@ const toggleDropdown = () => {
   isDropdownOpen.value = newState;
 }
 
+/**
+ * Closes the dropdown and restores focus to the trigger button
+ */
+const closeDropdown = () => {
+  isDropdownOpen.value = false;
+  // Return focus to trigger button to prevent focus jumping to tab/top of page
+  nextTick(() => {
+    triggerBtnRef.value?.focus();
+  });
+}
+
+/**
+ * Selects a new provider and emits changes
+ */
 const selectProvider = async (provider) => {
-  logger.debug('🔧 Provider selected!', {
+  logger.debug('Provider selected!', {
     providerId: provider.id,
     providerName: provider.name || 'Unknown',
     mode: props.mode,
@@ -760,26 +903,36 @@ const selectProvider = async (provider) => {
 
     if (props.isGlobal) {
       await settingsStore.updateSettingAndPersist('TRANSLATION_API', provider.id)
-      logger.debug('✅ Global provider updated successfully:', provider.id)
+      logger.debug('Global provider updated successfully:', provider.id)
     } else {
-      logger.debug('✅ Local provider selected:', provider.id)
+      logger.debug('Local provider selected:', provider.id)
     }
     
     emit('update:modelValue', provider.id)
     emit('provider-change', provider.id)
-    isDropdownOpen.value = false
+    closeDropdown()
+
+    // Auto-trigger translation in split mode after selecting a provider
+    if (props.mode === 'split' && !props.disabled) {
+      emit('translate', { provider: provider.id })
+    }
   } catch (error) {
-    logger.error('❌ Failed to update provider:', error)
+    logger.error('Failed to update provider:', error)
     await handleError(error, 'provider-selector-change')
   }
 }
 
+/**
+ * Handles change for compact select mode
+ */
 const handleProviderChange = (event) => {
-  logger.debug('🔧 Provider change event triggered:', event.target.value)
+  logger.debug('Provider change event triggered:', event.target.value)
   selectProvider({ id: event.target.value })
 }
 
-// Storage change handler for cross-context updates
+/**
+ * Storage change handler for cross-context updates
+ */
 const handleStorageChange = (changes, areaName) => {
   if (areaName === 'sync' || areaName === 'local') {
     if (changes.TRANSLATION_API) {
@@ -791,30 +944,6 @@ const handleStorageChange = (changes, areaName) => {
 
 // Initialize providers
 onMounted(() => {
-  // Use provider registry for consistent provider information
-  const providersFromRegistry = getProvidersForDropdown()
-  const mappedProviders = providersFromRegistry.map(provider => ({
-    id: provider.id,
-    name: provider.name,
-    icon: provider.icon
-  }))
-
-  if (props.allowDefault) {
-    const defaultProviderId = settingsStore.settings?.TRANSLATION_API || 'googlev2';
-    const defaultProvider = getProviderById(defaultProviderId);
-    
-    availableProviders.value = [
-      { 
-        id: 'default', 
-        name: t('provider_default') || 'Default', 
-        icon: defaultProvider?.icon || 'providers/google.svg' 
-      },
-      ...mappedProviders
-    ]
-  } else {
-    availableProviders.value = mappedProviders
-  }
-  
   /**
    * USE CAPTURE PHASE FOR CLICK-OUTSIDE
    * Why? Content script UI often uses @click.stop to prevent events from reaching the host page.
@@ -831,6 +960,5 @@ onMounted(() => {
 
 onUnmounted(() => {
   // Event listener cleanup is now handled automatically by useResourceTracker
-  // No manual cleanup needed!
 })
 </script>

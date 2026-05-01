@@ -111,6 +111,8 @@ export class TranslationHandler {
       // Create promise for result
       const resultPromise = this._createTranslationPromise(messageId);
 
+      const isAIContextEnabled = settingsManager.get('AI_CONTEXT_TRANSLATION_ENABLED', true);
+
       // Prepare payload (force source language to 'auto')
       const payload = {
         text: selectedText,
@@ -119,6 +121,7 @@ export class TranslationHandler {
         provider: finalProvider,
         messageId: messageId,
         mode: translationMode,
+        contextMetadata: isAIContextEnabled ? { pageTitle: document.title } : null,
         options: { ...options }
       };
 
@@ -137,6 +140,7 @@ export class TranslationHandler {
             sourceLanguage: payload.from,
             targetLanguage: payload.to,
             mode: payload.mode,
+            contextMetadata: payload.contextMetadata,
             options: payload.options
           }
         });
@@ -157,7 +161,8 @@ export class TranslationHandler {
         
         return { 
           translatedText: ackOrResult.translatedText,
-          targetLanguage: payload.to,
+          sourceLanguage: ackOrResult.sourceLanguage || ackOrResult.detectedSourceLanguage || payload.from,
+          targetLanguage: ackOrResult.targetLanguage || payload.to,
           provider: payload.provider
         };
       }
@@ -184,7 +189,8 @@ export class TranslationHandler {
         
         return { 
           translatedText: final.translatedText,
-          targetLanguage: payload.to,
+          sourceLanguage: final.sourceLanguage || final.detectedSourceLanguage || payload.from,
+          targetLanguage: final.targetLanguage || payload.to,
           provider: payload.provider
         }
       }
@@ -245,10 +251,16 @@ export class TranslationHandler {
     return new Promise((resolve, reject) => {
       // Set timeout
       const timeout = setTimeout(() => {
+        // Double check if the request is still active before rejecting
+        if (!this.activeRequests.has(messageId)) return;
+        
+        const request = this.activeRequests.get(messageId);
         this.activeRequests.delete(messageId);
 
         // Create timeout error
         const timeoutError = new Error('Translation timeout');
+        timeoutError.type = 'TIMEOUT';
+        timeoutError.messageId = messageId;
 
         // Handle through ErrorHandler for proper error management
         if (ExtensionContextManager.isValidSync()) {
@@ -261,7 +273,9 @@ export class TranslationHandler {
           });
         }
 
-        reject(timeoutError);
+        if (request && typeof request.reject === 'function') {
+          request.reject(timeoutError);
+        }
       }, WindowsConfig.TIMEOUTS.TRANSLATION_TIMEOUT);
 
       // Store request info for central handler to find
@@ -331,6 +345,7 @@ export class TranslationHandler {
       this._cleanupRequest(messageId);
       request.resolve({
         translatedText: message.data.translatedText,
+        sourceLanguage: message.data.sourceLanguage || message.data.detectedSourceLanguage,
         targetLanguage: message.data.targetLanguage
       });
       return true;

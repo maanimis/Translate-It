@@ -1,6 +1,6 @@
 // src/core/providers/GoogleTranslateProvider.js
 import { BaseTranslateProvider } from "@/features/translation/providers/BaseTranslateProvider.js";
-import {
+import { 
   getGoogleTranslateUrlAsync,
   getEnableDictionaryAsync
 } from "@/shared/config/config.js";
@@ -8,8 +8,9 @@ import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { TranslationMode } from "@/shared/config/config.js";
 import { TRANSLATION_CONSTANTS } from "@/shared/config/translationConstants.js";
-import { LANGUAGE_NAME_TO_CODE_MAP } from "@/shared/config/languageConstants.js";
+import { getProviderLanguageCode } from "@/shared/config/languageConstants.js";
 import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
+import { TraditionalTextProcessor } from "./utils/TraditionalTextProcessor.js";
 
 const logger = getScopedLogger(LOG_COMPONENTS.PROVIDERS, 'GoogleTranslate');
 
@@ -19,9 +20,10 @@ export class GoogleTranslateProvider extends BaseTranslateProvider {
   static displayName = "Google Translate (Classic)";
   static reliableJsonMode = false;
   static supportsDictionary = true;
-  static CHAR_LIMIT = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.GOOGLE;
 
-  // BaseTranslateProvider capabilities
+  // BaseTranslateProvider capabilities (Default values)
+  // NOTE: Character limits and chunk sizes are now dynamically managed 
+  // by ProviderConfigurations.js based on the active Optimization Level.
   static supportsStreaming = TRANSLATION_CONSTANTS.SUPPORTS_STREAMING.GOOGLE;
   static chunkingStrategy = TRANSLATION_CONSTANTS.CHUNKING_STRATEGIES.GOOGLE;
   static characterLimit = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.GOOGLE;
@@ -32,9 +34,7 @@ export class GoogleTranslateProvider extends BaseTranslateProvider {
   }
 
   _getLangCode(lang) {
-    if (!lang || typeof lang !== "string") return "auto";
-    const lowerCaseLang = lang.toLowerCase();
-    return LANGUAGE_NAME_TO_CODE_MAP[lowerCaseLang] || lowerCaseLang;
+    return getProviderLanguageCode(lang, 'GOOGLE');
   }
 
   /**
@@ -44,9 +44,14 @@ export class GoogleTranslateProvider extends BaseTranslateProvider {
    * @param {string} targetLang - Target language
    * @param {string} translateMode - Translation mode
    * @param {AbortController} abortController - Cancellation controller
+   * @param {number} retryAttempt - Current retry attempt
+   * @param {number} segmentCount - Total number of segments in this chunk
+   * @param {number} chunkIndex - Current chunk index
+   * @param {number} totalChunks - Total number of chunks
+   * @param {Object} options - Additional options (sessionId, originalCharCount)
    * @returns {Promise<string[]>} - Translated texts for this chunk
    */
-  async _translateChunk(chunkTexts, sourceLang, targetLang, translateMode, abortController) {
+  async _translateChunk(chunkTexts, sourceLang, targetLang, translateMode, abortController, retryAttempt, segmentCount, chunkIndex, totalChunks, options = {}) {
     const context = `${this.providerName.toLowerCase()}-translate-chunk`;
     const isDictionaryEnabled = await getEnableDictionaryAsync();
 
@@ -94,6 +99,9 @@ export class GoogleTranslateProvider extends BaseTranslateProvider {
           return { translatedText: "", candidateText: "" };
         }
 
+        // Capture detected source language from metadata (index 2 in Google's legacy response)
+        this._setDetectedLanguage(data[2]);
+
         const translatedText = data[0].map(segment => segment[0]).join('');
         
         let candidateText = "";
@@ -112,21 +120,26 @@ export class GoogleTranslateProvider extends BaseTranslateProvider {
       },
       context,
       abortController,
+      charCount: this._calculateTraditionalCharCount(chunkTexts),
+      sessionId: options.sessionId,
+      originalCharCount: options.originalCharCount || TraditionalTextProcessor.calculateTraditionalCharCount(chunkTexts)
     });
-
-    // Use robust split logic from base class OUTSIDE extractResponse
-    const translatedSegments = await this._robustSplit(result?.translatedText || "", chunkTexts);
 
     // Handle dictionary formatting for single segment
     if (chunkTexts.length === 1 && result?.candidateText) {
       const formattedDictionary = this._formatDictionaryAsMarkdown(result.candidateText);
-      return [`${translatedSegments[0]}\n\n${formattedDictionary}`];
+      const translatedWithDict = `${result.translatedText}\n\n${formattedDictionary}`;
+      
+      // Add completion log for dictionary case
+      logger.info(`[Google] Translation with dictionary completed successfully`);
+      return translatedWithDict;
     }
 
-    const finalResult = translatedSegments || chunkTexts;
+    // Return translated text. Coordinator will handle robust splitting for multiple segments.
+    const finalResult = result?.translatedText || chunkTexts.join(TRANSLATION_CONSTANTS.TEXT_DELIMITER);
 
     // Add completion log for successful translation
-    if (finalResult.length > 0) {
+    if (finalResult) {
       logger.info(`[Google] Translation completed successfully`);
     }
 

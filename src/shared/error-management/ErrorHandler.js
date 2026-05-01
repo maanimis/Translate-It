@@ -50,6 +50,12 @@ export class ErrorHandler {
 
   async handle(err, meta = {}) {
     if (this.handling) return err;
+    
+    // SECOND LAYER: If context is already invalidated, exit immediately and silently
+    if (!ExtensionContextManager.isValidSync()) {
+      return err;
+    }
+
     this.handling = true;
     
     try {
@@ -58,14 +64,39 @@ export class ErrorHandler {
       try {
         if (err instanceof Error) {
           raw = err.message || err.name || 'Error object';
-        } else if (typeof err === 'object' && err !== null) {
-          raw = typeof err.message === 'string' ? err.message : (err.type || err.code || 'Object error');
+        } else if (err && typeof err === 'object') {
+          raw = err.message || err.error || err.statusText || err.reason || err.type || err.code;
+          
+          if (!raw && err !== null) {
+             try {
+               const cleanErr = { ...err };
+               delete cleanErr.partialResults;
+               raw = JSON.stringify(cleanErr);
+               if (raw === '{}') raw = '';
+             } catch {
+               raw = '';
+             }
+          }
+          
+          if (!raw) {
+            raw = (typeof err.toString === 'function' && err.toString() !== '[object Object]') ? err.toString() : 'Unknown technical error';
+          }
         } else {
           raw = String(err || 'Unknown error');
         }
       } catch {
         raw = 'Error processing failed';
       }
+
+      // CRITICAL SECURITY FIX: Redact API keys from the raw error message before logging
+      const redactKeys = (text) => {
+        if (!text || typeof text !== 'string') return text;
+        return text
+          .replace(/(key|api_key)=([a-zA-Z0-9_-]+)/gi, '$1=***') // Mask URL params
+          .replace(/(AIzaSy)[a-zA-Z0-9_-]{35}/g, '$1***'); // Mask standard Gemini key pattern
+      };
+      
+      const sanitizedRaw = redactKeys(raw);
 
       // Handle extension context errors silently
       if (ExtensionContextManager.isContextError(err)) {
@@ -83,14 +114,14 @@ export class ErrorHandler {
         // Decide whether to use raw message or localized generic message
         const shouldUseGeneric = CRITICAL_CONFIG_ERRORS.has(type) || FATAL_ERRORS.has(type);
         
-        if (!shouldUseGeneric && raw && raw.length > 5 && 
-            !raw.includes('[object Object]') && !raw.startsWith('Error:')) {
-          msg = raw;
+        if (!shouldUseGeneric && typeof sanitizedRaw === 'string' && sanitizedRaw.length > 5 && 
+            !sanitizedRaw.includes('[object Object]') && !sanitizedRaw.startsWith('Error:')) {
+          msg = sanitizedRaw;
         } else {
           msg = genericMsg;
         }
       } catch {
-        msg = raw || 'An error occurred';
+        msg = (typeof sanitizedRaw === 'string' ? sanitizedRaw : '') || 'An error occurred';
       }
       
       const displayStrategy = getErrorDisplayStrategy(meta.context || 'unknown', type);
@@ -108,8 +139,9 @@ export class ErrorHandler {
       
       // Logging
       if (this.debugMode && !shouldSuppressConsole(type)) {
-        const logLevel = enhancedMeta.showToast ? 'error' : 'debug';
-        logger[logLevel](`[${type}] ${raw}`, err.stack);
+        const logLevel = (enhancedMeta.showToast || enhancedMeta.showInUI) ? 'error' : 'debug';
+        const logPrefix = `[${type}]${enhancedMeta.context ? ` (${enhancedMeta.context})` : ''}`;
+        logger[logLevel](logPrefix, err);
       }
 
       if (isSilentError(type)) return err;
@@ -161,7 +193,15 @@ export class ErrorHandler {
         };
       }
 
-      const raw = err instanceof Error ? err.message : String(err);
+      let raw = 'Unknown Error';
+      if (err instanceof Error) {
+        raw = err.message || err.name || 'Error object';
+      } else if (err && typeof err === 'object') {
+        raw = typeof err.message === 'string' ? err.message : (err.type || err.code || 'Object error');
+      } else {
+        raw = String(err || 'Unknown error');
+      }
+
       const type = matchErrorToType(err);
       
       let msg;
@@ -169,13 +209,13 @@ export class ErrorHandler {
         const localizedMsg = await getErrorMessage(type);
         const shouldUseGeneric = CRITICAL_CONFIG_ERRORS.has(type) || FATAL_ERRORS.has(type);
 
-        if (!shouldUseGeneric && raw && raw.length > 5 && !raw.includes('[object Object]')) {
+        if (!shouldUseGeneric && typeof raw === 'string' && raw.length > 5 && !raw.includes('[object Object]')) {
           msg = raw;
         } else {
-          msg = localizedMsg || raw || 'An error occurred';
+          msg = localizedMsg || (typeof raw === 'string' ? raw : '') || 'An error occurred';
         }
       } catch {
-        msg = raw || 'An error occurred';
+        msg = (typeof raw === 'string' ? raw : '') || 'An error occurred';
       }
       
       return {
@@ -200,7 +240,7 @@ export class ErrorHandler {
   }
 
   _notifyUser(message, type, options = {}) {
-    if (this.displayedErrors.has(message)) return;
+    if (!message || typeof message !== 'string' || this.displayedErrors.has(message)) return;
 
     const toastType = getErrorToastType(type);
     

@@ -5,11 +5,9 @@ import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { revertHandler } from './RevertHandler.js';
 import { applyTranslationToTextField } from '../smartTranslationIntegration.js';
-// ErrorHandler will be imported dynamically when needed
-import { ErrorTypes } from '@/shared/error-management/ErrorTypes.js';
+import { ErrorHandler } from '@/shared/error-management/ErrorHandler.js';
 import { pageEventBus } from '@/core/PageEventBus.js';
 import ResourceTracker from '@/core/memory/ResourceTracker.js';
-// createMessageHandler will be imported dynamically when needed
 
 // Singleton instance for ContentMessageHandler
 let contentMessageHandlerInstance = null;
@@ -31,31 +29,7 @@ export class ContentMessageHandler extends ResourceTracker {
     this.selectElementManager = null;
     this.iFrameManager = null;
     this.pageTranslationManager = null;
-
-    // Initialize error handler lazily when needed
-    this._errorHandler = null;
-
-    // Add getter for errorHandler
-    Object.defineProperty(this, 'errorHandler', {
-      get: async function() {
-        if (!this._errorHandler) {
-          try {
-            const { ErrorHandler } = await import('@/shared/error-management/ErrorHandler.js');
-            this._errorHandler = ErrorHandler.getInstance();
-          } catch {
-            // Fallback: create a simple error handler
-            this._errorHandler = {
-              handle: (err, context) => {
-                console.error('Error:', err, context);
-                return err;
-              }
-            };
-          }
-        }
-        return this._errorHandler;
-      },
-      configurable: true
-    });
+    this.errorHandler = ErrorHandler.getInstance();
 
     // Track processed message IDs to prevent duplicates
     this.processedMessageIds = new Set();
@@ -151,14 +125,22 @@ export class ContentMessageHandler extends ResourceTracker {
           });
         }
 
+        // Register DebugModeBridge handlers
+        try {
+          const { debugModeBridge } = await import('@/shared/logging/DebugModeBridge.js');
+          const debugHandlers = debugModeBridge.getHandlerMappings();
+          for (const [action, handler] of Object.entries(debugHandlers)) {
+            messageHandler.registerHandler(action, handler);
+          }
+          this.logger.info('Registered DebugModeBridge handlers');
+        } catch (error) {
+          this.logger.warn('Failed to register DebugModeBridge handlers:', error);
+        }
+
         // Store reference to message handler
         this.messageHandler = messageHandler;
 
-        this.logger.info(`✅ ContentMessageHandler registered ${this.handlers.size} handlers`);
-        // logger.trace('Handler details:', {
-        //   hasRevertHandler: this.handlers.has('revertTranslation'),
-        //   usingContentScriptCore: !!contentScriptCore
-        // });
+        this.logger.info(`ContentMessageHandler registered ${this.handlers.size} handlers`);
       } else {
         throw new Error('No valid message handler available');
       }
@@ -166,7 +148,7 @@ export class ContentMessageHandler extends ResourceTracker {
       // Activate the message listener if we created our own
       if (!contentScriptCore && this.messageHandler && !this.messageHandler.isListenerActive) {
         this.messageHandler.listen();
-        this.logger.info('✅ ContentMessageHandler message listener activated');
+        this.logger.info('ContentMessageHandler message listener activated');
       }
 
       // If using ContentScriptCore's message handler, it should already be listening
@@ -288,11 +270,20 @@ export class ContentMessageHandler extends ResourceTracker {
   }
 
   async handleActivateSelectElementMode(message) {
-    // logger.trace(`[ContentMessageHandler] handleActivateSelectElementMode called for tab: ${message.data?.tabId || 'current'}`);
     this.logger.info("ContentMessageHandler: ACTIVATE_SELECT_ELEMENT_MODE received!");
 
     try {
-      // If SelectElementManager is not available, try to load the feature on-demand
+      // 1. Explicitly check if allowed NOW (in case settings changed after load)
+      const { ExclusionChecker } = await import('@/features/exclusion/core/ExclusionChecker.js');
+      const exclusionChecker = ExclusionChecker.getInstance();
+      const isAllowed = await exclusionChecker.isFeatureAllowed('selectElement');
+      
+      if (!isAllowed) {
+        this.logger.debug('Select Element mode activation blocked by page exclusion or settings');
+        return { success: false, error: 'Feature blocked on this page' };
+      }
+
+      // 2. If SelectElementManager is not available, try to load the feature on-demand
       if (!this.selectElementManager) {
         try {
           // Import and load the selectElement feature directly
@@ -302,14 +293,15 @@ export class ContentMessageHandler extends ResourceTracker {
           if (selectElementHandler) {
             this.setSelectElementManager(selectElementHandler);
           } else {
-            throw new Error('selectElement feature failed to load');
+            // This happens if the feature is blocked by exclusion (returns null)
+            this.logger.debug('Select Element mode activation blocked by page exclusion or settings');
+            return { success: false, error: 'Feature blocked on this page' };
           }
         } catch (loadError) {
-          throw new Error(`SelectElementManager not available - FeatureManager dependency injection may have failed and on-demand loading also failed: ${loadError.message}`);
+          this.logger.info('Failed to load SelectElement feature on-demand:', loadError);
+          return { success: false, error: 'Feature failed to load' };
         }
       }
-
-      // logger.trace("ContentMessageHandler: Activating SelectElementManager directly");
 
       // Initialize if not already initialized
       if (!this.selectElementManager.isInitialized) {
@@ -318,46 +310,29 @@ export class ContentMessageHandler extends ResourceTracker {
 
       // Activate Select Element mode
       const result = await this.selectElementManager.activateSelectElementMode(message.data || {});
-      this.logger.info("SelectElementManager activated successfully");
+      this.logger.info("SelectElementManager activation process completed");
 
       // Return success result
-      return { success: true, activated: result.isActive, managerId: result.instanceId };
+      return { 
+        success: result !== false, 
+        activated: result?.isActive ?? (result !== false), 
+        managerId: result?.instanceId 
+      };
       
     } catch (error) {
-      this.logger.error("ContentMessageHandler: SelectElement activation failed:", error);
+      this.logger.warn("ContentMessageHandler: SelectElement activation failed:", error);
       
-      // Use centralized error handling for better error classification
-      const errorHandler = await this.errorHandler;
-      
-      // Determine error type and provide meaningful response
-      let errorType = ErrorTypes.UNKNOWN;
-      let userMessage = "Failed to activate Select Element mode";
-      
-      // Check for specific error conditions
-      if (error.message.includes('Extension context')) {
-        errorType = ErrorTypes.CONTEXT;
-        userMessage = "Extension context invalidated. Please refresh the page.";
-      } else if (error.message.includes('permission') || error.message.includes('restricted')) {
-        errorType = ErrorTypes.PERMISSION;
-        userMessage = "Feature not available on this page";
-      } else if (error.message.includes('initialization') || error.message.includes('initialize')) {
-        errorType = ErrorTypes.INTEGRATION;
-        userMessage = "Feature initialization failed. Please refresh the page.";
-      }
-      
-      // Log the error with proper context
-      await errorHandler.handle(error, {
-        type: errorType,
-        context: "ContentMessageHandler-activateSelectElement",
-        showToast: false // Don't show toast for background-triggered actions
-      });
+      // Use centralized error management to get classified error type and localized message
+      const errorInfo = await this.errorHandler.getErrorForUI(error, "ContentMessageHandler-activateSelectElement");
+
+      // Log as debug for internal tracking (silence red log)
+      this.logger.debug("Error details for SelectElement activation:", { error, errorInfo });
       
       return { 
         success: false, 
-        error: userMessage, 
+        error: errorInfo.message, 
         activated: false,
-        errorType: errorType,
-        isCompatibilityIssue: true // Explicitly mark as compatibility issue, not restriction
+        errorType: errorInfo.type
       };
     }
   }
@@ -372,10 +347,6 @@ export class ContentMessageHandler extends ResourceTracker {
 
       // Only process deactivation if it's explicit or from non-background sources
       if (fromBackground && !isExplicitDeactivation) {
-        // logger.trace('Ignoring implicit deactivation from background', {
-        //   fromBackground,
-        //   isExplicitDeactivation
-        // });
         return { success: true, activated: this.selectElementManager ? this.selectElementManager.isSelectElementActive() : false };
       }
 
@@ -387,11 +358,10 @@ export class ContentMessageHandler extends ResourceTracker {
 
         return { success: true, activated: false };
       } catch (error) {
-        this.logger.error("ContentMessageHandler: selectElementManager deactivation failed:", error);
+        this.logger.warn("ContentMessageHandler: selectElementManager deactivation failed:", error);
         return { success: false, error: error.message };
       }
     } else {
-      // logger.trace("ContentMessageHandler: Deactivate request received but selectElementManager is null - this is normal if not activated");
       return { success: true, activated: false };
     }
   }
@@ -459,34 +429,18 @@ export class ContentMessageHandler extends ResourceTracker {
             window.pendingTranslationToastId = null;
           }
           
-          // Extract error message safely
-          let errorMessage;
-          if (typeof error === 'string' && error.length > 0) {
-            errorMessage = error;
-          } else if (error && typeof error === 'object' && error.message) {
-            errorMessage = error.message;
-          } else if (error) {
-            try {
-              errorMessage = JSON.stringify(error);
-                        } catch {
-              errorMessage = 'Translation failed';
-            }
-          } else {
-            errorMessage = 'Translation failed';
-          }
+          // Use centralized error handling system to get localized message and correct type
+          const errorInfo = await this.errorHandler.getErrorForUI(error, 'text-field-translation');
           
-          // Create error object with original error message
-          const translationError = new Error(errorMessage);
-          translationError.originalError = error;
-          
-          // Use centralized error handling
-          const errorHandler = await this.errorHandler;
-          await errorHandler.handle(translationError, {
+          // Log the error with proper context
+          await this.errorHandler.handle(error, {
             context: 'text-field-translation',
-            type: ErrorTypes.TRANSLATION_FAILED,
+            type: errorInfo.type,
             showToast: true
           });
           
+          const translationError = new Error(errorInfo.message);
+          translationError.type = errorInfo.type;
           translationError.alreadyHandled = true;
           throw translationError;
         }
@@ -504,11 +458,12 @@ export class ContentMessageHandler extends ResourceTracker {
           // Only log if error is not already handled
           this.logger.error('Field translation failed during application:', error);
           
-          // Use centralized error handling
-          const errorHandler = await this.errorHandler;
-          await errorHandler.handle(error, {
+          // Use centralized error handling system
+          const errorInfo = await this.errorHandler.getErrorForUI(error, 'text-field-application');
+          
+          await this.errorHandler.handle(error, {
             context: 'text-field-application',
-            type: ErrorTypes.TRANSLATION_FAILED,
+            type: errorInfo.type,
             showToast: true
           });
           
@@ -647,6 +602,26 @@ export class ContentMessageHandler extends ResourceTracker {
     }
 
     try {
+      // Ensure Vue app is loaded so mobileStore can track translation state
+      if (window.translateItContentCore && !window.translateItContentCore.vueLoaded) {
+        try {
+          this.logger.debug('Loading Vue app for page translation state tracking...');
+          // Only load Vue app if the method exists (Main frame only)
+        if (typeof window.translateItContentCore?.loadVueApp === 'function') {
+          await window.translateItContentCore.loadVueApp();
+        } else if (process.env.NODE_ENV === 'development') {
+          this.logger.debug('Skipping loadVueApp in this context (likely iframe)');
+        }
+          this.logger.info('Vue app loaded for page translation state tracking');
+        } catch (vueError) {
+          this.logger.warn('Failed to load Vue app, translation will continue without UI state sync:', vueError);
+        }
+      } else if (window.translateItContentCore && window.translateItContentCore.vueLoaded) {
+        this.logger.debug('Vue app already loaded, ready for state tracking');
+      } else {
+        this.logger.warn('translateItContentCore not available, UI state sync may not work');
+      }
+
       // If PageTranslationManager is not available, try to load the feature on-demand
       if (!this.pageTranslationManager) {
         try {
@@ -671,25 +646,39 @@ export class ContentMessageHandler extends ResourceTracker {
       // Execute page translation - PASS message.data to support options like { isAuto: true }
       const result = await this.pageTranslationManager.translatePage(message.data || {});
 
-      this.logger.info('Page translation completed', {
-        translatedCount: result.translatedCount,
-        totalNodes: result.totalNodes
-      });
+      // Log appropriate message based on whether this is auto-translation (async) or immediate completion
+      if (result.isAutoTranslating) {
+        this.logger.info('Page translation started (auto-translate mode)', {
+          messageId: result.messageId,
+          url: result.url
+        });
+      } else if (result.translatedCount !== undefined || result.totalNodes !== undefined) {
+        this.logger.info('Page translation completed', {
+          translatedCount: result.translatedCount,
+          totalNodes: result.totalNodes
+        });
+      } else {
+        this.logger.info('Page translation initiated', {
+          messageId: result.messageId,
+          url: result.url
+        });
+      }
 
       return result;
 
     } catch (error) {
       this.logger.error('Page translation failed:', error);
 
-      // Use centralized error handling
-      const errorHandler = await this.errorHandler;
-      await errorHandler.handle(error, {
-        type: ErrorTypes.TRANSLATION_FAILED,
+      // Use centralized error handling system
+      const errorInfo = await this.errorHandler.getErrorForUI(error, 'page-translation');
+
+      await this.errorHandler.handle(error, {
+        type: errorInfo.type,
         context: 'page-translation',
         showToast: true
       });
 
-      return { success: false, error: error.message };
+      return { success: false, error: errorInfo.message, errorType: errorInfo.type };
     }
   }
 
@@ -712,21 +701,29 @@ export class ContentMessageHandler extends ResourceTracker {
     } catch (error) {
       this.logger.error('Page restore failed:', error);
 
-      // Use centralized error handling
-      const errorHandler = await this.errorHandler;
-      await errorHandler.handle(error, {
-        type: ErrorTypes.TRANSLATION_FAILED,
+      // Use centralized error handling system
+      const errorInfo = await this.errorHandler.getErrorForUI(error, 'page-restore');
+
+      await this.errorHandler.handle(error, {
+        type: errorInfo.type,
         context: 'page-restore',
         showToast: true
       });
 
-      return { success: false, error: error.message };
+      return { success: false, error: errorInfo.message, errorType: errorInfo.type };
     }
   }
 
   async handlePageGetStatus() {
     this.logger.debug('Page translation status request received');
 
+    // 1. PRIORITY: If we are in the top frame, use the aggregated status from index-main
+    if (window === window.top && typeof window.getGlobalPageTranslationStatus === 'function') {
+      const status = window.getGlobalPageTranslationStatus();
+      return { ...status, isAggregated: true };
+    }
+
+    // 2. FALLBACK: Use local manager status (for iframes or if aggregator is missing)
     if (!this.pageTranslationManager) {
       try {
         const { loadFeature } = await import('@/core/content-scripts/chunks/lazy-features.js');

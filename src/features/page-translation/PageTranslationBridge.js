@@ -6,17 +6,19 @@ import {
 } from 'domtranslator';
 import { createNodesFilter } from 'domtranslator/utils/nodes';
 import { applyNodeDirection, isRTL, restoreElementDirection, BIDI_MARKS } from '@/utils/dom/DomDirectionManager.js';
-import { pageTranslationLookup } from './utils/PageTranslationLookup.js';
+import { hoverPreviewLookup } from '@/features/shared/hover-preview/HoverPreviewLookup.js';
 import { 
   PAGE_TRANSLATION_ATTRIBUTES, 
   PAGE_TRANSLATION_SELECTORS
 } from './PageTranslationConstants.js';
+import { getScopedLogger } from '@/shared/logging/logger.js';
+import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import ResourceTracker from '@/core/memory/ResourceTracker.js';
 
 export class PageTranslationBridge extends ResourceTracker {
-  constructor(logger) {
+  constructor() {
     super('page-translation-bridge');
-    this.logger = logger;
+    this.logger = getScopedLogger(LOG_COMPONENTS.PAGE_TRANSLATION, 'Bridge');
     this.session = null;
     this.showOriginalOnHover = true; // Initial default
   }
@@ -29,7 +31,7 @@ export class PageTranslationBridge extends ResourceTracker {
     const isTargetRTL = isRTL(settings.targetLanguage);
 
     // Reset lookup for a new session
-    pageTranslationLookup.clear();
+    hoverPreviewLookup.clear();
 
     const currentSession = {
       intersectionScheduler: null,
@@ -45,9 +47,14 @@ export class PageTranslationBridge extends ResourceTracker {
     /**
      * Standard translator callback for domtranslator.
      * Note: In domtranslator 1.x, the constructor callback ONLY receives (text, score).
-     * The 'node' argument is NOT passed here. We handle direction in the wrapped methods below.
+     * We synchronously capture the current node before any async work to prevent de-sync.
      */
     const translateWithContext = async (text, score) => {
+      // CRITICAL: Capture the node IMMEDIATELY as the first line.
+      // Since domtranslator's walk is synchronous, this is the only safe way 
+      // to link the text to the node before the event loop yields.
+      const node = nodesTranslator.currentNode;
+
       if (!text || !text.trim()) return text;
 
       // 1. Capture original whitespace to preserve formatting
@@ -58,12 +65,12 @@ export class PageTranslationBridge extends ResourceTracker {
       const trimmedText = text.trim();
 
       // 2. Request translation for trimmed text
-      const translated = await onTranslateCallback(trimmedText, sessionContext, score);
+      // We pass the node as the 4th argument
+      const translated = await onTranslateCallback(trimmedText, sessionContext, score, node);
       
       // FIX: Only apply marks if the text was actually translated (different from original)
       if (translated && translated !== trimmedText) {
         // 3. Inject BiDi Isolation Mark (RLM/LRM) directly into the string.
-        // This provides immediate string-level direction correction even before CSS is applied.
         const mark = isTargetRTL ? BIDI_MARKS.RLM : BIDI_MARKS.LRM;
         
         return leadingWhitespace + mark + translated + trailingWhitespace;
@@ -73,6 +80,23 @@ export class PageTranslationBridge extends ResourceTracker {
     };
 
     const nodesTranslator = new NodesTranslator(translateWithContext);
+
+    /**
+     * MONKEY-PATCH: Capture the node being processed by NodesTranslator.
+     * This allows us to pass the node to the scheduler for visibility checks.
+     * We set it directly on the instance as the walk is synchronous.
+     */
+    const originalTranslate = nodesTranslator.translate;
+    nodesTranslator.translate = function(node, callback) {
+      this.currentNode = node;
+      return originalTranslate.call(this, node, callback);
+    };
+
+    const originalUpdate = nodesTranslator.update;
+    nodesTranslator.update = function(node, callback) {
+      this.currentNode = node;
+      return originalUpdate.call(this, node, callback);
+    };
 
     /**
      * FIX: Since domtranslator doesn't pass the node to the constructor's callback,
@@ -86,9 +110,9 @@ export class PageTranslationBridge extends ResourceTracker {
         // This is used for the "Show original on hover" feature.
         if (bridge.showOriginalOnHover && node) {
           if (node.nodeType === Node.TEXT_NODE) {
-            pageTranslationLookup.add(node, node.textContent);
+            hoverPreviewLookup.add(node, node.textContent);
           } else if (node.nodeType === Node.ATTRIBUTE_NODE) {
-            pageTranslationLookup.add(node, node.value);
+            hoverPreviewLookup.add(node, node.value);
           }
         }
 
@@ -138,7 +162,7 @@ export class PageTranslationBridge extends ResourceTracker {
           return originalFn.call(this, node, wrappedCallback);
         } catch (e) {
           if (e.message && e.message.includes('already been translated')) {
-            bridge.logger.warn('Node already translated, skipping.', node);
+            bridge.logger.debug('Node already translated, skipping.', node);
             return; // Silently ignore this specific error
           }
           throw e;

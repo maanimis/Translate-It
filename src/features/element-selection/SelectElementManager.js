@@ -1,5 +1,4 @@
-// SelectElementManager - Simplified Manager using domtranslator
-// Reduced from ~1,265 lines to ~300 lines by using domtranslator library
+// SelectElementManager - Specialized Manager for Select Element
 // Single responsibility: Manage Select Element mode lifecycle and interactions
 
 import ResourceTracker from '@/core/memory/ResourceTracker.js';
@@ -9,26 +8,32 @@ import { pageEventBus, WINDOWS_MANAGER_EVENTS } from '@/core/PageEventBus.js';
 import { sendMessage } from '@/shared/messaging/core/UnifiedMessaging.js';
 import { MessageActions } from '@/shared/messaging/core/MessageActions.js';
 import ExtensionContextManager from '@/core/extensionContext.js';
-import { matchErrorToType } from '@/shared/error-management/ErrorMatcher.js';
-import { ErrorTypes } from '@/shared/error-management/ErrorTypes.js';
+import { isFatalError, isCancellationError } from '@/shared/error-management/ErrorMatcher.js';
 import { getSettingsAsync } from '@/shared/config/config.js';
 import { NOTIFICATION_TIME, TRANSLATION_STATUS } from '@/shared/config/constants.js';
 import { getTranslationString } from '@/utils/i18n/i18n.js';
+import { shouldShowProviderWarning } from '@/shared/utils/warning-manager.js';
 import { ProviderRegistryIds } from '@/features/translation/providers/ProviderConstants.js';
 import { deviceDetector } from '@/utils/browser/compatibility.js';
-import { useMobileStore } from '@/store/modules/mobile.js';
+
+// Hover manager for original text preview
+import { hoverPreviewManager } from '@/features/shared/hover-preview/HoverPreviewManager.js';
+import { getSelectElementShowOriginalOnHoverAsync } from '@/shared/config/config.js';
+
+// Import CSS as inline string
+import selectionStyles from './SelectElement.scss?inline';
 
 // Import new simplified services
 import { DomTranslatorAdapter } from './core/DomTranslatorAdapter.js';
 import { ElementSelector } from './core/ElementSelector.js';
 import { extractTextFromElement, isValidTextElement } from './utils/elementHelpers.js';
 
-// Import notification manager (keeping as-is)
+// Import notification manager
 import { getSelectElementNotificationManager } from './SelectElementNotificationManager.js';
 
 /**
- * Simplified SelectElementManager using domtranslator library
- * Major reduction in complexity by leveraging battle-tested library
+ * SelectElementManager - Coordinates the interactive Select Element mode.
+ * Uses a specialized DomTranslatorAdapter optimized for AI/DeepL context and token efficiency.
  */
 class SelectElementManager extends ResourceTracker {
   constructor() {
@@ -39,7 +44,7 @@ class SelectElementManager extends ResourceTracker {
     this.isProcessingClick = false;
     this.isInitialized = false;
     this.instanceId = Math.random().toString(36).substring(7);
-    this.isInIframe = window !== window.top;
+    this.isTopFrame = window === window.top;
 
     // Logger
     this.logger = getScopedLogger(LOG_COMPONENTS.ELEMENT_SELECTION, 'SelectElementManager');
@@ -48,7 +53,10 @@ class SelectElementManager extends ResourceTracker {
     this.domTranslatorAdapter = new DomTranslatorAdapter();
     this.elementSelector = new ElementSelector();
 
-    // Track services for ResourceTracker cleanup
+    // Store instance globally for cross-component detection
+    window.selectElementManagerInstance = this;
+
+    // Track services
     this.trackResource('dom-translator-adapter', () => {
       if (this.domTranslatorAdapter) {
         this.domTranslatorAdapter.cleanup?.();
@@ -63,8 +71,9 @@ class SelectElementManager extends ResourceTracker {
       }
     }, { isCritical: true });
 
-    // Notification manager (singleton)
     this.notificationManager = null;
+    this.baseNotificationManager = null;
+    this.contextWatchdogInterval = null;
 
     // Event handlers (bound)
     this.handleMouseOver = this.handleMouseOver.bind(this);
@@ -76,186 +85,147 @@ class SelectElementManager extends ResourceTracker {
     this.handleInteraction = this.handleInteraction.bind(this);
     this.handleKeyDown = this.handleKeyDown.bind(this);
 
-    // Escape key flag
     window.selectElementHandlingESC = false;
-
-    this.logger.debug('New SelectElementManager instance created', {
-      instanceId: this.instanceId,
-      isInIframe: this.isInIframe,
-    });
   }
 
   /**
    * Initialize the manager and all services
    */
   async initialize() {
-    if (this.isInitialized) {
-      this.logger.debug('SelectElementManager already initialized, skipping');
-      return;
-    }
-
-    this.logger.debug('SelectElementManager.initialize() started');
-
+    if (this.isInitialized) return;
     try {
-      // Initialize services in parallel
       const [NotificationManagerModule] = await Promise.all([
         import('@/core/managers/core/NotificationManager.js'),
         this.domTranslatorAdapter.initialize(),
         this.elementSelector.initialize()
       ]);
 
-      // Get notification manager instance
       const baseNotificationManager = new NotificationManagerModule.default();
+      this.baseNotificationManager = baseNotificationManager;
       this.notificationManager = await getSelectElementNotificationManager(baseNotificationManager);
 
-      // Setup keyboard listener for ESC
       this.setupKeyboardListeners();
-
-      // Setup cancel listener
       this.setupCancelListener();
-
-      // Setup cross-frame communication
       this.setupCrossFrameCommunication();
 
-      // Listen for activation from PageEventBus (Mobile Dashboard)
-      // Use ResourceTracker's addEventListener for automatic cleanup
-      this.addEventListener(pageEventBus, MessageActions.ACTIVATE_SELECT_ELEMENT_MODE, (data) => {
-        this.logger.info('Activation requested via PageEventBus');
-        this.activateSelectElementMode(data || {}).catch(err => {
-          this.logger.error('Failed to activate from PageEventBus:', err);
-        });
-      });
-
-      // Listen for conflicting features (like Whole Page Translation)
-      this.addEventListener(pageEventBus, 'STOP_CONFLICTING_FEATURES', (data) => {
-        if (this.isActive && data?.source !== 'select-element') {
-          this.logger.info('Stopping Select Element mode due to conflicting feature:', data?.source);
-          this.deactivate({ silent: true });
+      // Initialize hover manager for original text preview if enabled
+      getSelectElementShowOriginalOnHoverAsync().then(enabled => {
+        if (enabled) {
+          hoverPreviewManager.initialize();
+          this.logger.debug('Hover manager initialized via SelectElementManager');
         }
       });
 
-      this.isInitialized = true;      this.logger.debug('SelectElementManager initialized successfully');
+      this.addEventListener(pageEventBus, MessageActions.ACTIVATE_SELECT_ELEMENT_MODE, (data) => {
+        this.activateSelectElementMode(data || {}).catch(() => {});
+      });
+
+      this.addEventListener(pageEventBus, 'STOP_CONFLICTING_FEATURES', (data) => {
+        if (this.isActive && data?.source !== 'select-element') {
+          this.deactivate({ silent: true, reason: 'conflict' });
+        }
+      });
+
+      this.isInitialized = true;
     } catch (error) {
-      this.logger.error('Error initializing SelectElementManager:', error);
+      this.logger.warn('Error initializing SelectElementManager:', error);
       throw error;
     }
   }
 
-  /**
-   * Activate resources (called by FeatureManager)
-   * This only initializes resources, NOT Select Element mode
-   */
   async activate() {
-    if (this.isInitialized) {
-      this.logger.debug('SelectElementManager already initialized');
-      return true;
-    }
-
+    if (this.isInitialized) return true;
     try {
       await this.initialize();
-      this.logger.debug('SelectElementManager activated successfully (resources initialized)');
       return true;
-    } catch (error) {
-      this.logger.error('Error activating SelectElementManager:', error);
+    } catch {
       return false;
     }
   }
 
   /**
    * Activate Select Element mode
-   * This is the main method that starts the interactive selection
    */
   async activateSelectElementMode(options = {}) {
-    if (this.isActive) {
-      this.logger.debug('SelectElement mode already active');
-      return { isActive: this.isActive, instanceId: this.instanceId };
-    }
+    if (this.isActive) return { isActive: this.isActive, instanceId: this.instanceId };
 
-    // Clean up options to ensure we only have what we need
-    const activationOptions = {
-      targetLanguage: options.targetLanguage || null,
-      ...options
-    };
+    await this._ensureStylesInjected();
+    
+    // Add activation attribute for global CSS styles (navigation prevention/cursor)
+    document.documentElement.setAttribute('data-translate-it-select-mode', 'true');
+    this._startContextWatchdog();
 
-    this.logger.debug(`SelectElementManager.activateSelectElementMode() instanceId=${this.instanceId}`, activationOptions);
-
-    // Emit event to stop conflicting features (e.g., Whole Page Translation)
+    const activationOptions = { targetLanguage: options.targetLanguage || null, ...options };
     pageEventBus.emit('STOP_CONFLICTING_FEATURES', { source: 'select-element' });
 
     try {
-      // Reset state
       this.isActive = true;
       this.isProcessingClick = false;
       this.hasInitialMovementOccurred = false; 
-      this.lastMouseX = undefined; // Reset coordinates
-      this.lastMouseY = undefined;
       this.currentOptions = activationOptions; 
 
-      // Ensure highlight is cleared from any previous state
-      if (this.elementSelector) {
-        this.elementSelector.clearHighlight();
-      }
-
-      // Setup event listeners
+      if (this.elementSelector) this.elementSelector.clearHighlight();
       this.setupEventListeners();
 
-      // Ensure services are available
-      const servicesAvailable = await this._ensureServicesAvailable();
-      if (!servicesAvailable) {
-        this.logger.error('Failed to ensure services availability - cannot activate');
-        return { isActive: false, error: 'Services initialization failed' };
-      }
+      // Ensure hover manager is initialized if enabled
+      getSelectElementShowOriginalOnHoverAsync().then(enabled => {
+        if (enabled) hoverPreviewManager.initialize();
+      });
 
-      // Activate element selector (cursor, highlighting)
+      const servicesAvailable = await this._ensureServicesAvailable();
+      if (!servicesAvailable) throw new Error('Services initialization failed');
+
+      // CRITICAL: Re-check if still active after async operations
+      if (!this.isActive) return { isActive: false };
+
       this.elementSelector.activate();
 
-      // Show notification only in main frame
-      if (window === window.top) {
+      if (this.isTopFrame) {
         this.showNotification();
-
-        // Show warning for Bing/Lingva providers if needed
-        // Load settings and potentially translation strings in parallel
         const [settings, bingWarning, lingvaWarning] = await Promise.all([
           getSettingsAsync(),
           getTranslationString('BING_WPT_WARNING'),
           getTranslationString('LINGVA_WPT_WARNING')
         ]);
 
+        // RE-CHECK again after another set of async calls
+        if (!this.isActive) {
+          this.dismissNotification();
+          return { isActive: false };
+        }
+
         const activeProvider = activationOptions.provider || settings.TRANSLATION_API;
-        
         if (activeProvider === ProviderRegistryIds.BING) {
-          pageEventBus.emit('show-notification', {
-            type: 'warning',
-            message: bingWarning || 'Bing may have issues with Select Element. Try another provider.',
-            duration: NOTIFICATION_TIME.WARNING_PROVIDER,
-            id: `bing-warning-${this.instanceId}`,
-          });
+          if (await shouldShowProviderWarning('Bing')) {
+            this.baseNotificationManager.show(
+              bingWarning || 'Bing may have issues. Try another provider.',
+              'warning',
+              NOTIFICATION_TIME.WARNING_PROVIDER,
+              { id: 'bing-warning' }
+            );
+          }
         } else if (activeProvider === ProviderRegistryIds.LINGVA) {
-          pageEventBus.emit('show-notification', {
-            type: 'warning',
-            message: lingvaWarning || 'Lingva may have issues with long texts. Try another provider.',
-            duration: NOTIFICATION_TIME.WARNING_PROVIDER,
-            id: `lingva-warning-${this.instanceId}`,
-          });
+          if (await shouldShowProviderWarning('Lingva')) {
+            this.baseNotificationManager.show(
+              lingvaWarning || 'Lingva may have issues. Try another provider.',
+              'warning',
+              NOTIFICATION_TIME.WARNING_PROVIDER,
+              { id: 'lingva-warning' }
+            );
+          }
         }
       }
 
-      // Notify background script
       await this.notifyBackgroundActivation();
-
-      // Final reset of activation time after everything is initialized
       this.activationTime = Date.now();
-
-      // Notify UI (ContentApp.vue) to show mobile exit button
       pageEventBus.emit('select-mode-activated');
-
-      this.logger.info('Select element mode activated successfully');
 
       return { isActive: this.isActive, instanceId: this.instanceId };
     } catch (error) {
-      this.logger.error('Error activating SelectElementManager:', error);
+      this.logger.warn('Error activating SelectElementManager:', error);
       this.isActive = false;
-      throw new Error(`SelectElementManager activation failed: ${error.message}`);
+      this.emergencyCleanup();
+      throw error;
     }
   }
 
@@ -263,791 +233,444 @@ class SelectElementManager extends ResourceTracker {
    * Deactivate Select Element mode
    */
   async deactivate(options = {}) {
-    if (!this.isActive) {
-      this.logger.debug('SelectElementManager not active');
-      return;
-    }
-
-    const {
-      fromBackground = false,
-      fromNotification = false,
-      fromCancel = false,
-      preserveTranslations = true, // Default to true: don't revert on deactivation
-      silent = false,
-    } = options;
-
-    // When deactivating, we almost always want to preserve what's already been translated
-    // unless explicitly told otherwise (e.g. for emergency cleanup)
-    const shouldPreserve = preserveTranslations;
-
-    this.logger.debug('Deactivating SelectElementManager', {
-      fromBackground,
-      fromNotification,
-      fromCancel,
-      preserveTranslations,
-      shouldPreserve,
-      silent,
-      instanceId: this.instanceId,
-    });
+    if (!this.isActive) return;
 
     try {
-      // Set active state immediately
+      const {
+        reason = 'manual', // 'success', 'error', 'cancel', 'manual', 'conflict'
+        fromBackground = false,
+        silent = false,
+        preserveTranslations = options.preserveTranslations !== undefined
+          ? options.preserveTranslations
+          : true // Default: preserve translations in Select Element mode even on error
+      } = options;
+
+      this.logger.debug(`Deactivating SelectElementManager (Reason: ${reason})`, { ...options, preserveTranslations });
+
       this.isActive = false;
-      this.activationTime = 0; // Reset activation time
+      this.activationTime = 0;
+      
+      // STOP watchdog and REMOVE interaction-blocking attribute immediately (Safety first)
+      this._stopContextWatchdog();
+      document.documentElement.removeAttribute('data-translate-it-select-mode');
 
-      // ALWAYS cancel any ongoing translations to stop background processes
-      // The silent option prevents unwanted toast notifications if needed
-      this.domTranslatorAdapter.cancelTranslation({ silent });
+      // Only cancel if we are actually in the middle of a translation
+      if (reason === 'cancel' || reason === 'manual') {
+        this.domTranslatorAdapter.cancelTranslation({ silent });
+      }
 
-      // Remove event listeners
       this.removeEventListeners();
-
-      // Deactivate element selector
       this.elementSelector.deactivate();
 
-      // Dismiss notification
-      if (window === window.top) {
+      // Always dismiss selection notifications during deactivation
+      if (this.isTopFrame) {
         this.dismissNotification();
       }
 
-      // Clear translation state only if not preserving
-      if (!shouldPreserve) {
-        if (this.domTranslatorAdapter.hasTranslation()) {
-          await this.domTranslatorAdapter.revertTranslation();
-        }
+      if (!preserveTranslations && this.domTranslatorAdapter.hasTranslation()) {
+        await this.domTranslatorAdapter.revertTranslation();
       }
 
-      // Notify background script
-      if (!fromBackground) {
-        await this.notifyBackgroundDeactivation();
-      }
-
-      // Notify UI (ContentApp.vue) to hide mobile exit button
+      if (!fromBackground) await this.notifyBackgroundDeactivation();
       pageEventBus.emit('select-mode-deactivated');
 
-      this.logger.info('SelectElementManager deactivated successfully');
     } catch (error) {
-      this.logger.error('Error deactivating SelectElementManager:', error);
-      // Continue with cleanup even if error occurs
-      this.isActive = false;
-      this.forceCleanup();
+      this.logger.error('Critical error deactivating SelectElementManager:', error);
+      
+      // Integrate with the centralized error system for unexpected manager failures
+      if (!ExtensionContextManager.isContextError(error)) {
+        // Log correctly
+      } else {
+        ExtensionContextManager.handleContextError(error, 'element-selection-deactivate');
+      }
+      
+      this.emergencyCleanup();
+    } finally {
+      // Final guard for the UI lock
+      document.documentElement.removeAttribute('data-translate-it-select-mode');
     }
   }
 
-  /**
-   * Force deactivation (emergency cleanup with revert)
-   */
   async forceDeactivate() {
-    this.logger.debug('Force deactivating SelectElementManager');
-    return this.deactivate({ preserveTranslations: false, silent: true });
+    return this.deactivate({ preserveTranslations: false, silent: true, reason: 'cancel' });
   }
 
-  /**
-   * Setup event listeners for mouse and keyboard
-   */
-  /**
-   * Setup event listeners for mouse and keyboard
-   */
   setupEventListeners() {
     if (this.isActive) {
-      // Mouseover/mouseout for highlighting
       window.addEventListener('mouseover', this.handleMouseOver, true);
       window.addEventListener('mouseout', this.handleMouseOut, true);
-
-      // Touch support for highlighting (Mobile Scanner Mode)
-      // Use passive: false to allow preventDefault() and smooth scanning
       window.addEventListener('touchstart', this.handleTouchStart, { capture: true, passive: false });
       window.addEventListener('touchmove', this.handleTouchMove, { capture: true, passive: false });
       window.addEventListener('touchend', this.handleTouchEnd, { capture: true, passive: false });
 
-      // Block ALL interaction events in capture phase to prevent any site logic from firing
-      // This is the core fix for site navigation/actions interfering with selection
-      const interactionEvents = [
-        'click', 'dblclick', 'mousedown', 'mouseup', 
-        'pointerdown', 'pointerup', 'contextmenu', 
-        'dragstart', 'touchstart', 'touchend'
-      ];
-      
+      const interactionEvents = ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'contextmenu', 'dragstart'];
       interactionEvents.forEach(eventType => {
-        // Critical: Set passive: false for touch/drag events to allow blocking navigation
-        const options = { capture: true, passive: false };
-        window.addEventListener(eventType, this.handleInteraction, options);
+        window.addEventListener(eventType, this.handleInteraction, { capture: true, passive: false });
       });
 
-      // Handle Escape key in capture phase for highest reliability
       window.addEventListener('keydown', this.handleKeyDown, true);
 
-      // Listen for deactivation requests from iframes (only in main frame)
-      if (window === window.top) {
+      if (this.isTopFrame) {
         this.iframeMessageHandler = (event) => {
-          if (event.data && event.data.type === 'translate-it-deactivate-select-element') {
-            this.logger.debug('Received deactivation request from iframe:', event.data);
-            this.deactivate({ fromIframe: true }).catch((error) => {
-              this.logger.error('Error deactivating from iframe request:', error);
-            });
+          if (event.data?.type === 'translate-it-deactivate-select-element') {
+            this.deactivate({ fromIframe: true, reason: 'manual' }).catch(() => {});
           }
         };
-
         window.addEventListener('message', this.iframeMessageHandler);
-        this.logger.debug('Added iframe message listener in main frame');
       }
-
-      this.logger.debug('Event listeners setup for SelectElementManager (window level)');
     }
   }
 
-  /**
-   * Remove event listeners
-   */
   removeEventListeners() {
-    // Remove mouseover/mouseout
     window.removeEventListener('mouseover', this.handleMouseOver, true);
     window.removeEventListener('mouseout', this.handleMouseOut, true);
     window.removeEventListener('touchstart', this.handleTouchStart, { capture: true, passive: false });
     window.removeEventListener('touchmove', this.handleTouchMove, { capture: true, passive: false });
     window.removeEventListener('touchend', this.handleTouchEnd, { capture: true, passive: false });
     
-    // Remove all interaction event blockers
-    const interactionEvents = [
-      'click', 'dblclick', 'mousedown', 'mouseup', 
-      'pointerdown', 'pointerup', 'contextmenu', 
-      'dragstart', 'touchstart', 'touchend'
-    ];
-    
+    const interactionEvents = ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'contextmenu', 'dragstart'];
     interactionEvents.forEach(eventType => {
       window.removeEventListener(eventType, this.handleInteraction, { capture: true, passive: false });
     });
 
-    // Remove Escape key handler
     window.removeEventListener('keydown', this.handleKeyDown, true);
-
-    // Remove iframe message listener
-    if (window === window.top && this.iframeMessageHandler) {
+    if (this.isTopFrame && this.iframeMessageHandler) {
       window.removeEventListener('message', this.iframeMessageHandler);
       this.iframeMessageHandler = null;
-      this.logger.debug('Removed iframe message listener from main frame');
     }
-
-    this.logger.debug('Event listeners removed for SelectElementManager');
   }
 
-  /**
-   * Helper to prevent events firing too early after activation
-   */
-  isCooldownActive() {
-    return Date.now() - (this.activationTime || 0) < 500;
-  }
+  isCooldownActive() { return Date.now() - (this.activationTime || 0) < 500; }
 
-
-  /**
-   * Handle mouse over event
-   */
   handleMouseOver(event) {
     if (!this.isActive || this.isProcessingClick || this.isCooldownActive()) return;
-
     const currentX = event.clientX;
     const currentY = event.clientY;
-
-    // Smart Movement Detection:
-    // If coordinates have changed since the last event, it's an intentional movement 
-    // (either hardware mouse moving or a touch-drag starting).
     if (this.lastMouseX !== undefined && (this.lastMouseX !== currentX || this.lastMouseY !== currentY)) {
-      if (!this.hasInitialMovementOccurred) {
-        this.hasInitialMovementOccurred = true;
-        this.logger.debug('Intentional movement detected via coordinates, enabling highlighter');
-      }
+      if (!this.hasInitialMovementOccurred) this.hasInitialMovementOccurred = true;
     }
-
-    // Update last known coordinates
     this.lastMouseX = currentX;
     this.lastMouseY = currentY;
-
-    // Block highlighting until we are sure the user is intentionally moving/scanning
-    if (!this.hasInitialMovementOccurred) {
-      return;
-    }
-
-    // Skip our own elements
-    if (this.elementSelector && this.elementSelector.isOurElement(event.target)) {
-      return;
-    }
-
+    if (!this.hasInitialMovementOccurred) return;
+    if (this.elementSelector && this.elementSelector.isOurElement(event.target)) return;
     this.elementSelector.handleMouseOver(event.target);
   }
 
-  /**
-   * Handle touch start event - initialize scanning
-   */
   handleTouchStart(event) {
     if (!this.isActive || this.isProcessingClick || this.isCooldownActive()) return;
-    
-    // Check if it's our own UI
-    if (this.elementSelector && this.elementSelector.isOurElement(event.touches[0].target)) {
-      return;
-    }
-
-    // On mobile touchstart, we DO NOT highlight anything yet.
-    // We wait for the first touchmove to confirm the user is intentionally scanning.
-    // This is the definitive fix for initial ghost highlights on mobile.
-
-    // Prevent site scrolling ONLY during the selection scan
+    if (this.elementSelector && this.elementSelector.isOurElement(event.touches[0].target)) return;
     event.preventDefault();
   }
 
-  /**
-   * Handle touch move - the core of "Scanner Mode"
-   */
   handleTouchMove(event) {
     if (!this.isActive || this.isProcessingClick || this.isCooldownActive()) return;
-
-    // First real movement after activation: enable highlights
-    if (!this.hasInitialMovementOccurred) {
-      this.hasInitialMovementOccurred = true;
-      this.logger.debug('Initial movement detected, enabling Select Element scanner');
-    }
-
-    // Prevent scrolling while scanning
+    if (!this.hasInitialMovementOccurred) this.hasInitialMovementOccurred = true;
     event.preventDefault();
-
-    // Get the element at the current touch point
     const touch = event.touches[0];
     const target = document.elementFromPoint(touch.clientX, touch.clientY);
-
-    if (!target) return;
-
-    // Skip our own elements
-    if (this.elementSelector && this.elementSelector.isOurElement(target)) {
-      return;
-    }
-
-    // Update highlight
+    if (!target || (this.elementSelector && this.elementSelector.isOurElement(target))) return;
     this.elementSelector.handleMouseOver(target);
   }
 
-  /**
-   * Handle touch end - finalize selection
-   */
   handleTouchEnd(event) {
     if (!this.isActive || this.isProcessingClick) return;
-
     const highlighted = this.elementSelector.getHighlightedElement();
-    
-    if (highlighted) {
-      this.logger.info('Scanner Mode: Touchend triggered translation for highlighted element');
-      this.handleClick(event).catch(err => {
-        this.logger.error('Error in handleClick after touch scanning:', err);
-      });
-    }
+    if (highlighted) this.handleClick(event).catch(() => {});
   }
 
-  /**
-   * Handle mouse out event
-   */
   handleMouseOut(event) {
     if (!this.isActive || this.isProcessingClick) return;
-
-    // Skip our own elements
-    if (this.elementSelector && this.elementSelector.isOurElement(event.target)) {
-      return;
-    }
-
+    if (this.elementSelector && this.elementSelector.isOurElement(event.target)) return;
     this.elementSelector.handleMouseOut(event.target);
   }
 
-  /**
-   * Universal interaction handler - blocks all site interactions while mode is active
-   */
   handleInteraction(event) {
     if (!this.isActive || this.isCooldownActive()) return;
-
-    // Use composedPath for more reliable detection, especially with Shadow DOM
     const path = event.composedPath ? event.composedPath() : [event.target];
-    
-    // Check if any element in the path belongs to our UI
-    const isOurUI = path.some(el => this.elementSelector && this.elementSelector.isOurElement(el));
-    
-    if (isOurUI) {
-      // Let it pass to our own buttons/UI (Toast, Exit button, etc.)
-      return;
-    }
+    if (path.some(el => this.elementSelector && this.elementSelector.isOurElement(el))) return;
 
-    // FIX: During translation processing, allow touch/pointer events to pass through
-    // so the user can scroll the page while waiting for the translation to complete.
-    // We still allow the rest of the function to block 'click' events for navigation prevention.
     const isScrollRelatedTouch = event.type.startsWith('touch') || event.type.startsWith('pointer');
-    if (this.isProcessingClick && isScrollRelatedTouch) {
-      return;
-    }
+    if (this.isProcessingClick && isScrollRelatedTouch) return;
 
-    // BLOCK EVERYTHING ELSE to prevent site navigation or other extension handlers from firing
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
 
-    // Trigger translation logic on 'click' OR 'touchend' (for mobile speed)
     const isTriggerEvent = event.type === 'click' || (event.type === 'touchend' && deviceDetector.isMobile());
-    
     if (isTriggerEvent && !this.isProcessingClick) {
-      this.logger.info(`Triggering selection via ${event.type}`);
-      this.handleClick(event).catch(err => {
-        this.logger.error('Error in handleClick:', err);
-      });
+      this.handleClick(event).catch(() => {});
     }
   }
 
-  /**
-   * Handle keydown events (specifically Escape) in capture phase
-   */
   handleKeyDown(event) {
     if (!this.isActive) return;
-
     if (event.key === 'Escape' && !window.selectElementHandlingESC) {
-      this.logger.debug('ESC key pressed (captured), deactivating SelectElement mode');
-
-      // Set flag to prevent other ESC handlers
       window.selectElementHandlingESC = true;
-      setTimeout(() => {
-        window.selectElementHandlingESC = false;
-      }, 100);
-
+      setTimeout(() => { window.selectElementHandlingESC = false; }, 100);
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-      // ESC deactivation should NOT be silent (show "Cancelled by user")
-      this.deactivate({ fromCancel: true, silent: false });
+      this.deactivate({ fromCancel: true, silent: false, reason: 'cancel' });
     }
   }
 
-  /**
-   * Handle element click - trigger translation
-   */
   async handleClick(event) {
-    // Blocking is now done by handleInteraction, so we focus on translation logic
-
-    // If already processing, don't start new translation
-    if (this.isProcessingClick) {
-      this.logger.debug('Already processing a click, ignoring new one');
-      return;
-    }
-
-    this.logger.debug('Element clicked in SelectElement mode');
-
+    if (this.isProcessingClick) return;
     try {
       this.isProcessingClick = true;
-
-      // Get the highlighted element or the clicked target
       const elementToTranslate = this.elementSelector.getHighlightedElement() || event.target;
+      if (!isValidTextElement(elementToTranslate)) return;
 
-      // Validate element
-      if (!isValidTextElement(elementToTranslate)) {
-        this.logger.debug('Element is not valid for translation', {
-          tag: elementToTranslate?.tagName,
-        });
-        return;
-      }
-
-      // Extract text
       const text = extractTextFromElement(elementToTranslate);
-
       if (text && text.trim()) {
-        this.logger.debug(`Text extracted successfully: ${text.length} chars from ${elementToTranslate.tagName}`);
-
-        // IMPORTANT: We no longer call removeEventListeners() here.
-        // We keep blockers active during translation to prevent accidental navigation.
-        // The elementSelector is deactivated just to remove the visual highlight.
+        // 1. Stop highlighting logic
         this.elementSelector.deactivate();
+        
+        // 2. Restore page interaction immediately (Unlock cursor and links)
+        this._unlockPageInteraction();
+        
+        // 3. Notify background that selection phase is finished
+        await this.notifyBackgroundDeactivation();
 
-        // Start translation
+        // 4. Start the translation process
         await this.startTranslation(elementToTranslate, this.currentOptions);
-      } else {
-        this.logger.debug('No text found in element', {
-          element: elementToTranslate.tagName,
-        });
       }
     } catch (error) {
-      this.logger.error('Error handling element click:', error);
+      this.logger.warn('Error handling element click:', error);
     } finally {
-      // Check if any translations were stored (even partial ones) to show Revert button
-      if (this.domTranslatorAdapter && this.domTranslatorAdapter.hasTranslation()) {
-        const mobileStore = useMobileStore();
-        mobileStore.setHasElementTranslations(true);
-      }
       this.isProcessingClick = false;
     }
   }
 
   /**
-   * Start translation process
+   * Unlock page interaction immediately after selection
+   * Restores cursor, pointer events, and stops the safety watchdog
+   * @private
    */
+  _unlockPageInteraction() {
+    this.logger.debug('Restoring page interaction after selection');
+    document.documentElement.removeAttribute('data-translate-it-select-mode');
+    this._stopContextWatchdog();
+    this.removeEventListeners();
+  }
+
   async startTranslation(targetElement, options = {}) {
     try {
-      this.logger.debug('Starting translation process', options);
+      if (!this.isActive) return;
+      if (this.isTopFrame) this.updateNotificationForTranslation();
 
-      // Check if still active
-      if (!this.isActive) {
-        this.logger.debug('SelectElementManager no longer active, aborting translation');
-        return;
-      }
-
-      // Update notification to show translation in progress
-      if (window === window.top) {
-        this.updateNotificationForTranslation();
-      }
-
-      // Perform translation via domtranslator adapter
       const result = await this.domTranslatorAdapter.translateElement(targetElement, {
-        ...this.currentOptions, // Pass stored activation options (provider, targetLanguage)
+        ...this.currentOptions,
         ...options,
-        onProgress: async (status) => {
-          this.logger.debug('Translation progress:', status);
-          // Show Revert button as soon as we start, as state is already stored
-          const mobileStore = useMobileStore();
-          mobileStore.setHasElementTranslations(true);
-          
-          // Notify other frames (especially main frame) to show Revert badge
+        onProgress: async () => {
+          // Emit both for backward compatibility and Coordinator discovery
           pageEventBus.emit(WINDOWS_MANAGER_EVENTS.ELEMENT_TRANSLATIONS_AVAILABLE);
-        },
-        onComplete: async (status) => {
-          this.logger.debug('Translation completed:', status);
-        },
-        onError: async (errorData) => {
-          const error = errorData.error;
-          const errorMsg = error?.message || (typeof error === 'string' ? error : 'Unknown translation error');
-          this.logger.info(`Translation error: ${errorMsg}`);
-        },
+          pageEventBus.emit('ELEMENT_TRANSLATIONS_AVAILABLE');
+
+          // CRITICAL: Notify top frame about iframe translations so Desktop FAB can show Revert button
+          if (!this.isTopFrame) {
+            try {
+              window.top.postMessage({ 
+                type: WINDOWS_MANAGER_EVENTS.ELEMENT_TRANSLATIONS_AVAILABLE,
+                source: 'translate-it-iframe' 
+              }, '*');
+            } catch { /* ignore cross-origin errors */ }
+          }
+        }
       });
 
-      if (result.success) {
-        this.logger.info('Translation completed successfully');
-
-        // Update store to show Revert button (redundant but safe)
-        const mobileStore = useMobileStore();
-        mobileStore.setHasElementTranslations(true);
-
-        // Hide translation overlay
+      if (result && result.success) {
         pageEventBus.emit('hide-translation', { element: targetElement });
-
-        // Deactivate mode after translation
-        this.performPostTranslationCleanup();
-      } else if (result.cancelled) {
-        this.logger.debug('Translation was cancelled by user, no action needed');
-        // Don't show error notification or perform cleanup - already done in deactivate()
+        pageEventBus.emit('ELEMENT_TRANSLATIONS_AVAILABLE'); // Notify that revert is now possible
+        this.performPostTranslationCleanup({ reason: 'success' });
+      } else if (result && result.cancelled) {
+        this.deactivate({ reason: 'cancel', silent: true });
+      } else {
+        this.performPostTranslationCleanup({ reason: 'success' }); // Fallback to success if result exists but structure is weird
       }
     } catch (error) {
-      const errorType = matchErrorToType(error);
-      const isCancellation = errorType === ErrorTypes.USER_CANCELLED || 
-                             error.message === 'Handler cancelled' || 
-                             error.type === 'HANDLER_CANCELLED';
+      const isCancellation = isCancellationError(error);
 
       if (isCancellation) {
-        this.logger.debug('Translation cancelled by user, performing cleanup');
+        this.logger.debug('Select Element translation cancelled:', error.message);
       } else {
-        this.logger.error('Error during translation:', error);
+        this.logger.warn('Select Element translation failed:', error);
+      }
+      
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'element-selection');
       }
 
-      // Ensure Revert button is shown if any partial translation happened
-      if (this.domTranslatorAdapter && this.domTranslatorAdapter.hasTranslation()) {
-        const mobileStore = useMobileStore();
-        mobileStore.setHasElementTranslations(true);
+      if (isFatalError(error) && !isCancellation) {
+        this.deactivate({ preserveTranslations: true, reason: 'error' });
+      } else {
+        this.performPostTranslationCleanup({ reason: isCancellation ? 'cancel' : 'error' });
       }
-
-      // Check for context errors
-      const isContextError = ExtensionContextManager.isContextError(error);
-
-      if (isContextError) {
-        this.logger.debug('Translation failed: extension context invalidated');
-        ExtensionContextManager.handleContextError(error, 'element-translation');
-      } else if (!isCancellation) {
-        if (!error.alreadyHandled) {
-          // If not already handled by ErrorHandler in Adapter, we could handle it here, 
-          // but Adapter already handles most cases with showToast: true
-        }
-      }
-
-      this.performPostTranslationCleanup();
     }
   }
 
-  /**
-   * Post-translation cleanup
-   */
-  performPostTranslationCleanup() {
-    this.logger.debug('Performing post-translation cleanup');
+  performPostTranslationCleanup(options = {}) {
+    const reason = options.reason || 'success';
+    // In Select Element mode, we want to preserve partial translations even on error
+    const preserveTranslations = true;
 
-    // Dismiss notification
-    if (window === window.top) {
+    if (!this.isTopFrame) {
+      try {
+        // Notify top frame that this iframe has finished its selection/translation
+        // This will trigger a global deactivation to clean up all other iframes
+        window.top.postMessage({
+          type: 'translate-it-deactivate-select-element',
+          source: 'iframe-translation-complete',
+          instanceId: this.instanceId
+        }, '*');
+      } catch { /* ignore */ }
+
+      // Also locally deactivate to ensure clean state
+      this.deactivate({ preserveTranslations, reason, fromBackground: true }).catch(() => {});
+    } else if (this.isActive) {
+      this.deactivate({ preserveTranslations, reason }).catch(() => {});
+    } else {
+      // Safety guard: ensure notification is dismissed in top frame even if already inactive
       this.dismissNotification();
     }
-
-    // If this is an iframe, notify main frame
-    if (window !== window.top) {
-      this.logger.debug('Notifying main frame to deactivate SelectElement mode');
-      try {
-        window.top.postMessage(
-          {
-            type: 'translate-it-deactivate-select-element',
-            source: 'iframe-translation-complete',
-            instanceId: this.instanceId,
-          },
-          '*'
-        );
-      } catch (error) {
-        this.logger.warn('Failed to notify main frame:', error);
-      }
-    } else {
-      // This is main frame, deactivate directly
-      if (this.isActive) {
-        this.logger.debug('Deactivating main frame SelectElementManager after translation');
-        this.deactivate({ preserveTranslations: true }).catch((error) => {
-          this.logger.warn('Error during post-translation cleanup:', error);
-        });
-      }
-    }
-
-    // Reset processing state
     this.isProcessingClick = false;
-
-    this.logger.debug('Post-translation cleanup completed');
   }
 
-  /**
-   * Revert translations
-   * @returns {Promise<number>} Number of translations reverted
-   */
   async revertTranslations() {
-    this.logger.info('Starting translation revert process in SelectElementManager');
-
-    // Clear the global translation in progress flag
     window.isTranslationInProgress = false;
-
-    // Revert via domtranslator adapter (returns count of reverted translations)
     const revertedCount = await this.domTranslatorAdapter.revertTranslation();
-
-    // Reset store status
-    const mobileStore = useMobileStore();
-    mobileStore.setHasElementTranslations(false);
-    
-    // Notify other frames to hide Revert badge
     pageEventBus.emit(WINDOWS_MANAGER_EVENTS.ELEMENT_TRANSLATIONS_CLEARED);
-
-    this.logger.info('Translation revert completed', { revertedCount });
-
     return revertedCount;
   }
-
-  // ========== Notification Management ==========
 
   showNotification() {
     pageEventBus.emit('show-select-element-notification', {
       managerId: this.instanceId,
       actions: {
-        cancel: () => this.deactivate({ fromNotification: true }),
+        cancel: () => this.deactivate({ fromNotification: true, reason: 'cancel' }),
         revert: () => this.revertTranslations(),
       },
     });
-
-    this.logger.debug('Select Element notification requested');
   }
 
   updateNotificationForTranslation() {
-    pageEventBus.emit('update-select-element-notification', {
-      status: TRANSLATION_STATUS.TRANSLATING,
-    });
-
-    this.logger.debug('Select Element notification updated for translation');
+    pageEventBus.emit('update-select-element-notification', { status: TRANSLATION_STATUS.TRANSLATING });
   }
 
   dismissNotification() {
-    this.logger.debug('dismissNotification called with instanceId:', this.instanceId);
-    pageEventBus.emit('dismiss-select-element-notification', {
-      managerId: this.instanceId,
-      isCancelAction: true,
-    });
-
-    this.logger.debug('Select Element notification dismissal requested');
+    pageEventBus.emit('dismiss-select-element-notification', { managerId: this.instanceId, isCancelAction: true });
   }
 
-  // ========== Keyboard and Cancel Listeners ==========
-
-  setupKeyboardListeners() {
-    // Note: Escape key is now handled in the capture phase by handleKeyDown
-    // which is more reliable for blocking site-specific ESC handlers.
-    this.logger.debug('setupKeyboardListeners called (ESC handled via capture phase)');
-  }
+  setupKeyboardListeners() {}
 
   setupCancelListener() {
-    this.addEventListener(pageEventBus, 'cancel-select-element-mode', (data) => {
-      this.logger.debug('cancel-select-element-mode event received', {
-        data,
-        isActive: this.isActive,
-        instanceId: this.instanceId,
-      });
-      if (this.isActive) {
-        this.logger.debug('Cancel requested, deactivating SelectElement mode');
-        // Notification cancel button should be silent
-        this.deactivate({ fromCancel: true, silent: true });
-      } else {
-        this.logger.debug('Cancel event received but SelectElement is not active');
-      }
+    this.addEventListener(pageEventBus, 'cancel-select-element-mode', () => {
+      if (this.isActive) this.deactivate({ fromCancel: true, silent: true, reason: 'cancel' });
     });
   }
-
-  // ========== Cross-frame Communication ==========
 
   setupCrossFrameCommunication() {
     this.addEventListener(window, 'message', (event) => {
+      // Respond to global deactivation signals
       if (event.data?.type === 'DEACTIVATE_ALL_SELECT_MANAGERS') {
-        if (event.data.source !== 'translate-it-main') {
-          this.deactivate({ fromBackground: true });
-        }
+        this.deactivate({ fromBackground: true, reason: 'manual' });
       }
     });
-
-    if (window === window.top) {
-      const originalDeactivate = this.deactivate.bind(this);
-      this.deactivate = async (options = {}) => {
-        await originalDeactivate(options);
-
-        // Notify all iframes
-        try {
-          window.postMessage(
-            {
-              type: 'DEACTIVATE_ALL_SELECT_MANAGERS',
-              source: 'translate-it-main',
-            },
-            '*'
-          );
-        } catch {
-          // Cross-origin iframe, ignore
-        }
-      };
-    }
   }
-
-  // ========== Background Communication ==========
 
   async notifyBackgroundActivation() {
     try {
-      if (this._isNotifyingBackground) {
-        this.logger.debug('Background notification already in progress, skipping duplicate');
-        return;
-      }
-
+      if (this._isNotifyingBackground) return;
       this._isNotifyingBackground = true;
-
-      await sendMessage({
-        action: MessageActions.SET_SELECT_ELEMENT_STATE,
-        data: { active: true },
-      });
-      this.logger.debug('Successfully notified background: select element activated');
-    } catch (err) {
-      this.logger.error('Failed to notify background about activation', err);
-    } finally {
-      this._isNotifyingBackground = false;
-    }
+      await sendMessage({ action: MessageActions.SET_SELECT_ELEMENT_STATE, data: { active: true } });
+    } catch { /* ignore */ } finally { this._isNotifyingBackground = false; }
   }
 
   async notifyBackgroundDeactivation() {
-    try {
-      await sendMessage({
-        action: MessageActions.SET_SELECT_ELEMENT_STATE,
-        data: { active: false },
-      });
-      this.logger.debug('Successfully notified background: select element deactivated');
-    } catch (err) {
-      this.logger.error('Failed to notify background about deactivation', err);
-    }
+    try { await sendMessage({ action: MessageActions.SET_SELECT_ELEMENT_STATE, data: { active: false } }); } catch { /* ignore */ }
   }
 
   /**
-   * Ensure all required services are available
+   * Emergency cleanup for critical situations (e.g. extension context invalid)
+   * Restores page interaction immediately.
    */
+  emergencyCleanup() {
+    this._stopContextWatchdog();
+    document.documentElement.removeAttribute('data-translate-it-select-mode');
+    this.isActive = false;
+    this.forceCleanup();
+  }
+
+  /**
+   * Monitor extension context to prevent stuck UI on extension reload/update
+   * Only runs while the mode is active.
+   * @private
+   */
+  _startContextWatchdog() {
+    this._stopContextWatchdog();
+    this.contextWatchdogInterval = setInterval(() => {
+      if (this.isActive && !ExtensionContextManager.isValidSync()) {
+        this.logger.warn('Extension context invalidated while in select mode. Performing emergency cleanup...');
+        this.emergencyCleanup();
+      }
+    }, 2000); // Check every 2 seconds - balanced for performance and safety
+  }
+
+  /**
+   * Stop the context watchdog interval
+   * @private
+   */
+  _stopContextWatchdog() {
+    if (this.contextWatchdogInterval) {
+      clearInterval(this.contextWatchdogInterval);
+      this.contextWatchdogInterval = null;
+    }
+  }
+
   async _ensureServicesAvailable() {
     try {
-      let servicesRecreated = false;
-
       if (!this.domTranslatorAdapter) {
-        this.logger.debug('DomTranslatorAdapter was cleaned up, recreating...');
         this.domTranslatorAdapter = new DomTranslatorAdapter();
         await this.domTranslatorAdapter.initialize();
-        servicesRecreated = true;
       }
-
       if (!this.elementSelector) {
-        this.logger.debug('ElementSelector was cleaned up, recreating...');
         this.elementSelector = new ElementSelector();
         await this.elementSelector.initialize();
-        servicesRecreated = true;
       }
-
-      if (servicesRecreated) {
-        this.logger.info('SelectElement services recreated successfully');
-      }
-
       return true;
-    } catch (error) {
-      this.logger.error('Failed to ensure services availability:', error);
-      return false;
-    }
-  }
-
-  // ========== Public API ==========
-
-  isSelectElementActive() {
-    return this.isActive;
-  }
-
-  getStatus() {
-    return {
-      serviceActive: this.isActive,
-      isProcessingClick: this.isProcessingClick,
-      isInitialized: this.isInitialized,
-      instanceId: this.instanceId,
-      isInIframe: this.isInIframe,
-    };
+    } catch { return false; }
   }
 
   /**
-   * Force cleanup for emergency situations
+   * Ensure necessary CSS styles are injected for element selection
+   * Only runs in main frame and uses the content core singleton
+   * @private
    */
+  async _ensureStylesInjected() {
+    if (!this.isTopFrame) return;
+
+    const contentCore = window.translateItContentCore;
+    if (contentCore && typeof contentCore.injectMainDOMStyles === 'function') {
+      await contentCore.injectMainDOMStyles(selectionStyles, 'translate-it-select-mode-styles');
+    }
+  }
+
+  isSelectElementActive() { return this.isActive; }
+  getStatus() { return { serviceActive: this.isActive, isProcessingClick: this.isProcessingClick, isInitialized: this.isInitialized, instanceId: this.instanceId, isTopFrame: this.isTopFrame }; }
   forceCleanup() {
     try {
       this.removeEventListeners();
       this.elementSelector.deactivate();
-
-      if (window === window.top) {
-        this.dismissNotification();
-      }
-    } catch (cleanupError) {
-      this.logger.error('Critical error during cleanup:', cleanupError);
-    }
+      if (this.isTopFrame) this.dismissNotification();
+    } catch { /* ignore */ }
   }
 
-  /**
-   * Cleanup method
-   */
   async cleanup() {
-    this.logger.info('Cleaning up SelectElement manager');
-
-    try {
-      // Deactivate if active
-      if (this.isActive) {
-        await this.deactivate();
-      }
-
-      // Clear instance references
-      this.notificationManager = null;
-
-      // ResourceTracker will handle all service cleanup automatically
-      super.cleanup();
-
-      this.logger.info('SelectElement manager cleanup completed successfully');
-    } catch (error) {
-      this.logger.error('Error during SelectElement manager cleanup:', error);
-      throw error;
-    }
+    if (this.isActive) await this.deactivate({ reason: 'manual' });
+    this.notificationManager = null;
+    this.baseNotificationManager = null;
+    super.cleanup();
   }
 }
 
-// Export class for direct instantiation by FeatureManager
 export { SelectElementManager };

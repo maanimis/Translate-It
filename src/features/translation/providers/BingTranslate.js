@@ -9,6 +9,7 @@ import { matchErrorToType, isFatalError } from '@/shared/error-management/ErrorM
 import { TRANSLATION_CONSTANTS } from "@/shared/config/translationConstants.js";
 import { PROVIDER_LANGUAGE_MAPPINGS, getProviderLanguageCode } from "@/shared/config/languageConstants.js";
 import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
+import { TraditionalTextProcessor } from "./utils/TraditionalTextProcessor.js";
 
 const logger = getScopedLogger(LOG_COMPONENTS.PROVIDERS, 'BingTranslate');
 
@@ -21,14 +22,16 @@ export class BingTranslateProvider extends BaseTranslateProvider {
   static bingBaseUrl = "https://www.bing.com/ttranslatev3";
   static bingTokenUrl = "https://www.bing.com/translator";
   static bingAccessToken = null;
-  static CHAR_LIMIT = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.BING;
-  static CHUNK_SIZE = TRANSLATION_CONSTANTS.MAX_CHUNKS_PER_BATCH.BING; 
+
+  // BaseTranslateProvider capabilities (Default values)
+  // NOTE: Character limits and chunk sizes are now dynamically managed 
+  // by ProviderConfigurations.js based on the active Optimization Level.
+  static characterLimit = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.BING;
+  static maxChunksPerBatch = TRANSLATION_CONSTANTS.MAX_CHUNKS_PER_BATCH.BING;
 
   // BaseTranslateProvider capabilities
   static supportsStreaming = TRANSLATION_CONSTANTS.SUPPORTS_STREAMING.BING;
   static chunkingStrategy = TRANSLATION_CONSTANTS.CHUNKING_STRATEGIES.BING;
-  static characterLimit = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.BING; // Bing's character limit - reduced for reliability
-  static maxChunksPerBatch = TRANSLATION_CONSTANTS.MAX_CHUNKS_PER_BATCH.BING; // Bing's chunk size - reduced for reliability
 
   constructor() {
     super(ProviderNames.BING_TRANSLATE);
@@ -38,7 +41,6 @@ export class BingTranslateProvider extends BaseTranslateProvider {
     const normalized = LanguageSwappingService._normalizeLangValue(lang);
     if (normalized === AUTO_DETECT_VALUE) return PROVIDER_LANGUAGE_MAPPINGS.BING.auto;
 
-    // Use the utility function to get the provider-specific language code
     return getProviderLanguageCode(normalized, 'BING') || normalized;
   }
 
@@ -50,45 +52,29 @@ export class BingTranslateProvider extends BaseTranslateProvider {
    * @param {string} translateMode - Translation mode
    * @param {AbortController} abortController - Cancellation controller
    * @param {number} retryAttempt - Current retry attempt number (for recursive retries)
-   * @param {number} originalChunkSize - Original chunk size before retry splitting
+   * @param {number} segmentCount - Total number of segments in this chunk
    * @param {number} chunkIndex - Index of this chunk in the batch
    * @param {number} totalChunks - Total number of chunks in the batch
-   * @returns {Promise<string[]>} - Translated texts for this chunk
+   * @param {Object} options - Additional options (sessionId, originalCharCount)
+   * @returns {Promise<string>} - Translated raw string for this chunk
    */
-  async _translateChunk(chunkTexts, sourceLang, targetLang, translateMode, abortController, retryAttempt = 0, originalChunkSize = chunkTexts.length) {
+   async _translateChunk(chunkTexts, sourceLang, targetLang, translateMode, abortController, retryAttempt, segmentCount, chunkIndex, totalChunks, options = {}) {
+
     const context = `${this.providerName.toLowerCase()}-translate-chunk${retryAttempt > 0 ? `-retry-${retryAttempt}` : ''}`;
     const { getProviderConfiguration } = await import('@/features/translation/core/ProviderConfigurations.js');
-    const providerConfig = getProviderConfiguration(this.providerName);
+    const { getProviderOptimizationLevelAsync } = await import('@/shared/config/config.js');
+    
+    // Fetch user's preferred optimization level using the standard async utility
+    const optimizationLevel = await getProviderOptimizationLevelAsync(this.providerName);
+    
+    const providerConfig = getProviderConfiguration(this.providerName, optimizationLevel);
 
     // Add key info log for translation start
     if (retryAttempt === 0) {
-      logger.info(`[Bing] Starting translation: ${chunkTexts.join(' ').length} chars`);
+      logger.info(`[Bing] Starting translation: ${chunkTexts.reduce((s, t) => s + (t?.length || 0), 0)} chars (Level: ${optimizationLevel})`);
     }
 
     try {
-      // Validate chunk size before processing
-      if (chunkTexts.length > this.constructor.maxChunksPerBatch) {
-        logger.info(`[Bing] Chunk too large (${chunkTexts.length} > ${this.constructor.maxChunksPerBatch}), splitting`);
-        // Split into smaller sub-chunks and preserve order
-        const results = [];
-        for (let i = 0; i < chunkTexts.length; i += this.constructor.maxChunksPerBatch) {
-          const subChunk = chunkTexts.slice(i, i + this.constructor.maxChunksPerBatch);
-          const subResults = await this._translateChunk(
-            subChunk,
-            sourceLang,
-            targetLang,
-            translateMode,
-            abortController,
-            retryAttempt,
-            originalChunkSize,
-            Math.floor(i / this.constructor.maxChunksPerBatch),
-            Math.ceil(chunkTexts.length / this.constructor.maxChunksPerBatch)
-          );
-          results.push(...subResults);
-        }
-        return results;
-      }
-      
       // Get Bing access token
       const tokenData = await this._getBingAccessToken(abortController);
       
@@ -102,34 +88,37 @@ export class BingTranslateProvider extends BaseTranslateProvider {
       const tl = this._getLangCode(targetLang);
 
       // Additional size validation - be more strict with Bing's limits
-      if (textToTranslate.length > this.constructor.characterLimit) {
-        logger.info(`[Bing] Text too long (${textToTranslate.length} chars, limit is ${this.constructor.characterLimit}), splitting`);
+      const effectiveCharLimit = providerConfig.batching?.characterLimit || this.constructor.characterLimit;
+      
+      if (textToTranslate.length > effectiveCharLimit) {
+        logger.info(`[Bing] Text too long (${textToTranslate.length} chars, limit is ${effectiveCharLimit}), splitting`);
 
-        // Scenario A: Multiple chunks - split the array
+        // Scenario A: Multiple segments - split the array
         if (chunkTexts.length > 1) {
           const midPoint = Math.ceil(chunkTexts.length / 2);
           const firstHalf = chunkTexts.slice(0, midPoint);
           const secondHalf = chunkTexts.slice(midPoint);
 
-          const firstResults = await this._translateChunk(firstHalf, sourceLang, targetLang, translateMode, abortController);
-          const secondResults = await this._translateChunk(secondHalf, sourceLang, targetLang, translateMode, abortController);
+          const firstResults = await this._translateChunk(firstHalf, sourceLang, targetLang, translateMode, abortController, retryAttempt, segmentCount, chunkIndex, totalChunks, options);
+          const secondResults = await this._translateChunk(secondHalf, sourceLang, targetLang, translateMode, abortController, retryAttempt, segmentCount, chunkIndex, totalChunks, options);
 
-          return [...firstResults, ...secondResults];
+          // Return joined string using delimiter
+          return [firstResults, secondResults].join(TRANSLATION_CONSTANTS.TEXT_DELIMITER);
         } 
-        // Scenario B: Single chunk but too long - split the string itself
+        // Scenario B: Single node but too long - split the string itself
         else if (chunkTexts.length === 1) {
           const singleText = chunkTexts[0];
-          const parts = this._splitSingleLongString(singleText, this.constructor.characterLimit);
+          const parts = this._splitSingleLongString(singleText, effectiveCharLimit);
 
           logger.info(`[Bing] Single long node split into ${parts.length} parts`);
 
           const translatedParts = [];
           for (const part of parts) {
-            const res = await this._translateChunk([part], sourceLang, targetLang, translateMode, abortController);
-            translatedParts.push(res[0]);
+            const res = await this._translateChunk([part], sourceLang, targetLang, translateMode, abortController, retryAttempt, segmentCount, chunkIndex, totalChunks, options);
+            translatedParts.push(res);
           }
 
-          return [translatedParts.join(' ')];
+          return translatedParts.join(' ');
         }
       }
 
@@ -204,19 +193,32 @@ export class BingTranslateProvider extends BaseTranslateProvider {
             err.name = 'BingApiError';
             throw err;
           }
+
+          // Capture detected source language from metadata if available
+          this._setDetectedLanguage(data?.[0]?.detectedLanguage?.language);
           
           const targetText = data?.[0]?.translations?.[0]?.text;
           if (typeof targetText !== 'string') {
-            return chunkTexts.map(() => "");
+            // Fallback to original text strings if translation is missing
+            return chunkTexts.map(t => typeof t === 'object' ? (t.t || t.text || "") : t);
           }
           
-          return await this._robustSplit(targetText, chunkTexts);
-        },
+          // Return raw text string. 
+          // Centralized TranslationSegmentMapper will handle robust splitting, 
+          // delimiter normalization, and BIDI-aware scrubbing for multiple segments.
+          return targetText;
+          },
+
         context,
         abortController,
+        charCount: TraditionalTextProcessor.calculateTraditionalCharCount(chunkTexts),
+        sessionId: options.sessionId,
+        originalCharCount: options.originalCharCount || TraditionalTextProcessor.calculateTraditionalCharCount(chunkTexts)
       });
 
-      const finalResult = result || chunkTexts.map(() => "");
+      // If result is a string and we have multiple segments, let Coordinator split it.
+      // If we are in a recursive call, we might need to wrap it in an array for the parent.
+      const finalResult = typeof result === 'string' ? [result] : (result || chunkTexts.map(t => typeof t === 'object' ? (t.t || t.text || "") : t));
 
       // Add completion log for successful translation
       if (retryAttempt === 0 && finalResult.length > 0) {
@@ -227,42 +229,39 @@ export class BingTranslateProvider extends BaseTranslateProvider {
 
     } catch (error) {
       const errorType = error.type || matchErrorToType(error);
-      const isFatal = isFatalError(error) || isFatalError(errorType);
-
-      // CRITICAL: If it's a fatal error, don't attempt any retries
-      if (isFatal) {
-        if (!error.type) error.type = errorType;
-        throw error;
-      }
-
+      
       // Handle HTML response, JSON parsing errors, and Status 400 with retry
+      // We check these BEFORE the fatal check to allow adaptive chunking/retries
+      // for BingApiError (which is usually a 400 bad request that can be fixed by splitting).
       if (error.name === 'BingHtmlResponseError' || error.name === 'BingJsonParseError' || error.name === 'BingApiError') {
         const maxRetries = providerConfig?.batching?.maxRetries || 3;
-        const minChunkSize = providerConfig?.batching?.minChunkSize || 100;
         const adaptiveChunking = providerConfig?.batching?.adaptiveChunking || true;
 
-        logger.debug(`[Bing] ${error.name} on attempt ${retryAttempt + 1}/${maxRetries + 1}. Chunk size: ${chunkTexts.length}`);
+        logger.warn(`[Bing] ${error.name} on attempt ${retryAttempt + 1}/${maxRetries + 1}. Chunk size: ${chunkTexts.length}. Reason: ${error.message}`);
 
-        // For BingApiError (Status 400), we MUST reduce chunk size as it often means the request was too large or complex
+        // For BingApiError (Status 400), we MUST reduce chunk size as it often means the request was too large, 
+        // complex, or had language detection issues (like the 'ny' detection bug).
         if (adaptiveChunking && retryAttempt < maxRetries && chunkTexts.length > 1) {
-          // Calculate new chunk size with exponential backoff
-          const reductionFactor = Math.pow(2, retryAttempt + 1);
+          // Calculate new chunk size - halving it is usually the most effective way to bypass Bing's 400 errors
           const newChunkSize = Math.max(
-            Math.ceil(chunkTexts.length / reductionFactor),
-            minChunkSize
+            Math.ceil(chunkTexts.length / 2),
+            1 // Safety minimum
           );
 
-          // Retrying with smaller chunks
+          logger.info(`[Bing] Retrying with smaller chunks (Size: ${newChunkSize}) due to ${error.name}`);
 
           try {
-            // Split into smaller chunks and retry while preserving order
             const results = [];
-            const subChunkCount = Math.ceil(chunkTexts.length / newChunkSize);
-
             for (let i = 0; i < chunkTexts.length; i += newChunkSize) {
-              const subChunk = chunkTexts.slice(i, i + newChunkSize);
-              const subChunkIndex = Math.floor(i / newChunkSize);
+              // Check for cancellation before processing each sub-chunk
+              if (abortController?.signal.aborted) {
+                const cancelError = new Error('Translation cancelled by user');
+                cancelError.name = 'AbortError';
+                cancelError.isCancelled = true;
+                throw cancelError;
+              }
 
+              const subChunk = chunkTexts.slice(i, i + newChunkSize);
               const subResults = await this._translateChunk(
                 subChunk,
                 sourceLang,
@@ -270,45 +269,31 @@ export class BingTranslateProvider extends BaseTranslateProvider {
                 translateMode,
                 abortController,
                 retryAttempt + 1,
-                originalChunkSize,
-                subChunkIndex,
-                subChunkCount
+                segmentCount,
+                0, // Index reset for sub-chunks
+                0, // Total reset
+                options
               );
-
-              // Place results in correct position
               results.push(...subResults);
-
-              // Add delay between retries to avoid rate limiting
-              if (i + newChunkSize < chunkTexts.length) {
-                await new Promise(resolve => setTimeout(resolve, 1000 * (retryAttempt + 1)));
-              }
             }
-
-            // Retry successful
             return results;
-
           } catch (retryError) {
-            logger.error(`[Bing] Retry attempt ${retryAttempt + 1} failed:`, retryError);
-            // Continue to throw the original error
+            logger.error(`[Bing] Adaptive chunking failed for ${error.name}:`, retryError.message);
           }
         }
 
-        // If we've exhausted retries or can't split further, throw a properly typed error
-        const finalError = new Error(
-          error.name === 'BingHtmlResponseError'
-            ? 'Bing consistently returned HTML instead of JSON'
-            : `Bing JSON parsing consistently failed after ${retryAttempt + 1} attempts`
-        );
-        finalError.name = error.name;
-        finalError.type = error.name === 'BingHtmlResponseError'
-          ? ErrorTypes.HTML_RESPONSE_ERROR
-          : ErrorTypes.JSON_PARSING_ERROR;
-        finalError.context = context;
-        finalError.chunkSize = chunkTexts.length;
-        finalError.retryAttempt = retryAttempt;
-        finalError.originalChunkSize = originalChunkSize;
+        // CRITICAL FINAL FALLBACK: If we've exhausted retries or can't split further, 
+        // return the original text for THIS chunk instead of throwing.
+        // This prevents one bad chunk from breaking the entire page translation.
+        logger.error(`[Bing] Translation consistently failed for this chunk. Returning original text to preserve stability.`);
+        return chunkTexts.map(t => typeof t === 'object' ? (t.t || t.text || "") : t);
+      }
 
-        throw finalError;
+      const isFatal = isFatalError(error) || isFatalError(errorType);
+      // CRITICAL: If it's a fatal error, don't attempt any retries
+      if (isFatal) {
+        if (!error.type) error.type = errorType;
+        throw error;
       }
 
       if (error.name === 'BingApiError' || error instanceof SyntaxError) {

@@ -7,6 +7,7 @@ import { TranslationMode, CONFIG } from "@/shared/config/config.js";
 import { settingsManager } from '@/shared/managers/SettingsManager.js';
 import { isRTLLanguage } from '@/features/element-selection/utils/textDirection.js';
 import { UI_LOCALE_TO_CODE_MAP } from '@/shared/config/languageConstants.js';
+import { SimpleMarkdown } from '@/shared/utils/text/markdown.js';
 
 let logger = null;
 const getLogger = () => {
@@ -84,7 +85,7 @@ export class TranslationRenderer {
       e.stopPropagation();
       
       // Log close event
-      this.logger.debug('❌ Close button clicked!');
+      this.logger.debug('Close button clicked!');
       
       if (onClose) onClose();
     });
@@ -130,14 +131,17 @@ export class TranslationRenderer {
     icon.addEventListener("click", async (e) => {
       e.stopPropagation();
       
+      // Clean translation for a clean copy
+      const cleanText = SimpleMarkdown.getCleanTranslation(textToCopy);
+      
       // Log click event
       this.logger.debug('📋 Copy icon clicked!', { 
-        text: textToCopy.slice(0, 20) + (textToCopy.length > 20 ? '...' : ''), 
+        text: cleanText.slice(0, 20) + (cleanText.length > 20 ? '...' : ''), 
         title: title 
       });
       
       try {
-        await navigator.clipboard.writeText(textToCopy);
+        await navigator.clipboard.writeText(cleanText);
         
         // Visual feedback
         const originalOpacity = icon.style.opacity;
@@ -353,8 +357,14 @@ export class TranslationRenderer {
 
     const marks = element.querySelectorAll('mark');
     marks.forEach(mark => {
-      // eslint-disable-next-line noUnsanitized/property -- Safe: using element's own innerHTML
-      mark.outerHTML = mark.innerHTML;
+      const parent = mark.parentNode;
+      if (parent) {
+        // Safe way to unwrap: move all children of 'mark' to its parent, then remove 'mark'
+        while (mark.firstChild) {
+          parent.insertBefore(mark.firstChild, mark);
+        }
+        parent.removeChild(mark);
+      }
     });
   }
 

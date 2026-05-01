@@ -1,0 +1,81 @@
+@use "@/assets/styles/base/variables" as *;
+
+/**
+ * BaseFieldset - Standardized fieldset styling.
+ * Uses flexbox for the legend to allow for a header slot.
+ * Ensures consistent and symmetrical internal spacing.
+ */
+.base-fieldset {
+  border: $border-width $border-style var(--color-border);
+  border-radius: $border-radius-md;
+  padding: 1rem !important; /* Standard 16px padding */
+  margin: 0 0 $spacing-xl 0;
+  position: relative;
+  min-width: 0;
+  display: block;
+  box-sizing: border-box;
+
+  // Ensure no browser default padding/margin
+  -webkit-appearance: none;
+  appearance: none;
+  
+  &__legend {
+    padding: 0 0.5rem;
+    margin-inline: 0.75rem;
+    font-weight: $font-weight-semibold;
+    color: var(--color-text-secondary);
+    font-size: $font-size-sm;
+    width: auto;
+    max-width: 60%; // Prevent legend from overlapping header actions
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-sizing: border-box;
+
+    .legend-text {
+      display: block;
+    }
+  }
+
+  &__header-actions {
+    position: absolute;
+    top: -1px; /* Align precisely with the border line */
+    right: 1.25rem;
+    transform: translateY(-50%);
+    background: var(--color-background);
+    padding: 0 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: $spacing-sm;
+    z-index: 1;
+    pointer-events: auto;
+    line-height: 1; /* Reset line-height to prevent vertical shifts */
+
+    // Lift the stacking context when dropdown is open or element is focused
+    // to ensure it appears on top of subsequent fieldsets.
+    &:focus-within,
+    &:has(.ti-dropdown-open) {
+      z-index: 100;
+    }
+  }
+
+  &__content {
+    width: 100%;
+    min-width: 0;
+  }
+  
+  &.disabled {
+    opacity: 0.6;
+    pointer-events: none;
+  }
+
+  // --- RECURSIVE LAST-CHILD SPACING FIX ---
+  // Target any element that is the last child (even nested ones) 
+  // and force its bottom margin/padding to zero.
+  // This ensures the fieldset's bottom padding is the ONLY space at the bottom.
+  :deep(*:last-child) {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+    border-bottom: none !important;
+  }
+}

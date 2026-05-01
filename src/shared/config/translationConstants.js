@@ -1,38 +1,53 @@
 /**
- * Translation Constants
- * Shared constants used across translation providers
+ * Translation Constants (Legacy Proxy)
+ * 
+ * CRITICAL: This file is a proxy to ProviderConfigurations.js which is now 
+ * the Single Source of Truth for all translation settings.
+ * 
+ * New code should import directly from:
+ * '@/features/translation/core/ProviderConfigurations.js'
  */
 
+import { 
+  ResponseFormat as NewResponseFormat, 
+  DEFAULT_TEXT_DELIMITER,
+  ALTERNATIVE_DELIMITERS,
+  STREAMING_THRESHOLDS as NewStreamingThresholds,
+  HISTORY_CHARACTER_LIMITS as NewHistoryLimits,
+  BASE_CHARACTER_LIMITS,
+  BASE_MAX_CHUNKS_PER_BATCH
+} from '@/features/translation/core/ProviderConfigurations.js';
+
+// Re-export ResponseFormat for backward compatibility
+export const ResponseFormat = NewResponseFormat;
+
+/**
+ * TRANSLATION_CONSTANTS
+ * Legacy object maintained for backward compatibility.
+ * All values now pull from the central ProviderConfigurations.
+ */
 export const TRANSLATION_CONSTANTS = {
-  // Standard delimiter for separating text segments in batch translation
-  TEXT_DELIMITER: '\n\n---\n\n',
+  // Delimiters
+  TEXT_DELIMITER: DEFAULT_TEXT_DELIMITER,
+  ALTERNATIVE_DELIMITERS: ALTERNATIVE_DELIMITERS,
 
-  // Alternative delimiters for fallback splitting
-  ALTERNATIVE_DELIMITERS: [
-    '\n\n---\n',    // Missing newline
-    '\n---\n\n',    // Missing newline on other side
-    '---',         // Just the separator
-    '\n\n',        // Double newlines
-    '\n',         // Single newlines (last resort)
-  ],
-
-  // Provider-specific character limits
+  // Character limits (Baseline values)
   CHARACTER_LIMITS: {
-    GOOGLE: 5000,
-    BING: 1000,
-    YANDEX: 10000,
-    DEEPL: 10000,
+    GOOGLE: BASE_CHARACTER_LIMITS.GOOGLE,
+    BING: BASE_CHARACTER_LIMITS.BING,
+    YANDEX: BASE_CHARACTER_LIMITS.YANDEX,
+    DEEPL: BASE_CHARACTER_LIMITS.DEEPL,
   },
 
-  // Provider-specific batch sizes (max segments per request)
+  // Batch sizes (Baseline values)
   MAX_CHUNKS_PER_BATCH: {
-    GOOGLE: 150,
-    BING: 10,
-    YANDEX: 100,
-    DEEPL: 150, 
+    GOOGLE: BASE_MAX_CHUNKS_PER_BATCH.GOOGLE,
+    BING: BASE_MAX_CHUNKS_PER_BATCH.BING,
+    YANDEX: BASE_MAX_CHUNKS_PER_BATCH.YANDEX,
+    DEEPL: BASE_MAX_CHUNKS_PER_BATCH.DEEPL, 
   },
 
-  // Dictionary support flags
+  // Capability flags (Static defaults for legacy code)
   SUPPORTS_DICTIONARY: {
     GOOGLE: true,
     BING: false,
@@ -40,15 +55,13 @@ export const TRANSLATION_CONSTANTS = {
     DEEPL: false,
   },
 
-  // Reliable mode flags
   RELIABLE_JSON_MODE: {
     GOOGLE: false,
-    BING: false,
-    YANDEX: false,
+    BING: true,
+    YANDEX: true,
     DEEPL: false,
   },
 
-  // Streaming support flags
   SUPPORTS_STREAMING: {
     GOOGLE: true,
     BING: true,
@@ -56,11 +69,16 @@ export const TRANSLATION_CONSTANTS = {
     DEEPL: true,
   },
 
-  // Chunking strategies
   CHUNKING_STRATEGIES: {
     GOOGLE: 'character_limit',
     BING: 'character_limit',
     YANDEX: 'character_limit',
     DEEPL: 'character_limit',
   },
+
+  // Thresholds
+  STREAMING_THRESHOLDS: NewStreamingThresholds,
+
+  // History limits
+  HISTORY_CHARACTER_LIMITS: NewHistoryLimits
 };

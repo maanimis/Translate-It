@@ -1,56 +1,74 @@
 <!-- eslint-disable vue/no-v-html -->
 <template>
-  <div class="about-page">
-    <h2 class="page-title">
-      {{ t('about_section_title') || 'What\'s New' }}
-    </h2>
-    
-    <div class="changelog-container">
+  <div class="options-tab-content about-page">
+    <div class="settings-container">
+      <h2 class="page-title">
+        {{ t('about_section_title') || "What's New" }}
+      </h2>
+      
       <div
-        v-if="isLoadingChangelog"
-        class="loading-changelog"
+        class="changelog-container"
+        dir="ltr"
       >
-        {{ t('options_changelog_loading') || 'Loading changelog...' }}
+        <div
+          v-if="isLoadingChangelog"
+          class="loading-changelog"
+        >
+          {{ t('options_changelog_loading') || 'Loading changelog...' }}
+        </div>
+        <div
+          v-else-if="changelogError"
+          class="error-changelog"
+        >
+          {{ t('options_changelog_error') || 'Failed to load changelog.' }}
+        </div>
+        <!-- Safe: Content is sanitized with DOMPurify -->
+        <div
+          v-else
+          ref="changelogContentRef"
+          class="changelog-content"
+          @click="handleLinkClick"
+          v-html="sanitizedChangelog"
+        />
       </div>
-      <div
-        v-else-if="changelogError"
-        class="error-changelog"
-      >
-        {{ t('options_changelog_error') || 'Failed to load changelog.' }}
-      </div>
-      <!-- Safe: Content is sanitized with DOMPurify -->
-      <div
-        v-else
-        ref="changelogContent"
-        class="changelog-content"
-        v-html="sanitizedChangelog"
-      />
     </div>
   </div>
 </template>
 
 <script setup>
+import './About.scss'
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import browser from 'webextension-polyfill'
-import { getScopedLogger } from '@/shared/logging/logger.js';
-import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
-const logger = getScopedLogger(LOG_COMPONENTS.UI, 'About');
+import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js'
+import { useHighlightManager } from './composables/useHighlightManager.js'
+import { getScopedLogger } from '@/shared/logging/logger.js'
+import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js'
 
-import { useI18n } from 'vue-i18n'
+// Logger
+const logger = getScopedLogger(LOG_COMPONENTS.UI, 'About')
 
-const { t } = useI18n()
+// Composables
+const { t } = useUnifiedI18n()
+const router = useRouter()
+const { checkAndHighlight } = useHighlightManager()
 
-
+// State
 const isLoadingChangelog = ref(true)
 const changelogError = ref(false)
 const rawChangelog = ref('')
+const changelogContentRef = ref(null)
+
+// --- Computed Properties ---
 
 // Computed property for sanitized HTML
 const sanitizedChangelog = computed(() => {
   return DOMPurify.sanitize(rawChangelog.value)
 })
+
+// --- Logic ---
 
 const fetchChangelog = async () => {
   try {
@@ -62,9 +80,9 @@ const fetchChangelog = async () => {
     }
     const markdown = await response.text()
     
-    // Configure marked options for better markdown support
+    // Configure marked options
     const markedOptions = {
-      breaks: false, // Don't convert single line breaks to <br>
+      breaks: false,
       gfm: true,
       smartLists: true,
       smartypants: false,
@@ -76,270 +94,60 @@ const fetchChangelog = async () => {
 
     let html = marked(markdown, markedOptions)
 
-    // Post-process to add spacing between sections without breaking markdown
-    html = html.replace(/(<h[1-6][^>]*>.*?<\/h[1-6]>)\s*(?=<h[1-6]|$)/g, '$1<br>')
-
-    // Sanitize HTML for security
+    // Update raw changelog
     rawChangelog.value = html
   } catch (error) {
-  logger.error('Error fetching changelog:', error)
+    logger.error('Error fetching changelog:', error)
     changelogError.value = true
   } finally {
     isLoadingChangelog.value = false
   }
 }
 
-// Function to add target="_blank" only to external links
+/**
+ * Adds target="_blank" and rel="noopener noreferrer" to external links
+ */
 const addTargetBlankToLinks = () => {
-  // Use a simple selector to find all links in the changelog
-  const changelogElements = document.querySelectorAll('.changelog-content')
-  changelogElements.forEach(element => {
-    const links = element.querySelectorAll('a')
-    links.forEach(link => {
-      const href = link.getAttribute('href')
-      // Only add target="_blank" to external links (not starting with #)
-      if (href && !href.startsWith('#') && !link.getAttribute('target')) {
-        link.setAttribute('target', '_blank')
-        link.setAttribute('rel', 'noopener noreferrer')
-      }
-    })
+  if (!changelogContentRef.value) return
+
+  const links = changelogContentRef.value.querySelectorAll('a')
+  links.forEach(link => {
+    const href = link.getAttribute('href')
+    // Only add target="_blank" to external links (not starting with #)
+    if (href && !href.startsWith('#') && !link.getAttribute('target')) {
+      link.setAttribute('target', '_blank')
+      link.setAttribute('rel', 'noopener noreferrer')
+    }
   })
 }
 
-// Watch for changes and process links
+/**
+ * Handle clicks on internal links to use Vue Router instead of full page reloads
+ */
+const handleLinkClick = (event) => {
+  const link = event.target.closest('a')
+  if (!link) return
+
+  const href = link.getAttribute('href')
+  if (href && href.startsWith('#/')) {
+    event.preventDefault()
+    const path = href.substring(1) // Remove the #
+    logger.debug(`🚀 Intercepted internal link click: ${path}`)
+    router.push(path)
+  }
+}
+
+// Watch for content changes and process links after DOM update
 watch(sanitizedChangelog, () => {
   nextTick(() => {
     addTargetBlankToLinks()
   })
 })
 
+// --- Lifecycle ---
+
 onMounted(() => {
   fetchChangelog()
-  // Process links after a short delay to ensure DOM is ready
-  setTimeout(addTargetBlankToLinks, 500)
+  checkAndHighlight()
 })
 </script>
-
-<style lang="scss" scoped>
-// Local SCSS variables for this component
-$spacing-xs: 4px;
-$spacing-sm: 8px;
-$spacing-base: 12px;
-$spacing-md: 16px;
-$spacing-lg: 20px;
-$spacing-xl: 24px;
-$spacing-xxl: 32px;
-
-$font-size-xs: 11px;
-$font-size-sm: 12px;
-$font-size-base: 14px;
-$font-size-md: 15px;
-$font-size-lg: 16px;
-$font-size-xl: 18px;
-
-$font-weight-medium: 500;
-$font-weight-bold: 700;
-
-$border-radius-sm: 4px;
-$border-radius-base: 6px;
-
-$border-width: 1px;
-$border-style: solid;
-
-.about-page {
-  max-width: 800px;
-}
-
-.page-title {
-  font-size: $font-size-xl;
-  font-weight: $font-weight-medium;
-  margin-top: 0;
-  margin-bottom: $spacing-lg;
-  padding-bottom: $spacing-base;
-  border-bottom: $border-width $border-style var(--color-border);
-  color: var(--color-text);
-}
-
-.changelog-container {
-  padding: $spacing-md;
-  border: $border-width $border-style var(--color-border);
-  border-radius: $border-radius-base;
-  background-color: var(--color-background-soft);
-  // max-height: 60vh;
-  overflow-y: auto;
-  line-height: 1.6;
-  color: var(--color-text);
-
-  .loading-changelog,
-  .error-changelog {
-    text-align: center;
-    padding: $spacing-xl;
-    color: var(--color-text-secondary);
-  }
-
-  .error-changelog {
-    color: var(--color-error);
-  }
-
-  .changelog-content {
-    // Ensure all text is visible
-    color: var(--color-text);
-    line-height: 1.6;
-    direction: ltr !important; // Force left-to-right for markdown content
-    text-align: left !important; // Force left alignment
-
-    :deep(h1), :deep(h2), :deep(h3), :deep(h4), :deep(h5), :deep(h6) {
-      color: var(--color-text) !important;
-      margin-top: 0 !important;
-      margin-bottom: 2px !important; // فاصله کم بعد از headers
-      padding-bottom: 0 !important;
-      font-weight: bold !important;
-      line-height: 1.2 !important;
-    }
-
-    :deep(h1) { font-size: 1.5rem !important; }
-    :deep(h2) { font-size: 1.25rem !important; }
-    :deep(h3) { font-size: 1.125rem !important; }
-    :deep(h4) { font-size: 1rem !important; }
-    :deep(h5) { font-size: 0.875rem !important; }
-    :deep(h6) { font-size: 0.75rem !important; }
-
-    :deep(p) {
-      margin-bottom: 6px !important; // تنظیم فاصله پاراگراف‌ها
-      color: var(--color-text) !important;
-      line-height: 1.6 !important;
-      direction: ltr !important;
-      text-align: left !important;
-    }
-
-    :deep(ul), :deep(ol) {
-      margin-bottom: 8px !important; // کاهش فاصله لیست‌ها
-      padding-left: 24px !important; // افزایش padding برای بهتر دیده شدن bullet های سطح اول
-      padding-right: 0 !important; // اطمینان از عدم padding سمت راست
-      color: var(--color-text) !important;
-      list-style-type: disc !important;
-      list-style-position: outside !important; // اطمینان از موقعیت bullet
-      direction: ltr !important; // Force LTR for lists
-    }
-
-    :deep(ol) {
-      list-style-type: decimal !important;
-    }
-
-    :deep(li) {
-      margin-bottom: 2px !important; // کاهش فاصله بین آیتم‌های لیست
-      color: var(--color-text) !important;
-      line-height: 1.4 !important;
-      padding-left: 4px !important; // کمی padding برای بهتر دیده شدن متن
-    }
-
-    :deep(ul ul), :deep(ol ol), :deep(ul ol), :deep(ol ul) {
-      margin-bottom: 0 !important;
-      padding-left: 28px !important; // افزایش padding برای لیست‌های تو در تو
-      padding-right: 0 !important;
-      direction: ltr !important;
-    }
-
-    :deep(ul ul) {
-      list-style-type: circle !important;
-    }
-
-    :deep(ul ul ul), :deep(ol ol ol) {
-      padding-left: 32px !important; // padding بیشتر برای لیست‌های سطح سوم
-      padding-right: 0 !important;
-      direction: ltr !important;
-    }
-
-    :deep(li) {
-      margin-bottom: 4px !important;
-      color: var(--color-text) !important;
-      line-height: 1.4 !important;
-    }
-
-    :deep(strong), :deep(b) {
-      font-weight: bold !important;
-      color: var(--color-text) !important;
-    }
-
-    :deep(em), :deep(i) {
-      font-style: italic !important;
-      color: var(--color-text-secondary) !important;
-    }
-
-    :deep(a) {
-      color: var(--color-primary) !important;
-      text-decoration: none !important;
-      &:hover {
-        text-decoration: underline !important;
-      }
-    }
-
-    :deep(code) {
-      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace !important;
-      background-color: var(--color-code-inline-bg) !important;
-      padding: 2px 4px !important;
-      border-radius: 3px !important;
-      font-size: 0.9em !important;
-      color: var(--color-text) !important;
-    }
-
-    :deep(pre) {
-      background-color: var(--color-code-block-bg) !important;
-      border: 1px solid var(--color-border) !important;
-      border-radius: 4px !important;
-      padding: 8px !important;
-      overflow-x: auto !important;
-      margin-bottom: 12px !important;
-      font-size: 0.875rem !important;
-      color: var(--color-text) !important;
-    }
-
-    // Nested code in pre
-    :deep(pre code) {
-      background: none !important;
-      padding: 0 !important;
-      border-radius: 0 !important;
-      color: inherit !important;
-    }
-
-    // Other elements
-    :deep(blockquote) {
-      border-left: 4px solid var(--color-border) !important;
-      padding-left: 8px !important;
-      margin: 12px 0 !important;
-      color: var(--color-text-secondary) !important;
-      font-style: italic !important;
-      direction: ltr !important;
-      text-align: left !important;
-    }
-
-    :deep(table) {
-      border-collapse: collapse !important;
-      width: 100% !important;
-      margin-bottom: 12px !important;
-      font-size: 0.875rem !important;
-      color: var(--color-text) !important;
-      direction: ltr !important;
-    }
-
-    :deep(th), :deep(td) {
-      border: 1px solid var(--color-border) !important;
-      padding: 4px 8px !important;
-      text-align: left !important;
-      color: var(--color-text) !important;
-      direction: ltr !important;
-    }
-
-    :deep(th) {
-      background-color: var(--color-background-soft) !important;
-      font-weight: 600 !important;
-    }
-
-    :deep(hr) {
-      border: none !important;
-      border-top: 1px solid var(--color-border) !important;
-      margin: 20px 0 !important;
-    }
-  }
-}
-</style>

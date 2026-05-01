@@ -5,6 +5,7 @@
 
 import { ref } from 'vue';
 import { WINDOWS_MANAGER_EVENTS } from '@/core/PageEventBus.js';
+import { SELECTION_EVENTS } from '@/features/text-selection/events/SelectionEvents.js';
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 
@@ -18,6 +19,37 @@ export function useWindowsManager() {
   
   // Logger
   const logger = getScopedLogger(LOG_COMPONENTS.WINDOWS, 'useWindowsManager');
+
+  /**
+   * Handle global selection change (Coordinator Pattern)
+   */
+  const handleGlobalSelectionChange = async (detail) => {
+    // If there is no WindowsManager instance (the heavy class), 
+    // the composable can handle basic mobile UI orchestration
+    let windowsManager = window.windowsManagerInstance;
+
+    // If not globally available, try to get it via Singleton if it exists
+    if (!windowsManager) {
+      try {
+        const { WindowsManager } = await import('@/features/windows/managers/WindowsManager.js');
+        windowsManager = WindowsManager.getInstance();
+      } catch {
+        // Class not available yet
+      }
+    }
+
+    const hasManager = !!windowsManager;
+
+    logger.info('Global selection change received in useWindowsManager', { 
+      text: detail.text?.substring(0, 20),
+      hasManager 
+    });
+
+    // If we have the manager, let it handle the heavy lifting (logic, settings, positioning)
+    if (hasManager && typeof windowsManager.show === 'function') {
+      windowsManager.show(detail.text, detail.position, detail.options);
+    }
+  };
 
   /**
    * Event handlers
@@ -50,19 +82,22 @@ export function useWindowsManager() {
       needsSettings: detail.needsSettings || false,
       isLoading: detail.isLoading || false,
       initialSize: detail.initialSize || (detail.isLoading ? 'small' : 'normal'),
-      targetLanguage: detail.targetLanguage || detail.to || 'auto', // Add target language support
-      provider: detail.provider || '' // Add provider support
+      targetLanguage: detail.targetLanguage || detail.to || detail.tl || 'auto',
+      sourceLanguage: detail.sourceLanguage || detail.from || detail.sl || 'auto',
+      detectedSourceLanguage: detail.detectedSourceLanguage || null,
+      provider: detail.provider || ''
     };
 
     if (existingWindowIndex >= 0) {
-      // Update existing window
-      translationWindows.value[existingWindowIndex] = windowData;
+      // Update existing window reactive-friendly
+      const updatedWindows = [...translationWindows.value];
+      updatedWindows[existingWindowIndex] = windowData;
+      translationWindows.value = updatedWindows;
       logger.debug('Updated existing window', detail.id);
     } else {
       // Remove other windows first (single window at a time)
-      translationWindows.value = [];
       // Add new window
-      translationWindows.value.push(windowData);
+      translationWindows.value = [windowData];
       logger.debug('Created new window', detail.id);
     }
   };
@@ -111,14 +146,21 @@ export function useWindowsManager() {
 
     const existingWindowIndex = translationWindows.value.findIndex(w => w.id === detail.id);
     if (existingWindowIndex >= 0) {
-      const existingWindow = translationWindows.value[existingWindowIndex];
+      const updatedWindows = [...translationWindows.value];
+      const existingWindow = updatedWindows[existingWindowIndex];
+      
       // Update the window data
-      translationWindows.value[existingWindowIndex] = {
+      updatedWindows[existingWindowIndex] = {
         ...existingWindow,
         ...detail,
         translatedText: detail.initialTranslatedText || detail.translatedText || existingWindow.translatedText,
+        sourceLanguage: detail.sourceLanguage || detail.from || detail.sl || existingWindow.sourceLanguage,
+        detectedSourceLanguage: detail.detectedSourceLanguage || detail.sourceLanguage || existingWindow.detectedSourceLanguage,
+        targetLanguage: detail.targetLanguage || detail.to || detail.tl || existingWindow.targetLanguage,
         initialSize: detail.initialSize || existingWindow.initialSize
       };
+      
+      translationWindows.value = updatedWindows;
       logger.debug('Window updated', detail.id);
     } else {
       // Window was closed before translation completed - this is normal behavior
@@ -184,6 +226,7 @@ export function useWindowsManager() {
     pageEventBus.on(WINDOWS_MANAGER_EVENTS.SHOW_ICON, handleShowIcon);
     pageEventBus.on(WINDOWS_MANAGER_EVENTS.DISMISS_WINDOW, handleDismissWindow);
     pageEventBus.on(WINDOWS_MANAGER_EVENTS.DISMISS_ICON, handleDismissIcon);
+    pageEventBus.on(SELECTION_EVENTS.GLOBAL_SELECTION_CHANGE, handleGlobalSelectionChange);
 
     logger.debug('WindowsManager event listeners setup complete');
   };
@@ -197,6 +240,7 @@ export function useWindowsManager() {
     pageEventBus.off(WINDOWS_MANAGER_EVENTS.SHOW_ICON, handleShowIcon);
     pageEventBus.off(WINDOWS_MANAGER_EVENTS.DISMISS_WINDOW, handleDismissWindow);
     pageEventBus.off(WINDOWS_MANAGER_EVENTS.DISMISS_ICON, handleDismissIcon);
+    pageEventBus.off(SELECTION_EVENTS.GLOBAL_SELECTION_CHANGE, handleGlobalSelectionChange);
 
     logger.debug('WindowsManager event listeners cleaned up');
   };

@@ -5,7 +5,7 @@ import { getProvidersForDropdown, getProviderById } from "@/core/provider-regist
 import { ProviderRegistryIds } from "@/features/translation/providers/ProviderConstants.js";
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
-import browser from "webextension-polyfill";
+import ExtensionContextManager from '@/core/extensionContext.js';
 
 const logger = getScopedLogger(LOG_COMPONENTS.UI, 'useApiProvider');
 
@@ -21,14 +21,23 @@ export function useApiProvider() {
 
   const currentProviderData = computed(() => getProviderById(currentProvider.value));
   const currentProviderIcon = computed(() => {
-    if (!browser || !browser.runtime || !browser.runtime.getURL) return ""
-    if (!currentProviderData.value) return browser.runtime.getURL('icons/providers/google.svg')
-    const iconPath = currentProviderData.value.icon
-    if (!iconPath) return browser.runtime.getURL('icons/providers/google.svg')
-    if (iconPath.includes('/')) {
-      return browser.runtime.getURL(`icons/${iconPath}`)
+    try {
+      const fallback = 'icons/providers/google.svg';
+      if (!currentProviderData.value) return ExtensionContextManager.safeGetURL(fallback)
+      const iconPath = currentProviderData.value.icon
+      if (!iconPath) return ExtensionContextManager.safeGetURL(fallback)
+      if (iconPath.includes('/')) {
+        return ExtensionContextManager.safeGetURL(`icons/${iconPath}`, fallback)
+      }
+      return ExtensionContextManager.safeGetURL(`icons/providers/${iconPath}`, fallback)
+    } catch (error) {
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'useApiProvider:currentProviderIcon');
+      } else {
+        logger.error('[currentProviderIcon] Failed to get provider icon:', error);
+      }
+      return ExtensionContextManager.GENERIC_FALLBACK_ICON;
     }
-    return browser.runtime.getURL(`icons/providers/${iconPath}`)
   });
   const currentProviderName = computed(() => currentProviderData.value?.name || "Translation Provider");
 
@@ -87,7 +96,11 @@ export function useApiProvider() {
       isDropdownOpen.value = false;
       return true;
     } catch (error) {
-      logger.error('Failed to change provider:', error);
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'api-provider:select');
+      } else {
+        logger.error('Failed to change provider:', error);
+      }
       providerError.value = "Failed to change provider";
       return false;
     } finally {
@@ -96,8 +109,16 @@ export function useApiProvider() {
   };
 
   const getProviderIconUrl = (iconPath) => {
-      if (!browser || !browser.runtime || !browser.runtime.getURL) return "";
-      return browser.runtime.getURL(iconPath);
+    try {
+      return ExtensionContextManager.safeGetURL(iconPath, 'icons/providers/google.svg');
+    } catch (error) {
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'useApiProvider:getProviderIconUrl');
+      } else {
+        logger.error('[getProviderIconUrl] Failed to get icon URL:', error);
+      }
+      return ExtensionContextManager.GENERIC_FALLBACK_ICON;
+    }
   }
 
   const createProviderItems = async () => {

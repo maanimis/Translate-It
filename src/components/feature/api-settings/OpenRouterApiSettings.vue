@@ -1,10 +1,10 @@
 <template>
-  <div>
+  <div class="openrouter-settings">
     <h3>{{ t('openrouter_api_settings_title') || 'OpenRouter API Settings' }}</h3>
-    <div class="setting-group api-key-info">
-      <span class="setting-description">
+    <div class="setting-group vertical api-key-info">
+      <p class="setting-description">
         {{ t('openrouter_api_key_info') || 'Get your OpenRouter API key from' }}
-      </span>
+      </p>
       <a
         class="api-link"
         href="https://openrouter.ai/settings/keys"
@@ -15,6 +15,7 @@
       </a>
     </div>
     <ApiKeyInput
+      id="OPENROUTER_API_KEY"
       v-model="openrouterApiKey"
       :label="t('custom_api_settings_api_key_label') || 'API Keys'"
       :placeholder="t('openrouter_api_key_placeholder') || 'Enter your API keys (one per line)'"
@@ -23,7 +24,7 @@
       :test-result="testResult"
       @test="testKeys"
     />
-    <div class="setting-group">
+    <div class="setting-group vertical">
       <label>{{ t('PROVIDER_MODEL_LABEL') || 'Model' }}</label>
       <BaseSelect
         v-model="openrouterApiModel"
@@ -34,7 +35,7 @@
     </div>
     <div
       v-if="selectedModelOption === 'custom'"
-      class="setting-group"
+      class="setting-group vertical"
     >
       <label>{{ t('openrouter_custom_model_label') || 'Custom Model Name' }}</label>
       <BaseInput
@@ -48,8 +49,10 @@
 
 <script setup>
 import { computed, ref, onMounted } from 'vue'
+import "./OpenRouterApiSettings.scss"
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/features/settings/stores/settings.js'
+import { CONFIG } from '@/shared/config/config.js'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BaseSelect from '@/components/base/BaseSelect.vue'
 import ApiKeyInput from './ApiKeyInput.vue'
@@ -90,7 +93,7 @@ const openrouterApiModel = computed({
 const openrouterCustomModel = computed({
   get: () => {
     const currentModel = settingsStore.settings?.OPENROUTER_API_MODEL || 'openai/gpt-4o';
-    const isPredefined = openrouterApiModelOptions.value.some(option => option.value === currentModel && option.value !== 'custom');
+    const isPredefined = openrouterApiModelOptions?.value?.some(option => option.value === currentModel && option.value !== 'custom') || false;
     return isPredefined ? '' : currentModel;
   },
   set: (value) => {
@@ -98,28 +101,21 @@ const openrouterCustomModel = computed({
   }
 })
 
-const openrouterApiModelOptions = ref([
-  { value: 'openai/gpt-5', label: 'GPT-5' },
-  { value: 'openai/gpt-5-mini', label: 'GPT-5 Mini' },
-  { value: 'openai/gpt-5-nano', label: 'GPT-5 Nano' },
-  { value: 'openai/gpt-4o', label: 'OpenAI GPT-4o' },
-  { value: 'openai/gpt-4o-mini', label: 'OpenAI GPT-4o Mini' },
-  { value: 'openai/gpt-4.1', label: 'OpenAI GPT-4.1' },
-  { value: 'openai/gpt-4.1-mini', label: 'OpenAI GPT-4.1 Mini' },
-  { value: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
-  { value: 'anthropic/claude-3.5-haiku', label: 'Claude 3.5 Haiku' },
-  { value: 'google/gemini-2.5-pro', label: 'Google Gemini 2.5 Pro' },
-  { value: 'google/gemini-2.5-flash', label: 'Google Gemini 2.5 Flash' },
-  { value: 'meta-llama/llama-3.3-70b-instruct', label: 'Meta Llama 3.3 70B' },
-  { value: 'mistralai/mistral-large', label: 'Mistral Large' },
-  { value: 'custom', label: 'Custom Model' }
-])
+const openrouterApiModelOptions = computed(() => {
+  const models = settingsStore.settings?.OPENROUTER_MODELS || CONFIG.OPENROUTER_MODELS || []
+  return models.map(model => ({
+    value: model.value,
+    label: model.name || model.value
+  }))
+})
 
 // Test keys functionality
 const testingKeys = ref(false)
 const testResult = ref(null)
 
 const testKeys = async (providerName) => {
+  if (!openrouterApiKey.value.trim()) return
+
   testingKeys.value = true
   testResult.value = null
 
@@ -161,7 +157,3 @@ onMounted(() => {
   initializeModelSelection()
 })
 </script>
-
-<style lang="scss" scoped>
-@use "@/assets/styles/components/api-settings-common" as *;
-</style>

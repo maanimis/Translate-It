@@ -1,0 +1,95 @@
+@use "@/assets/styles/base/variables" as *;
+
+.tts-tab {
+  max-width: 100% !important;
+  width: 100% !important;
+  display: block !important;
+}
+
+.tab-header {
+  margin-bottom: $spacing-xl !important;
+  
+  h2 {
+    margin: 0 0 $spacing-xs 0 !important;
+    font-size: $font-size-xl !important;
+    font-weight: 600 !important;
+    color: var(--color-text) !important;
+  }
+  
+  p {
+    margin: 0 !important;
+    font-size: $font-size-sm !important;
+    color: var(--color-text-secondary) !important;
+  }
+}
+
+.setting-group {
+  margin-bottom: $spacing-lg !important;
+  width: 100% !important;
+}
+
+/* Standardized Setting Row */
+.setting-row {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: flex-start !important;
+  gap: $spacing-xl !important;
+  width: 100% !important;
+
+  .setting-info {
+    flex: 1 !important;
+    min-width: 0 !important;
+  }
+
+  .setting-control {
+    flex-shrink: 0 !important;
+    min-width: 200px !important;
+    display: flex !important;
+    justify-content: flex-end !important;
+  }
+}
+
+.setting-label {
+  display: block !important;
+  font-size: $font-size-base !important;
+  font-weight: 600 !important;
+  color: var(--color-text) !important;
+  margin-bottom: $spacing-xs !important;
+}
+
+.setting-description {
+  font-size: $font-size-sm !important;
+  color: var(--color-text-secondary) !important;
+  line-height: 1.5 !important;
+  margin: 0 !important;
+}
+
+/* Horizontal line separator */
+.section-separator {
+  height: 1px !important;
+  background-color: var(--color-border) !important;
+  margin: $spacing-lg 0 !important;
+  opacity: 0.5 !important;
+  width: 100% !important;
+}
+
+// Tablet & Mobile responsive
+@media (max-width: #{$breakpoint-md}) {
+  .setting-row {
+    flex-direction: column !important;
+    gap: $spacing-md !important;
+    
+    .setting-control {
+      width: 100% !important;
+      justify-content: flex-start !important;
+      
+      :deep(.base-select) {
+        width: 100% !important;
+      }
+    }
+  }
+
+  .setting-description {
+    padding-inline-start: 0 !important;
+  }
+}

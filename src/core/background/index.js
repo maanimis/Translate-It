@@ -16,6 +16,9 @@ import "./listeners/onContextMenuClicked.js";
 // Import notification click listener
 import "./listeners/onNotificationClicked.js";
 
+// Inject iframe-only content scripts after subframe DOM becomes available
+import "./listeners/onSubframeDOMContentLoaded.js";
+
 // Import Memory Garbage Collector
 import { initializeGlobalCleanup } from '@/core/memory/GlobalCleanup.js';
 import { startMemoryMonitoring } from '@/core/memory/MemoryMonitor.js';
@@ -32,7 +35,7 @@ browser.runtime.onInstalled.addListener(async (details) => {
   try {
     await handleInstallationEvent(details);
   } catch (error) {
-    logger.error('❌ Failed to handle installation event:', error);
+    logger.error('Failed to handle installation event:', error);
   }
 });
 
@@ -91,7 +94,7 @@ backgroundService.initialize().then(async () => {
   }
 
 }).catch((error) => {
-  logger.error("❌ [Background] Background service initialization failed:", error);
+  logger.error("[Background] Background service initialization failed:", error);
 });
 
 export { backgroundService };

@@ -2,26 +2,17 @@
 import { BaseTranslateProvider } from "@/features/translation/providers/BaseTranslateProvider.js";
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
-import { LanguageSwappingService } from "@/features/translation/providers/LanguageSwappingService.js";
 import { AUTO_DETECT_VALUE } from "@/shared/config/constants.js";
-import {
+import { 
   getYandexTranslateUrlAsync
 } from "@/shared/config/config.js";
 import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
+import { TraditionalTextProcessor } from "./utils/TraditionalTextProcessor.js";
 import { TRANSLATION_CONSTANTS } from "@/shared/config/translationConstants.js";
 import { ErrorTypes } from "@/shared/error-management/ErrorTypes.js";
+import { getProviderLanguageCode } from "@/shared/config/languageConstants.js";
 
 const logger = getScopedLogger(LOG_COMPONENTS.PROVIDERS, 'YandexTranslate');
-
-// Yandex language code mapping
-const yandexLangCode = {
-  af: "af", sq: "sq", am: "am", ar: "ar", hy: "hy", az: "az", eu: "eu", be: "be", bn: "bn", bs: "bs", bg: "bg", ca: "ca", hr: "hr", cs: "cs", da: "da", nl: "nl", en: "en", eo: "eo", et: "et", fi: "fi", fr: "fr", gl: "gl", ka: "ka", de: "de", el: "el", gu: "gu", ht: "ht", hi: "hi", hu: "hu", is: "is", id: "id", ga: "ga", it: "it", ja: "ja", kn: "kn", kk: "kk", km: "km", ko: "ko", ky: "ky", lo: "lo", la: "la", lv: "lv", lt: "lt", lb: "lb", mk: "mk", mg: "mg", ms: "ms", ml: "ml", mt: "mt", mi: "mi", mr: "mr", mn: "mn", my: "my", ne: "ne", no: "no", fa: "fa", pl: "pl", pt: "pt", pa: "pa", ro: "ro", ru: "ru", gd: "gd", sr: "sr", si: "si", sk: "sk", sl: "sl", es: "es", su: "su", sw: "sw", sv: "sv", tg: "tg", ta: "ta", te: "te", th: "th", tr: "tr", uk: "uk", ur: "ur", uz: "uz", vi: "vi", cy: "cy", xh: "xh", yi: "yi", tl: "tl", iw: "he", jw: "jv", "zh-CN": "zh",
-};
-
-// Language name to code mapping
-const langNameToCodeMap = {
-  afrikaans: "af", albanian: "sq", arabic: "ar", azerbaijani: "az", belarusian: "be", bengali: "bn", bulgarian: "bg", catalan: "ca", cebuano: "ceb", "chinese (simplified)": "zh-CN", chinese: "zh-CN", croatian: "hr", czech: "cs", danish: "da", dutch: "nl", english: "en", estonian: "et", farsi: "fa", persian: "fa", filipino: "fil", finnish: "fi", french: "fr", german: "de", greek: "el", hebrew: "he", hindi: "hi", hungarian: "hu", indonesian: "id", italian: "it", japanese: "ja", kannada: "kn", kazakh: "kk", korean: "ko", latvian: "lv", lithuanian: "lt", malay: "ms", malayalam: "ml", marathi: "mr", nepal: "ne", norwegian: "no", odia: "or", pashto: "ps", polish: "pl", portuguese: "pt", punjabi: "pa", romanian: "ro", russian: "ru", serbian: "sr", sinhala: "si", slovak: "sk", slovenian: "sl", spanish: "es", swahili: "sw", swedish: "sv", tagalog: "tl", tamil: "ta", telugu: "te", th: "th", tr: "tr", uk: "uk", ur: "ur", uz: "uz", vietnamese: "vi",
-};
 
 export class YandexTranslateProvider extends BaseTranslateProvider {
   static type = "translate";
@@ -31,9 +22,10 @@ export class YandexTranslateProvider extends BaseTranslateProvider {
   static supportsDictionary = TRANSLATION_CONSTANTS.SUPPORTS_DICTIONARY.YANDEX;
   static mainUrl = "https://translate.yandex.net/api/v1/tr.json/translate";
   static detectUrl = "https://translate.yandex.net/api/v1/tr.json/detect";
-  static CHAR_LIMIT = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.YANDEX;
   
-  // BaseTranslateProvider capabilities
+  // BaseTranslateProvider capabilities (Default values)
+  // NOTE: Character limits and chunk sizes are now dynamically managed 
+  // by ProviderConfigurations.js based on the active Optimization Level.
   static supportsStreaming = TRANSLATION_CONSTANTS.SUPPORTS_STREAMING.YANDEX;
   static chunkingStrategy = TRANSLATION_CONSTANTS.CHUNKING_STRATEGIES.YANDEX;
   static characterLimit = TRANSLATION_CONSTANTS.CHARACTER_LIMITS.YANDEX;
@@ -44,11 +36,8 @@ export class YandexTranslateProvider extends BaseTranslateProvider {
   }
 
   _getLangCode(lang) {
-    const normalized = LanguageSwappingService._normalizeLangValue(lang);
-    if (normalized === AUTO_DETECT_VALUE) return 'auto';
-    if (yandexLangCode[normalized]) return yandexLangCode[normalized];
-    const mapped = langNameToCodeMap[normalized] || normalized;
-    return yandexLangCode[mapped] || mapped;
+    if (!lang || lang === AUTO_DETECT_VALUE) return 'auto';
+    return getProviderLanguageCode(lang, 'YANDEX');
   }
 
   _generateUuid() {
@@ -66,9 +55,14 @@ export class YandexTranslateProvider extends BaseTranslateProvider {
    * @param {string} targetLang - Target language
    * @param {string} translateMode - Translation mode
    * @param {AbortController} abortController - Cancellation controller
+   * @param {number} retryAttempt - Current retry attempt
+   * @param {number} segmentCount - Number of segments in this chunk
+   * @param {number} chunkIndex - Current chunk index
+   * @param {number} totalChunks - Total number of chunks
+   * @param {Object} options - Additional options (sessionId, originalCharCount)
    * @returns {Promise<string[]>} - Translated texts for this chunk
    */
-  async _translateChunk(chunkTexts, sourceLang, targetLang, translateMode, abortController) {
+  async _translateChunk(chunkTexts, sourceLang, targetLang, translateMode, abortController, retryAttempt, segmentCount, chunkIndex, totalChunks, options = {}) {
     const context = `${this.providerName.toLowerCase()}-translate-chunk`;
     
     const sl = this._getLangCode(sourceLang);
@@ -79,17 +73,25 @@ export class YandexTranslateProvider extends BaseTranslateProvider {
     logger.debug(`Yandex: Built lang parameter: '${lang}' from source='${sl}' target='${tl}'`);
 
     // Add key info log for translation start
-    logger.info(`[Yandex] Starting translation: ${chunkTexts.join('').length} chars`);
+    const charCount = TraditionalTextProcessor.calculateTraditionalCharCount(chunkTexts);
+    logger.info(`[Yandex] Starting translation: ${charCount} chars`);
 
     const uuid = this._generateUuid();
     const formData = new URLSearchParams();
     formData.append('lang', lang);
-    chunkTexts.forEach(text => formData.append('text', text || ''));
+    
+    // Extract text from objects (Select Element) to prevent technical artifacts
+    chunkTexts.forEach(t => {
+      const text = typeof t === 'object' ? (t.t || t.text || "") : (t || "");
+      formData.append('text', String(text));
+    });
 
     const apiUrl = await getYandexTranslateUrlAsync();
     const url = new URL(apiUrl);
     url.searchParams.set("id", `${uuid}-0-0`);
     url.searchParams.set("srv", "android");
+
+    const originalCharCount = charCount;
 
     const result = await this._executeRequest({
       url: url.toString(),
@@ -109,10 +111,19 @@ export class YandexTranslateProvider extends BaseTranslateProvider {
           err.statusCode = data?.code;
           throw err;
         }
+
+        // Capture detected source language from 'lang' field (format: "en-fa")
+        if (data.lang && typeof data.lang === 'string') {
+          this._setDetectedLanguage(data.lang.split('-')[0]);
+        }
+
         return data.text;
       },
       context,
       abortController,
+      charCount: originalCharCount,
+      sessionId: options.sessionId,
+      originalCharCount: options.originalCharCount || originalCharCount
     });
 
     const finalResult = result || chunkTexts.map(() => '');

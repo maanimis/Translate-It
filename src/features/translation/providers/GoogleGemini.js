@@ -6,36 +6,33 @@ import {
   getGeminiModelAsync,
   getGeminiThinkingEnabledAsync,
   getGeminiApiUrlAsync,
+  getPromptBASEScreenCaptureAsync
 } from "@/shared/config/config.js";
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
 import { ProviderNames } from "@/features/translation/providers/ProviderConstants.js";
-
+import { AIConversationHelper } from "./utils/AIConversationHelper.js";
+import { AITextProcessor } from "./utils/AITextProcessor.js";
+import { ResponseFormat, TRANSLATION_CONSTANTS } from "@/shared/config/translationConstants.js";
 const logger = getScopedLogger(LOG_COMPONENTS.PROVIDERS, 'GoogleGemini');
-
-import { getPromptBASEScreenCaptureAsync } from "@/shared/config/config.js";
 
 export class GeminiProvider extends BaseAIProvider {
   static type = "ai";
   static description = "Google Gemini AI";
   static displayName = "Google Gemini";
-  static reliableJsonMode = true;
-  static supportsDictionary = true;
-
-  static supportsStreaming = true;
-  static preferredBatchStrategy = 'smart';
-  static optimalBatchSize = 30;
-  static maxComplexity = 500;
-  static supportsImageTranslation = true;
-
-  static batchStrategy = 'json';
 
   constructor() {
     super(ProviderNames.GEMINI);
     this.providerSettingKey = 'GEMINI_API_KEY';
   }
 
-  async _translateSingle(text, sourceLang, targetLang, translateMode, abortController, sessionId = null, isBatch = false) {
+  /**
+   * Internal implementation of the Gemini API call.
+   * @protected
+   */
+  async _callAI(systemPrompt, userText, options = {}) {
+    const { abortController, sessionId, expectedFormat, isBatch } = options;
+
     const [apiKeys, model, thinkingEnabled, rawApiUrl] = await Promise.all([
       getGeminiApiKeysAsync(),
       getGeminiModelAsync(),
@@ -45,17 +42,10 @@ export class GeminiProvider extends BaseAIProvider {
 
     const apiKey = apiKeys.length > 0 ? apiKeys[0] : '';
 
-    this._validateConfig(
-      { apiKey },
-      ["apiKey"],
-      `${this.providerName.toLowerCase()}-translation`
-    );
+    this._validateConfig({ apiKey }, ["apiKey"], `${this.providerName.toLowerCase()}-translation`);
 
-    const { systemPrompt, userText } = await this._preparePromptAndText(text, sourceLang, targetLang, translateMode, sessionId, isBatch);
-
-    const isFirst = await this._isFirstTurn(sessionId);
-    logger.info(`[Gemini] Model: ${model || 'gemini-1.5-flash'}${sessionId ? ` (Session: ${sessionId.substring(0, 15)}..., Turn: ${isFirst ? '1' : 'Subsequent'})` : ''}`);
-    logger.debug(`[Gemini] Translating ${isBatch ? 'batch' : text.length + ' chars'}`);
+    const turnNumber = await AIConversationHelper.claimNextTurn(sessionId, this.providerName);
+    logger.info(`[Gemini] Model: ${model || 'gemini-1.5-flash'}${sessionId ? ` (Session: ${sessionId.substring(0, 15)}..., Turn: ${turnNumber})` : ''}`);
 
     const requestBody = {
       contents: [{
@@ -66,12 +56,19 @@ export class GeminiProvider extends BaseAIProvider {
       },
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 2048
+        maxOutputTokens: 8192, 
+        // Enforce JSON Mode for Structured Data
+        ...(expectedFormat === ResponseFormat.JSON_OBJECT && { response_mime_type: "application/json" })
       }
     };
 
     if (sessionId) {
-      const history = await this._getConversationHistory(sessionId);
+      // Limit history to last 2 turns with character capping to optimize tokens
+      const history = await AIConversationHelper.getConversationHistory(sessionId, options.mode, { 
+        maxTurns: 2,
+        maxChars: TRANSLATION_CONSTANTS.HISTORY_CHARACTER_LIMITS.AI 
+      });
+      
       if (history.length > 0) {
         const contents = [];
         for (const turn of history) {
@@ -89,13 +86,21 @@ export class GeminiProvider extends BaseAIProvider {
       };
     }
 
-    let url = rawApiUrl || CONFIG.GEMINI_API_URL;
-    if (!url.includes(':generateContent')) {
-      url = `${url}:generateContent`;
-    }
-    url = `${url}?key=${apiKey}`;
+    let apiUrl = rawApiUrl;
+    const isStandardGoogleUrl = !rawApiUrl || 
+                                rawApiUrl.includes('generativelanguage.googleapis.com') || 
+                                rawApiUrl === CONFIG.GEMINI_API_URL;
 
-    const context = `${this.providerName.toLowerCase()}-translation`;
+    if (isStandardGoogleUrl && model && CONFIG.GEMINI_MODELS) {
+      const modelConfig = CONFIG.GEMINI_MODELS.find(m => m.value === model);
+      if (modelConfig?.url) {
+        apiUrl = modelConfig.url;
+      }
+    }
+
+    let url = apiUrl || CONFIG.GEMINI_API_URL;
+    if (!url.includes(':generateContent')) url = `${url}:generateContent`;
+    url = `${url}?key=${apiKey}`;
 
     const fetchOptions = {
       method: "POST",
@@ -107,56 +112,55 @@ export class GeminiProvider extends BaseAIProvider {
       const result = await this._executeRequest({
         url,
         fetchOptions,
-        extractResponse: (data) =>
-          data?.candidates?.[0]?.content?.parts?.[0]?.text,
-        context,
+        charCount: fetchOptions.body.length,
+        originalCharCount: isBatch ? AITextProcessor.estimateOriginalChars(userText) : userText.length,
+        extractResponse: (data) => data?.candidates?.[0]?.content?.parts?.[0]?.text,
+        context: `${this.providerName.toLowerCase()}-translation`,
         abortController,
+        sessionId,
         updateApiKey: (newKey, options) => {
-          const urlObj = new URL(options.url);
-          urlObj.searchParams.set('key', newKey);
-          options.url = urlObj.toString();
-        }
-      });
-
-      if (sessionId && result) {
-        await this._updateSessionHistory(sessionId, userText, result);
-      }
-
-      logger.info(`[Gemini] Translation completed successfully`);
-      return this._cleanAIResponse(result);
-    } catch (error) {
-      if (
-        thinkingEnabled &&
-        model?.includes('thinking') &&
-        (error.message?.includes('thinking_config') || error.message?.includes('400'))
-      ) {
-        logger.debug('[Gemini] Thinking parameter not supported, retrying without thinking config...');
-        const retryBody = { ...requestBody };
-        delete retryBody.generationConfig.thinking_config;
-        
-        return await this._executeRequest({
-          url,
-          fetchOptions: {
-            ...fetchOptions,
-            body: JSON.stringify(retryBody)
-          },
-          extractResponse: (data) =>
-            data?.candidates?.[0]?.content?.parts?.[0]?.text,
-          context: `${context}-fallback`,
-          abortController,
-          updateApiKey: (newKey, options) => {
+          if (options.url) {
             const urlObj = new URL(options.url);
             urlObj.searchParams.set('key', newKey);
             options.url = urlObj.toString();
           }
-        });
+        }
+      });
+
+      if (sessionId && result) {
+        await AIConversationHelper.updateSessionHistory(sessionId, userText, result);
       }
 
+      return result;
+    } catch (error) {
+      // Thinking config fallback
+      if (thinkingEnabled && model?.includes('thinking') && (error.message?.includes('thinking_config') || error.message?.includes('400'))) {
+        const retryBody = { ...requestBody };
+        delete retryBody.generationConfig.thinking_config;
+        const retryBodyJson = JSON.stringify(retryBody);
+        return await this._executeRequest({
+          url,
+          fetchOptions: { ...fetchOptions, body: retryBodyJson },
+          charCount: retryBodyJson.length,
+          extractResponse: (data) => data?.candidates?.[0]?.content?.parts?.[0]?.text,
+          context: `${this.providerName.toLowerCase()}-translation-fallback`,
+          abortController,
+          sessionId,
+          updateApiKey: (newKey, options) => {
+            if (options.url) {
+              const urlObj = new URL(options.url);
+              urlObj.searchParams.set('key', newKey);
+              options.url = urlObj.toString();
+            }
+          }        });
+      }
       throw error;
     }
   }
 
-  async translateImage(base64Image, _sourceLang, targetLang) {
+  async _translateImageInternal(base64Image, _sourceLang, targetLang, options = {}) {
+    const { abortController, sessionId } = options;
+
     const [apiKeys, model, rawApiUrl, promptBase] = await Promise.all([
       getGeminiApiKeysAsync(),
       getGeminiModelAsync(),
@@ -167,60 +171,42 @@ export class GeminiProvider extends BaseAIProvider {
     const apiKey = apiKeys.length > 0 ? apiKeys[0] : '';
     const systemPrompt = promptBase.replace("{targetLanguage}", targetLang);
 
+    let apiUrl = rawApiUrl;
+    const isStandardGoogleUrl = !rawApiUrl || rawApiUrl.includes('generativelanguage.googleapis.com') || rawApiUrl === CONFIG.GEMINI_API_URL;
+
+    if (isStandardGoogleUrl && model && CONFIG.GEMINI_MODELS) {
+      const modelConfig = CONFIG.GEMINI_MODELS.find(m => m.value === model);
+      if (modelConfig?.url) apiUrl = modelConfig.url;
+    }
+
     const requestBody = {
       contents: [{
-        parts: [
-          { text: systemPrompt },
-          {
-            inline_data: {
-              mime_type: "image/png",
-              data: base64Image
-            }
-          }
-        ]
+        parts: [{ text: systemPrompt }, { inline_data: { mime_type: "image/png", data: base64Image } }]
       }],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 2048
-      }
+      generationConfig: { temperature: 0.1, maxOutputTokens: 2048 }
     };
 
-    let url = rawApiUrl || CONFIG.GEMINI_API_URL;
-    if (!url.includes(':generateContent')) {
-      url = `${url}:generateContent`;
-    }
+    let url = apiUrl || CONFIG.GEMINI_API_URL;
+    if (!url.includes(':generateContent')) url = `${url}:generateContent`;
     url = `${url}?key=${apiKey}`;
 
-    const fetchOptions = {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-    };
+    const fetchOptions = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(requestBody) };
 
-    const context = `${this.providerName.toLowerCase()}-image-translation`;
-
-    const result = await this._executeRequest({
+    return await this._executeRequest({
       url,
       fetchOptions,
-      extractResponse: (data) =>
-        data?.candidates?.[0]?.content?.parts?.[0]?.text,
-      context: context,
+      charCount: AITextProcessor.calculatePayloadChars(requestBody.contents),
+      extractResponse: (data) => data?.candidates?.[0]?.content?.parts?.[0]?.text,
+      context: `${this.providerName.toLowerCase()}-image-translation`,
+      abortController,
+      sessionId,
       updateApiKey: (newKey, options) => {
-        const urlObj = new URL(options.url);
-        urlObj.searchParams.set('key', newKey);
-        options.url = urlObj.toString();
-      }
-    });
-
-    logger.info(`[Gemini] Image translation completed successfully`);
-    return result;
-  }
-
-  _createError(type, message) {
-    const error = new Error(message);
-    error.type = type;
-    error.context = `${this.providerName.toLowerCase()}-provider`;
-    return error;
+        if (options.url) {
+          const urlObj = new URL(options.url);
+          urlObj.searchParams.set('key', newKey);
+          options.url = urlObj.toString();
+        }
+      }    });
   }
 }
 

@@ -51,7 +51,7 @@
           />
           <img
             v-if="compact"
-            :src="browser.runtime.getURL('icons/ui/whole-page.png')"
+            :src="ExtensionContextManager.safeGetURL('icons/ui/whole-page.png')"
             class="toolbar-icon"
             alt="Translate"
           >
@@ -66,7 +66,10 @@
 
     <!-- State: Translating or Auto-Translating -->
     <template v-if="isTranslating || isAutoTranslating">
-      <div v-if="textOnly" class="ti-text-status-wrapper">
+      <div
+        v-if="textOnly"
+        class="ti-text-status-wrapper"
+      >
         <a
           href="#"
           class="toolbar-link loading"
@@ -93,7 +96,6 @@
           <LoadingSpinner
             v-if="isTranslating || isAutoTranslating"
             size="sm"
-            variant="neutral"
           />
           <PageTranslationStatus 
             :status-data="{ isTranslating, isAutoTranslating, isTranslated, progress }"
@@ -104,7 +106,7 @@
 
         <img
           v-if="compact && !isTranslating && !isAutoTranslating"
-          :src="browser.runtime.getURL('icons/ui/whole-page.png')"
+          :src="ExtensionContextManager.safeGetURL('icons/ui/whole-page.png')"
           class="toolbar-icon"
           alt="Stop"
         >
@@ -118,7 +120,10 @@
 
     <!-- State: Translated -->
     <template v-if="isTranslated && !isTranslating && !isAutoTranslating">
-      <div v-if="textOnly" class="ti-text-status-wrapper">
+      <div
+        v-if="textOnly"
+        class="ti-text-status-wrapper"
+      >
         <a
           href="#"
           class="toolbar-link"
@@ -148,7 +153,7 @@
             class="ti-btn-status-badge"
           />
           <img
-            :src="browser.runtime.getURL('icons/ui/restore.png')"
+            :src="ExtensionContextManager.safeGetURL('icons/ui/restore.png')"
             :class="compact ? 'toolbar-icon' : 'ti-btn__icon'"
             alt="Restore"
           >
@@ -175,7 +180,7 @@ import { Icon } from '@iconify/vue';
 import { usePageTranslation } from '../composables/usePageTranslation.js';
 import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js';
 import PageTranslationStatus from '@/components/shared/PageTranslationStatus.vue';
-import browser from 'webextension-polyfill';
+import ExtensionContextManager from '@/core/extensionContext.js';
 
 const props = defineProps({
   compact: {

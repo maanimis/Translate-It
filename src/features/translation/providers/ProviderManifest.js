@@ -18,10 +18,9 @@ export const ProviderCategories = {
 
 /**
  * The Central Manifest
- * Each entry defines everything the system needs to know about a provider.
- * Sorted by category to ensure proper grouping in UI (Context Menus, Dropdowns)
+ * Wrapped in a function to enable lazy initialization for better stability
  */
-const RAW_MANIFEST = [
+const getRawManifest = () => [
   // --- Group: FREE ---
   {
     id: ProviderRegistryIds.GOOGLE_V2,
@@ -57,6 +56,7 @@ const RAW_MANIFEST = [
     importFunction: () => import("./DeepLTranslate.js").then(m => ({ default: m.DeepLTranslateProvider })),
     features: ["text", "autoDetect", "formality"],
     needsApiKey: true,
+    requiredSettings: ['DEEPL_API_KEY'],
     supported: true,
   },
   {
@@ -93,6 +93,7 @@ const RAW_MANIFEST = [
     importFunction: () => import("./LingvaProvider.js").then(m => ({ default: m.LingvaProvider })),
     features: ["text", "autoDetect"],
     needsApiKey: false,
+    requiredSettings: ['LINGVA_API_URL'],
     supported: true,
   },
   {
@@ -119,6 +120,7 @@ const RAW_MANIFEST = [
     importFunction: () => import("./GoogleGemini.js").then(m => ({ default: m.GeminiProvider })),
     features: ["text", "context", "smart", "bulk", "image"],
     needsApiKey: true,
+    requiredSettings: ['GEMINI_API_KEY'],
     supported: true,
   },
   {
@@ -131,6 +133,7 @@ const RAW_MANIFEST = [
     importFunction: () => import("./OpenAI.js").then(m => ({ default: m.OpenAIProvider })),
     features: ["text", "context", "smart", "image"],
     needsApiKey: true,
+    requiredSettings: ['OPENAI_API_KEY'],
     supported: true,
   },
   {
@@ -143,6 +146,7 @@ const RAW_MANIFEST = [
     importFunction: () => import("./OpenRouter.js").then(m => ({ default: m.OpenRouterProvider })),
     features: ["text", "context", "smart"],
     needsApiKey: true,
+    requiredSettings: ['OPENROUTER_API_KEY'],
     supported: true,
   },
   {
@@ -155,6 +159,7 @@ const RAW_MANIFEST = [
     importFunction: () => import("./DeepSeek.js").then(m => ({ default: m.DeepSeekProvider })),
     features: ["text", "context", "smart", "thinking"],
     needsApiKey: true,
+    requiredSettings: ['DEEPSEEK_API_KEY'],
     supported: true,
   },
   {
@@ -167,6 +172,7 @@ const RAW_MANIFEST = [
     importFunction: () => import("./CustomProvider.js").then(m => ({ default: m.CustomProvider })),
     features: ["text", "context", "configurable"],
     needsApiKey: true,
+    requiredSettings: ['CUSTOM_API_KEY', 'CUSTOM_API_URL'],
     supported: true,
   },
 
@@ -181,6 +187,7 @@ const RAW_MANIFEST = [
     importFunction: () => import("./WebAI.js").then(m => ({ default: m.WebAIProvider })),
     features: ["text", "context", "offline"],
     needsApiKey: false,
+    requiredSettings: ['WEBAI_API_URL'],
     supported: true,
   },
   {
@@ -195,28 +202,54 @@ const RAW_MANIFEST = [
     needsApiKey: false,
     supported: true,
   },
+
+  // --- Group: DEVELOPMENT ---
+  {
+    id: ProviderRegistryIds.MOCK,
+    name: ProviderNames.MOCK,
+    displayName: "Development Mock",
+    type: ProviderTypes.MOCK,
+    category: ProviderCategories.LOCAL,
+    icon: "custom.png",
+    importFunction: () => import("./MockProvider.js").then(m => ({ default: m.MockProvider })),
+    features: ["text", "context", "smart", "bulk", "streaming"],
+    needsApiKey: false,
+    supported: true, // Enable it here, we will filter it in the registry
+  },
 ];
+
+let cachedManifest = null;
 
 /**
  * Process manifest to add dynamic i18n keys
  */
-export const PROVIDER_MANIFEST = RAW_MANIFEST.map(provider => ({
-  ...provider,
-  titleKey: `provider_${provider.id}_title`,
-  descriptionKey: `provider_${provider.id}_description`
-}));
+export const getProviderManifest = () => {
+  if (cachedManifest) return cachedManifest;
+  
+  cachedManifest = getRawManifest().map(provider => ({
+    ...provider,
+    titleKey: `provider_${provider.id}_title`,
+    descriptionKey: `provider_${provider.id}_description`
+  }));
+  
+  return cachedManifest;
+};
+
+// Backward compatibility for existing imports
+export const PROVIDER_MANIFEST = getProviderManifest();
 
 /**
  * Helper: Find provider by Registry ID
  */
-export const findProviderById = (id) => PROVIDER_MANIFEST.find(p => p.id === id);
+export const findProviderById = (id) => getProviderManifest().find(p => p.id === id);
 
 /**
  * Helper: Find provider by Provider Name
  */
-export const findProviderByName = (name) => PROVIDER_MANIFEST.find(p => p.name === name);
+export const findProviderByName = (name) => getProviderManifest().find(p => p.name === name);
 
 /**
  * Helper: Get all active/supported providers
  */
-export const getActiveProviders = () => PROVIDER_MANIFEST.filter(p => p.supported);
+export const getActiveProviders = () => getProviderManifest().filter(p => p.supported);
+

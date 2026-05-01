@@ -1,0 +1,21 @@
+.extension-options {
+  width: 100vw;
+  height: 100vh;
+  height: 100svh;
+  display: flex;
+  justify-content: stretch;
+  align-items: stretch !important;
+  background-color: var(--color-background) !important;
+  box-sizing: border-box;
+  padding: 0; /* Full width edge-to-edge */
+  margin: 0;
+  overflow: hidden;
+}
+
+.extension-options.rtl {
+  direction: rtl;
+  
+  .loading-container {
+    text-align: right;
+  }
+}

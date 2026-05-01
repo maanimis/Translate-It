@@ -4,31 +4,11 @@
 import { ErrorHandler } from "@/shared/error-management/ErrorHandler.js";
 import { ErrorTypes } from "@/shared/error-management/ErrorTypes.js";
 import browser from "webextension-polyfill";
+import { getScopedLogger } from '@/shared/logging/logger.js';
+import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
+import { isMobile, isTouchDevice } from '@/shared/utils/device.js';
 
-// Lazy logger initialization to avoid TDZ
-let logger = null;
-let loggerPromise = null;
-const getLogger = () => {
-  if (!logger) {
-    if (!loggerPromise) {
-      loggerPromise = Promise.all([
-        import('@/shared/logging/logger.js'),
-        import('@/shared/logging/logConstants.js')
-      ]).then(([loggerModule, logConstantsModule]) => {
-        logger = loggerModule.getScopedLogger(logConstantsModule.LOG_COMPONENTS.BROWSER, 'compatibility');
-        return logger;
-      });
-    }
-    // Return a temporary logger that buffers calls until the real logger is loaded
-    return {
-      debug: (...args) => loggerPromise.then(l => l.debug(...args)),
-      info: (...args) => loggerPromise.then(l => l.info(...args)),
-      warn: (...args) => loggerPromise.then(l => l.warn(...args)),
-      error: (...args) => loggerPromise.then(l => l.error(...args))
-    };
-  }
-  return logger;
-};
+const logger = getScopedLogger(LOG_COMPONENTS.BROWSER, 'compatibility');
 
 /**
  * OS Platforms Constants
@@ -53,7 +33,7 @@ export async function isFirefox() {
         return browserInfo.name.toLowerCase() === "firefox";
       } catch (error) {
         // getBrowserInfo might not be available in all contexts
-        getLogger().debug('[browserCompat] getBrowserInfo not available:', error);
+        logger.debug('[browserCompat] getBrowserInfo not available:', error);
       }
     }
     
@@ -128,22 +108,11 @@ export function detectOS() {
  */
 export const deviceDetector = {
   isMobile() {
-    if (typeof navigator === 'undefined') return false;
-    const ua = navigator.userAgent || navigator.vendor || (window && window.opera) || "";
-    // Standard mobile UA detection
-    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
-    
-    // iPadOS detection (often reports as MacIntel but with touch)
-    const isIPadOS = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
-
-    // In extension context (popups/sidepanels), innerWidth is always small.
-    // We should NOT rely on width + touch for mobile detection here as it hits touch-enabled desktops.
-    return isMobileUA || isIPadOS;
+    return isMobile;
   },
 
   isTouchDevice() {
-    if (typeof navigator === 'undefined') return false;
-    return (typeof window !== 'undefined' && 'ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    return isTouchDevice;
   },
 
   shouldEnableMobileUI() {

@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="openai-settings">
     <h3>{{ t('openai_api_settings_title') || 'OpenAI API Settings' }}</h3>
     <div class="setting-group api-key-info">
       <span class="setting-description">
@@ -16,6 +16,7 @@
     </div>
 
     <ApiKeyInput
+      id="OPENAI_API_KEY"
       v-model="openaiApiKey"
       :label="t('custom_api_settings_api_key_label') || 'API Keys'"
       :placeholder="t('openai_api_key_placeholder') || 'Enter your API keys (one per line)'"
@@ -24,7 +25,7 @@
       :test-result="testResult"
       @test="testKeys"
     />
-    <div class="setting-group">
+    <div class="setting-group vertical">
       <label>{{ t('PROVIDER_MODEL_LABEL') || 'Model' }}</label>
       <BaseSelect
         v-model="openaiApiModel"
@@ -35,7 +36,7 @@
     </div>
     <div
       v-if="selectedModelOption === 'custom'"
-      class="setting-group"
+      class="setting-group vertical"
     >
       <label>{{ t('openai_custom_model_label') || 'Custom Model Name' }}</label>
       <BaseInput
@@ -49,8 +50,10 @@
 
 <script setup>
 import { computed, ref, onMounted } from 'vue'
+import "./OpenAIApiSettings.scss"
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/features/settings/stores/settings.js'
+import { CONFIG } from '@/shared/config/config.js'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BaseSelect from '@/components/base/BaseSelect.vue'
 import ApiKeyInput from './ApiKeyInput.vue'
@@ -99,19 +102,13 @@ const openaiCustomModel = computed({
   }
 })
 
-const openaiApiModelOptions = ref([
-  { value: 'gpt-5', label: 'GPT-5' },
-  { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
-  { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
-  { value: 'gpt-4.1', label: 'GPT-4.1' },
-  { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-  { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano' },
-  { value: 'gpt-4o', label: 'GPT-4o' },
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-  { value: 'gpt-4.5-preview', label: 'GPT-4.5 Preview' },
-  { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
-  { value: 'custom', label: 'Custom Model' }
-])
+const openaiApiModelOptions = computed(() => {
+  const models = settingsStore.settings?.OPENAI_MODELS || CONFIG.OPENAI_MODELS || []
+  return models.map(model => ({
+    value: model.value,
+    label: model.name || model.value
+  }))
+})
 
 // Test keys functionality
 const testingKeys = ref(false)
@@ -161,7 +158,3 @@ onMounted(() => {
   initializeModelSelection()
 })
 </script>
-
-<style lang="scss" scoped>
-@use "@/assets/styles/components/api-settings-common" as *;
-</style>

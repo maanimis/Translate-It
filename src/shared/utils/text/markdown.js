@@ -170,15 +170,18 @@ export class SimpleMarkdown {
   static _isLabelLine(text) {
     // Pattern to match label lines like:
     // - "**noun:** test, experiment" (markdown bold)
-    // - "**adjective:** probational" (markdown bold)
-    // - "نوع: اسم", "Definition: something", "مترادف: word, word" (regular labels)
-    const trimmedText = text.trim();
+    // - "اسم: آزمایش" (regular labels)
+    // - "- **Meaning**: آزمایش" (list item label)
+    const trimmedText = text.trim().replace(/^[-*•]\s+/, "");
     
-    // Check for markdown bold labels like **noun:** or **adjective:**
-    const markdownLabelPattern = /^\*\*[\w\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+\*\*\s*:\s+.+$/;
+    // Check for markdown bold labels: **Label**: content
+    // We look for ** at start, some characters, ** then a colon.
+    const markdownLabelPattern = /^\*\*.*?\*\*\s*:\s*.*$/;
     
-    // Check for regular labels like "noun:" or "نوع:"
-    const regularLabelPattern = /^[\w\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+\s*:\s+.+$/;
+    // Check for regular labels: Label: content
+    // We look for characters at the start followed immediately by a colon and then some content.
+    // This pattern is more inclusive for different languages.
+    const regularLabelPattern = /^[^:\n]+\s*:\s*.+$/;
     
     return markdownLabelPattern.test(trimmedText) || regularLabelPattern.test(trimmedText);
   }
@@ -197,20 +200,10 @@ export class SimpleMarkdown {
     const labelPart = text.substring(0, colonIndex).trim();
     const content = text.substring(colonIndex + 1).trim();
     
-    // Check if label is already in markdown bold format (**label**)
-    const markdownBoldPattern = /^\*\*(.*?)\*\*$/;
-    const markdownMatch = labelPart.match(markdownBoldPattern);
-    
-    let labelElement;
-    if (markdownMatch) {
-      // Extract the text from **text** format
-      labelElement = document.createElement("strong");
-      labelElement.textContent = markdownMatch[1];
-    } else {
-      // Regular label - make it bold
-      labelElement = document.createElement("strong");
-      labelElement.textContent = labelPart;
-    }
+    // Create a bold element for the label and strip any markdown markers
+    // This ensures a clean label regardless of how the AI formatted the bolding.
+    const labelElement = document.createElement("strong");
+    labelElement.textContent = this.strip(labelPart);
     
     span.appendChild(labelElement);
     span.appendChild(document.createTextNode(": "));
@@ -305,6 +298,65 @@ export class SimpleMarkdown {
   }
 
   /**
+   * Extract only the primary translation/meaning, cleaning markdown and ignoring dictionary details if present.
+   * Useful for TTS and "Clean Copy" operations.
+   * @param {string} text - The markdown text
+   * @returns {string} Clean plain text of the primary meaning
+   */
+  static getCleanTranslation(text) {
+    if (!text || typeof text !== "string") {
+      return "";
+    }
+
+    // Split into non-empty lines
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+    
+    if (lines.length === 0) {
+      return "";
+    }
+
+    if (lines.length <= 1) {
+      // If it's a single line and it's a label, try to extract the value
+      if (this._isLabelLine(lines[0])) {
+        const colonIndex = lines[0].indexOf(':');
+        if (colonIndex !== -1) {
+          return this.strip(lines[0].substring(colonIndex + 1));
+        }
+      }
+      return this.strip(text);
+    }
+
+    // Structural Check: In dictionary mode, we typically have a main translation 
+    // followed by lines with labels (Noun:, Verb:, etc.)
+    // OR the first line itself is a label (Meaning: ...)
+    let isDictionary = this._isLabelLine(lines[0]);
+    
+    if (!isDictionary) {
+      for (let i = 1; i < lines.length; i++) {
+        if (this._isLabelLine(lines[i])) {
+          isDictionary = true;
+          break;
+        }
+      }
+    }
+
+    if (isDictionary) {
+      // It's a dictionary entry - only return the primary meaning (first line)
+      // Extract content after colon if the first line is a label
+      if (this._isLabelLine(lines[0])) {
+        const colonIndex = lines[0].indexOf(':');
+        if (colonIndex !== -1) {
+          return this.strip(lines[0].substring(colonIndex + 1));
+        }
+      }
+      return this.strip(lines[0]);
+    }
+
+    // Not a dictionary entry (e.g. a paragraph) - strip markdown and return everything
+    return this.strip(text);
+  }
+
+  /**
    * Strip common markdown patterns to return "clean" plain text
    * @param {string} text - Markdown text to clean
    * @returns {string} Plain text
@@ -315,24 +367,29 @@ export class SimpleMarkdown {
     }
 
     return text
+      // Strip code blocks (```code```) - do this first to preserve content but remove markers
+      .replace(/```[\s\S]*?```/g, (match) => {
+        return match.replace(/^```\w*\n?/, "").replace(/\n?```$/, "");
+      })
+      // Strip headers (# header)
+      .replace(/^#+\s?/gm, "")
+      // Strip blockquotes (> quote)
+      .replace(/^>\s?/gm, "")
+      // Strip horizontal rules (---, ***, ___)
+      .replace(/^([-*_])\1{2,}$/gm, "")
+      // Strip list markers: unordered (- item, * item, + item)
+      .replace(/^\s*([-*+])\s+/gm, "")
+      // Strip list markers: ordered (1. item)
+      .replace(/^\s*\d+\.\s+/gm, "")
+      // Strip task list markers ([ ], [x])
+      .replace(/^\s*\[[ xX]\]\s+/gm, "")
       // Strip bold/italic markers (**bold**, __bold__, *italic*, _italic_)
       .replace(/(\*\*|__|\*|_)/g, "")
       // Strip markdown links [text](url) keeping only text
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-      // Strip blockquotes (> quote)
-      .replace(/^>\s?/gm, "")
-      // Strip headers (# header)
-      .replace(/^#+\s?/gm, "")
-      // Strip code markers (`code`)
+      // Strip inline code markers (`code`)
       .replace(/`([^`]+)`/g, "$1")
-      // Strip code blocks (```code```)
-      .replace(/```[\s\S]*?```/g, (match) => {
-        // Remove the backticks and potential language identifier
-        return match.replace(/^```\w*\n?/, "").replace(/\n?```$/, "");
-      })
-      // Strip horizontal rules (---, ***, ___)
-      .replace(/^([-*_])\1{2,}$/gm, "")
-      // Optional: Normalize multiple newlines to single newlines
+      // Normalize multiple newlines to double newlines, then trim
       .replace(/\n{3,}/g, "\n\n")
       .trim();
   }

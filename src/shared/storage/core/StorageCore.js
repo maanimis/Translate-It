@@ -7,12 +7,12 @@
  */
 
 // Early debug to trace module evaluation order
-import { ErrorHandler } from "@/shared/error-management/ErrorHandler.js";
-import { ErrorTypes } from "@/shared/error-management/ErrorTypes.js";
+import ResourceTracker from '@/core/memory/ResourceTracker.js';
 import browser from "webextension-polyfill";
 import { getScopedLogger } from '@/shared/logging/logger.js';
 import { LOG_COMPONENTS } from '@/shared/logging/logConstants.js';
-import ResourceTracker from '@/core/memory/ResourceTracker.js';
+
+const logger = getScopedLogger(LOG_COMPONENTS.STORAGE, 'StorageCore');
 import SmartCache from '@/core/memory/SmartCache.js';
 import { MEMORY_TIMING } from '@/core/memory/constants.js';
 import ExtensionContextManager from '@/core/extensionContext.js';
@@ -66,7 +66,7 @@ class StorageCore extends ResourceTracker {
 
         // Final attempt or non-retryable error
         if (isContextError) {
-          ExtensionContextManager.handleContextError(error, 'storage-core-init');
+          ExtensionContextManager.handleContextError(error, 'storage:init');
         } else {
           this.logger.error('Initialization failed', error);
         }
@@ -95,6 +95,7 @@ class StorageCore extends ResourceTracker {
    * Setup storage change listener for cache invalidation
    */
   _setupChangeListener() {
+    this.logger.debug('Storage core: Setting up change listener...');
     if (!browser?.storage?.onChanged) {
       this.logger.warn('storage.onChanged not available');
       return;
@@ -249,8 +250,13 @@ class StorageCore extends ResourceTracker {
       return { ...defaultValues, ...result };
 
     } catch (error) {
-      const handler = ErrorHandler.getInstance();
-      handler.handle(error, { type: ErrorTypes.SERVICE, context: 'StorageCore-get' });
+      // StorageCore should not handle its own errors via ErrorHandler
+      // to avoid circular dependencies. We check if it's a context error.
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'storage-core-get');
+      } else {
+        logger.error('StorageCore-get error:', error);
+      }
       throw error;
     }
   }
@@ -323,7 +329,11 @@ class StorageCore extends ResourceTracker {
       // Set operation completed - logged at TRACE level for detailed debugging
       // this.logger.debug(`Set ${Object.keys(plainData).length} key(s)`);
     } catch (error) {
-      this.logger.error('Set operation failed', error);
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'storage-core-set');
+      } else {
+        this.logger.error('Set operation failed', error);
+      }
       throw error;
     }
   }
@@ -358,7 +368,11 @@ class StorageCore extends ResourceTracker {
       // Remove operation completed - logged at TRACE level for detailed debugging
       // this.logger.debug(`Removed ${keyList.length} key(s)`);
     } catch (error) {
-      this.logger.error('Remove operation failed', error);
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'storage-core-remove');
+      } else {
+        this.logger.error('Remove operation failed', error);
+      }
       throw error;
     }
   }
@@ -382,7 +396,11 @@ class StorageCore extends ResourceTracker {
       // Storage cleared - logged at TRACE level for detailed debugging
       // this.logger.debug('Storage cleared');
     } catch (error) {
-      this.logger.error('Clear operation failed', error);
+      if (ExtensionContextManager.isContextError(error)) {
+        ExtensionContextManager.handleContextError(error, 'storage-core-clear');
+      } else {
+        this.logger.error('Clear operation failed', error);
+      }
       throw error;
     }
   }
@@ -510,7 +528,11 @@ class StorageCore extends ResourceTracker {
         try {
           callback(data);
         } catch (error) {
-          this.logger.error(`Event listener error for '${event}'`, error);
+          if (ExtensionContextManager.isContextError(error)) {
+            ExtensionContextManager.handleContextError(error, `storage-core-emit-${event}`);
+          } else {
+            this.logger.error(`Event listener error for '${event}'`, error);
+          }
         }
       }
     }

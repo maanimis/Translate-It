@@ -5,7 +5,8 @@
   >
     <button
       v-if="internalVisible && !isFullscreen"
-      class="ti-field-icon"
+      :id="id"
+      class="ti-field-icon translation-icon"
       :data-id="id"
       :data-translate-ui="true"
       :class="computedClasses"
@@ -15,8 +16,8 @@
       role="button"
       tabindex="0"
       @click="onClick"
-      @mousedown.prevent.stop
-      @mouseup.prevent.stop
+      @mousedown="onMouseDown"
+      @mouseup="onMouseUp"
       @mouseenter="onMouseEnter"
       @mouseleave="onMouseLeave"
       @focus="onFocus"
@@ -71,6 +72,7 @@
 </template>
 
 <script setup>
+import './TextFieldIcon.scss';
 import { ref, computed, onMounted, watch } from 'vue';
 import { useResourceTracker } from '@/composables/core/useResourceTracker.js';
 import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js';
@@ -180,6 +182,16 @@ const onClick = (event) => {
   emit('click', props.id, event);
 };
 
+const onMouseDown = (event) => {
+  // Prevent focus loss from the text field
+  event.preventDefault();
+  event.stopPropagation();
+};
+
+const onMouseUp = (event) => {
+  event.stopPropagation();
+};
+
 const onMouseEnter = (event) => {
   if (props.disabled) return;
   isHovering.value = true;
@@ -240,7 +252,3 @@ onMounted(() => {
   internalVisible.value = props.visible;
 });
 </script>
-
-<style scoped>
-/* Component-specific styles */
-</style>

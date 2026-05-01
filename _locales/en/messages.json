@@ -83,6 +83,9 @@
   "api_provider_deepl": {
     "message": "DeepL"
   },
+  "api_provider_mock": {
+    "message": "Development Mock"
+  },
   "provider_default": {
     "message": "Default"
   },
@@ -170,6 +173,12 @@
   "provider_custom_description": {
     "message": "Custom OpenAI-compatible API endpoint. Configure your own URL and key."
   },
+  "provider_mock_title": {
+    "message": "Development Mock"
+  },
+  "provider_mock_description": {
+    "message": "A simulated provider used for development and testing."
+  },
   "options_page_title": {
     "message": "Settings"
   },
@@ -221,6 +230,36 @@
   "advance_tab_title": {
     "message": "Advance"
   },
+  "tts_tab_title": {
+    "message": "Text-to-Speech"
+  },
+  "tts_tab_desc": {
+    "message": "Configure voice settings and pronunciation engines."
+  },
+  "tts_engine_label": {
+    "message": "TTS Engine"
+  },
+  "tts_engine_google": {
+    "message": "Google TTS (Standard)"
+  },
+  "tts_engine_edge": {
+    "message": "Microsoft Edge TTS (Neural)"
+  },
+  "tts_engine_desc": {
+    "message": "Choose the default engine for text pronunciation. Edge TTS provides higher quality neural voices."
+  },
+  "tts_fallback_label": {
+    "message": "Enable Language Fallback"
+  },
+  "tts_fallback_desc": {
+    "message": "Automatically switch to an alternative engine or similar language if the primary selection is unsupported."
+  },
+  "tts_autodetect_label": {
+    "message": "Smart Language Detection"
+  },
+  "tts_autodetect_desc": {
+    "message": "Automatically identify the text language before pronunciation to ensure the correct voice is used."
+  },
   "import_success": {
     "message": "Settings imported successfully."
   },
@@ -232,6 +271,9 @@
   },
   "activation_group_fab_title": {
     "message": "Quick Action Button (FAB)"
+  },
+  "activation_group_select_element_title": {
+    "message": "Select Element"
   },
   "activation_group_text_fields_title": {
     "message": "Text Field Translation"
@@ -407,6 +449,12 @@
   "translate_with_select_element_description": {
     "message": "Allow triggering translation using a specific selection method (if implemented, e.g., selecting a whole paragraph)."
   },
+  "show_select_element_in_context_menu_label": {
+    "message": "Show in context menu"
+  },
+  "show_select_element_in_context_menu_description": {
+    "message": "Display the 'Select Element' option in the browser's right-click context menu."
+  },
   "translate_on_text_selection_label": {
     "message": "Enable translation on text selection"
   },
@@ -458,9 +506,6 @@
   "mobile_selection_copied_message": {
     "message": "Translation copied to clipboard"
   },
-  "mobile_page_dashboard_btn": {
-    "message": "Dashboard"
-  },
   "mobile_page_error_encountered": {
     "message": "Error Encountered"
   },
@@ -511,9 +556,6 @@
   },
   "mobile_fab_alt": {
     "message": "Translate"
-  },
-  "mobile_back_button_alt": {
-    "message": "Back"
   },
   "mobile_close_button_alt": {
     "message": "Close"
@@ -569,14 +611,8 @@
   "mobile_ui_mode_mobile": {
     "message": "Always Mobile"
   },
-  "mobile_ui_mode_mobile_desc": {
-    "message": "Otimized for touch"
-  },
   "mobile_ui_mode_desktop": {
     "message": "Always Desktop"
-  },
-  "mobile_ui_mode_desktop_desc": {
-    "message": "Floating Window"
   },
   "mobile_input_header_title": {
     "message": "Manual Input"
@@ -595,9 +631,6 @@
   },
   "mobile_input_no_result_error": {
     "message": "No translation found. Please try again."
-  },
-  "mobile_input_default_error": {
-    "message": "Translation failed."
   },
   "mobile_input_copied_message": {
     "message": "Copied"
@@ -621,13 +654,13 @@
     "message": "Selection Translate Mode"
   },
   "options_selection_mode_immediate": {
-    "message": "Translate Immediately"
+    "message": "Immediately"
   },
   "options_selection_mode_onclick": {
-    "message": "Show icon to translate on click"
+    "message": "Show Icon"
   },
   "options_selection_mode_onfabclick": {
-    "message": "Use Desktop FAB to translate"
+    "message": "FAB"
   },
   "require_ctrl_for_text_selection_label": {
     "message": "Require Ctrl key for text selection translation"
@@ -669,7 +702,7 @@
     "message": "Translation API"
   },
   "translation_api_label": {
-    "message": "API Choice"
+    "message": "Service"
   },
   "provider_label": {
     "message": "Provider"
@@ -938,6 +971,9 @@
   "advance_debug_mode_label": {
     "message": "Debug Mode"
   },
+  "debug_section_description": {
+    "message": "Enable detailed logging for specific components. Overrides global log level."
+  },
   "proxy_section_title": {
     "message": "Proxy Settings"
   },
@@ -974,11 +1010,20 @@
   "proxy_test_success": {
     "message": "Proxy connection successful!"
   },
+  "direct_test_success": {
+    "message": "Direct connection successful!"
+  },
   "proxy_test_failed": {
     "message": "Proxy connection failed. Check your settings."
   },
+  "direct_test_failed": {
+    "message": "Direct connection failed. Please check your internet."
+  },
   "proxy_test_error": {
     "message": "Test failed with an error."
+  },
+  "proxy_not_enabled": {
+    "message": "Please enable proxy first to test connection."
   },
   "proxy_warning_title": {
     "message": "Browser Extension Limitation"
@@ -1064,8 +1109,8 @@
   "popup_translate_button_title": {
     "message": "Translate"
   },
-  "popup_translate_button_alt_icon": {
-    "message": "Translate"
+  "popup_stop_button_title": {
+    "message": "Stop translation"
   },
   "popup_exclude_toggle_title": {
     "message": "Enable/Disable on this site"
@@ -1514,9 +1559,6 @@
   "SELECT_ELEMENT_CANCEL": {
     "message": "Cancel"
   },
-  "SELECT_ELEMENT_REVERT": {
-    "message": "Revert"
-  },
   "LINGVA_WPT_WARNING": {
     "message": "Lingva may fail on long texts."
   },
@@ -1525,12 +1567,6 @@
   },
   "click_to_set_shortcut": {
     "message": "Click to set shortcut"
-  },
-  "shortcut_recording_title": {
-    "message": "Press Your Shortcut"
-  },
-  "shortcut_recording_instruction": {
-    "message": "Press the keys you want to use for this shortcut."
   },
   "shortcut_waiting": {
     "message": "Waiting for keys..."
@@ -1891,5 +1927,197 @@
   },
   "whole_page_show_original_on_hover_description": {
     "message": "Show the original text in a tooltip when hovering over translated content."
+  },
+  "select_element_show_original_on_hover_label": {
+    "message": "Show original on hover"
+  },
+  "select_element_show_original_on_hover_description": {
+    "message": "Show the original text in a tooltip when hovering over elements translated via Select Element."
+  },
+  "whole_page_translate_after_scroll_stop_label": {
+    "message": "Translate on scroll stop"
+  },
+  "whole_page_translate_after_scroll_stop_description": {
+    "message": "Only trigger translation when you stop scrolling. Best for performance and saving API credits."
+  },
+  "whole_page_translate_fluid_description": {
+    "message": "Translate continuously with a slight delay during scrolling. More responsive but may increase API requests."
+  },
+  "whole_page_trigger_mode_label": {
+    "message": "Translation Trigger Mode"
+  },
+  "whole_page_trigger_on_stop": {
+    "message": "On Scroll Stop"
+  },
+  "whole_page_trigger_fluid": {
+    "message": "During Scroll"
+  },
+  "whole_page_delay_label": {
+    "message": "Translation Delay"
+  },
+  "whole_page_scroll_stop_delay_unit": {
+    "message": "ms"
+  },
+  "ai_optimization_section_title": {
+    "message": "AI Optimization"
+  },
+  "ai_context_translation_label": {
+    "message": "Smart Context Understanding"
+  },
+  "ai_context_translation_description": {
+    "message": "Sends page metadata (title, section) to AI models. This improves translation accuracy for short or ambiguous text. (Always enabled for DeepL)"
+  },
+  "ai_conversation_history_label": {
+    "message": "Conversation Memory"
+  },
+  "ai_conversation_history_description": {
+    "message": "Keeps a short memory of recent translations in Select Element mode to improve consistency and context awareness. This can enhance translation quality, but may slightly increase token usage."
+  },
+  "bilingual_translation_label": {
+    "message": "Bilingual Translation (Swap Language)"
+  },
+  "bilingual_translation_description": {
+    "message": "If the detected input language matches your target language, it will automatically translate back to your source language (or English if source is Auto)."
+  },
+  "bilingual_mode_selection_label": {
+    "message": "Text Selection"
+  },
+  "bilingual_mode_select_element_label": {
+    "message": "Select Element"
+  },
+  "bilingual_mode_field_label": {
+    "message": "Text Fields"
+  },
+  "bilingual_mode_popup_label": {
+    "message": "Popup & Sidepanel"
+  },
+  "bilingual_mode_page_label": {
+    "message": "Whole Page Translation"
+  },
+  "optimization_level_label": {
+    "message": "Translation Strategy (Speed vs. Cost)"
+  },
+  "optimization_level_1": {
+    "message": "Level 1"
+  },
+  "optimization_level_2": {
+    "message": "Level 2"
+  },
+  "optimization_level_3": {
+    "message": "Level 3"
+  },
+  "optimization_level_4": {
+    "message": "Level 4"
+  },
+  "optimization_level_5": {
+    "message": "Level 5"
+  },
+  "opt_economy": {
+    "message": "Economy"
+  },
+  "opt_stable": {
+    "message": "Stable"
+  },
+  "opt_balanced": {
+    "message": "Balanced"
+  },
+  "opt_turbo": {
+    "message": "Turbo"
+  },
+  "opt_fast": {
+    "message": "Fast"
+  },
+  "optimization_description_ai": {
+    "message": "Choose between 'Economy' to maximize token efficiency, or 'Turbo' for the fastest possible UI updates."
+  },
+  "optimization_description_traditional": {
+    "message": "Balance your API usage and IP stability against translation speed. Higher efficiency reduces request frequency to prevent rate-limiting."
+  },
+  "enable_translation_history_label": {
+    "message": "Enable Translation History"
+  },
+  "enable_translation_history_description": {
+    "message": "Save translations in history."
+  },
+  "language_detection_label": {
+    "message": "Language Detection"
+  },
+  "language_detection_preferences_description": {
+    "message": "Set the priority language for shared scripts. This determines which language is preferred during 'Auto-detect' mode (e.g., to correctly distinguish Persian from similar languages)."
+  },
+  "arabic_script_priority_label": {
+    "message": "Arabic Script Priority"
+  },
+  "persian_language_name": {
+    "message": "Persian"
+  },
+  "default_label": {
+    "message": "Default"
+  },
+  "arabic_language_name": {
+    "message": "Arabic"
+  },
+  "urdu_language_name": {
+    "message": "Urdu"
+  },
+  "pashto_language_name": {
+    "message": "Pashto"
+  },
+  "chinese_simplified_name": {
+    "message": "Chinese (Simplified)"
+  },
+  "chinese_traditional_name": {
+    "message": "Chinese (Traditional)"
+  },
+  "chinese_classical_name": {
+    "message": "Chinese (Classical)"
+  },
+  "chinese_cantonese_name": {
+    "message": "Cantonese"
+  },
+  "chinese_script_priority_label": {
+    "message": "Chinese Script Priority"
+  },
+  "devanagari_script_priority_label": {
+    "message": "Devanagari Script Priority"
+  },
+  "hindi_language_name": {
+    "message": "Hindi"
+  },
+  "marathi_language_name": {
+    "message": "Marathi"
+  },
+  "nepali_language_name": {
+    "message": "Nepali"
+  },
+  "latin_script_priority_label": {
+    "message": "Latin Script Priority"
+  },
+  "latin_priority_none_label": {
+    "message": "Auto (Use Provider Detection)"
+  },
+  "english_language_name": {
+    "message": "English"
+  },
+  "french_language_name": {
+    "message": "French"
+  },
+  "spanish_language_name": {
+    "message": "Spanish"
+  },
+  "german_language_name": {
+    "message": "German"
+  },
+  "italian_language_name": {
+    "message": "Italian"
+  },
+  "portuguese_language_name": {
+    "message": "Portuguese"
+  },
+  "turkish_language_name": {
+    "message": "Turkish"
+  },
+  "dutch_language_name": {
+    "message": "Dutch"
   }
 }

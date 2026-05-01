@@ -42,11 +42,25 @@ export async function handleTranslate(message, sender) {
     // Use UnifiedTranslationService for handling the request
     const result = await unifiedTranslationService.handleTranslationRequest(message, sender);
 
+    // If the service returned a failure result with a raw Error object, 
+    // we must format it before sending it via messaging to prevent serialization issues (empty {} errors)
+    if (result && result.success === false && result.error) {
+      logger.debug('[Handler:TRANSLATE] Formatting failure result for transmission');
+      return MessageFormat.createErrorResponse(
+        result.error, 
+        message.messageId, 
+        { 
+          ...result, 
+          context: message.context || 'unknown' 
+        }
+      );
+    }
+
     logger.debug('[Handler:TRANSLATE] UnifiedService result:', result);
     return result;
 
   } catch (translationError) {
-    logger.debug('[Handler:TRANSLATE] Caught error from translation engine:', translationError.message);
+    logger.error('[Handler:TRANSLATE] Caught error from translation engine:', translationError);
 
     // Don't show error notification for user cancellations
     if (translationError.type !== ErrorTypes.USER_CANCELLED) {

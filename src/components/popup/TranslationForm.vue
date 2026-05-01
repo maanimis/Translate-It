@@ -8,8 +8,9 @@
       ref="sourceInputRef"
       v-model="sourceText"
       :placeholder="t('popup_source_text_placeholder') || 'اینجا بنویسید'"
-      :language="currentSourceLanguage"
-      :source-language="currentSourceLanguage"
+      :language="actualSourceLanguage"
+      :detected-source-language="actualSourceLanguage"
+      :last-translation="lastTranslation"
       :rows="2"
       :tabindex="1"
       :copy-title="t('popup_copy_source_title_icon') || 'کپی'"
@@ -28,8 +29,9 @@
     <TranslationDisplay
       ref="translationResultRef"
       :content="translatedText"
-      :language="currentTargetLanguage"
-      :target-language="currentTargetLanguage"
+      :language="actualTargetLanguage"
+      :target-language="actualTargetLanguage"
+      :last-translation="lastTranslation"
       :is-loading="isTranslating"
       :error="translationError"
       :error-type="errorType"
@@ -46,10 +48,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
 import { useUnifiedTranslation } from '@/features/translation/composables/useUnifiedTranslation.js'
 import { usePopupResize } from '@/composables/ui/usePopupResize.js'
-import { AUTO_DETECT_VALUE } from '@/shared/config/constants.js'
 import { useSettingsStore } from '@/features/settings/stores/settings.js'
 import { useErrorHandler } from '@/composables/shared/useErrorHandler.js'
 import { useUnifiedI18n } from '@/composables/shared/useUnifiedI18n.js'
@@ -109,13 +110,14 @@ const {
   translationError,
   errorType,
   canTranslate,
+  actualSourceLanguage,
+  actualTargetLanguage,
+  lastTranslation,
   triggerTranslation,
+  cancelTranslation,
   clearTranslation,
   loadLastTranslation
 } = translation
-
-// Local state
-const lastTranslation = ref(null)
 
 // Watch canTranslate and emit changes to parent
 watch(canTranslate, (newValue) => {
@@ -129,44 +131,6 @@ watch(sourceText, (newValue, oldValue) => {
   }
 }, { deep: true })
 
-// Helper function to detect if text is Persian
-const isPersianText = (text) => {
-  if (!text) return false
-  // Persian Unicode range: \u0600-\u06FF
-  const persianRegex = /[\u0600-\u06FF]/
-  return persianRegex.test(text)
-}
-
-// Reactive language values - use props first, then fallback to settings
-const currentSourceLanguage = computed(() => {
-  // If sourceLanguage prop is provided and not auto, use it
-  if (props.sourceLanguage && props.sourceLanguage !== AUTO_DETECT_VALUE) {
-    logger.debug('[TranslationForm] Using prop sourceLanguage:', props.sourceLanguage)
-    return props.sourceLanguage
-  }
-
-  // If auto-detect is selected, check if we can detect the text language
-  if (sourceText.value) {
-    if (isPersianText(sourceText.value)) {
-      logger.debug('[TranslationForm] Detected Persian text, using "fa"')
-      return 'fa'
-    }
-    // Add more language detections here if needed
-  }
-
-  // Fallback to settings
-  const lang = settingsStore.settings.SOURCE_LANGUAGE
-  logger.debug('[TranslationForm] Using settings sourceLanguage:', lang)
-  return lang
-})
-
-const currentTargetLanguage = computed(() => {
-  // Use prop if available, otherwise fallback to settings
-  const lang = props.targetLanguage || settingsStore.settings.TARGET_LANGUAGE
-  logger.debug('[TranslationForm] Using targetLanguage:', lang)
-  return lang
-})
-
 // Methods
 const handleSourceInput = (_event) => {
   // Handled by TranslationInputField component
@@ -175,24 +139,29 @@ const handleSourceInput = (_event) => {
 const handleKeydown = (_event) => {
   // Handled by TranslationInputField component
 }
-
-const handleTranslate = async () => {
-  logger.debug("Translation button clicked");
+/**
+ * Main translation handler
+ * @param {string} [manualProvider] - Optional provider ID to override props.provider
+ */
+const handleTranslate = async (manualProvider) => {
+  logger.debug("Translation button clicked", { manualProvider });
   
   if (!canTranslate.value) {
-    logger.warn("⚠️ Translation blocked - canTranslate is false");
+    logger.debug("Translation skipped - input is empty or invalid");
     return;
   }
   
   try {
-    logger.info("🗳️ Starting translation process...");
-    logger.debug("📝 Source text:", sourceText.value?.substring(0, 100) + "...");
+    logger.debug("Starting translation process...");
+    
+    // Use manualProvider if provided, otherwise fallback to props.provider
+    const effectiveProvider = (typeof manualProvider === 'string' && manualProvider) ? manualProvider : props.provider;
     
     // Get current language values from props
     const sourceLanguage = props.sourceLanguage;
     const targetLanguage = props.targetLanguage;
     
-    logger.debug("🌍 Languages:", sourceLanguage, "→", targetLanguage);
+    logger.debug("Languages:", sourceLanguage, "→", targetLanguage);
     
     // Store last translation for revert functionality
     lastTranslation.value = {
@@ -202,13 +171,18 @@ const handleTranslate = async () => {
       targetLanguage
     }
     
-    // Use composable translation function with current language values
-    logger.debug("📡 Triggering translation...", { provider: props.provider });
-    await triggerTranslation(sourceLanguage, targetLanguage, props.provider)    
-    logger.info("✅ Translation completed successfully");
+    // Use composable translation function with determined provider
+    logger.debug("Triggering translation...", { provider: effectiveProvider });
+    const success = await triggerTranslation(sourceLanguage, targetLanguage, effectiveProvider)    
+    
+    if (success) {
+      logger.info("Translation completed successfully");
+    } else {
+      logger.debug("Translation failed (handled internally)");
+    }
 
   } catch (error) {
-    logger.error("❌ Translation failed:", error);
+    logger.error("Translation failed:", error);
     await handleError(error, 'popup-translation')
   }
 }
@@ -306,9 +280,11 @@ watch(isTranslating, (newLoading, oldLoading) => {
   }
 })
 
-// Expose methods to parent
+// Expose methods and state to parent
 defineExpose({
   triggerTranslation: handleTranslate,
-  clearFields: clearStorage
+  cancelTranslation,
+  clearFields: clearStorage,
+  isTranslating
 })
 </script>
